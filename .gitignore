@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# .env
+.env
+
+# .env.local
+.env.local
+
+# .env.development.local
+.env.development.local
+
+# .env.test.local
+.env.test.local
+
+# .env.production.local
+.env.production.local
+
+*.python-version
+.archive/
+.nicegui/
+

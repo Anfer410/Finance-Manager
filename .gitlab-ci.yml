@@ -1,0 +1,29 @@
+stages:
+  - build
+  - release
+
+default:
+  interruptible: false
+  tags: 
+    - shell
+
+include:
+  - project: 'components/docker'
+    ref: main
+    file: template.gitlab-ci.yml
+    inputs:
+      image_name: finance-manager
+      dockerfile: dockerfile
+      ci_registry_image: "${CI_REGISTRY}/scripts/finances"
+      rules_build:
+        - if: '$CI_PIPELINE_SOURCE == "trigger"'
+          when: never
+          allow_failure: true
+        - when: manual
+          allow_failure: true
+      rules_release:
+        - if: '$CI_PIPELINE_SOURCE == "trigger"'
+          when: never
+          allow_failure: true
+        - when: manual
+          allow_failure: true

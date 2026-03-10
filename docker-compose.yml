@@ -1,0 +1,22 @@
+
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-finance-manager}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password} # TODO: Change this
+      TZ: ${TZ:-UTC}
+    ports:
+      - "5432:${DB_PORT:-5432}"
+  app:
+    build: .
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-finance-manager}
+      DB_USER: ${POSTGRES_USER:-psqlroot}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}  # TODO: Change this
+      TZ: ${TZ:-UTC}
+    ports:
+      - "8080:8080"

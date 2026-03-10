@@ -8,7 +8,7 @@ from typing import Literal, Optional
 import json
 from pathlib import Path
 from datetime import datetime
-
+from fnmatch import fnmatch
 
 MatchField  = Literal["filename"]
 MatchType   = Literal["contains", "startswith", "endswith", "exact"]
@@ -155,7 +155,13 @@ class RuleMatcher:
 
     def _matches(self, rule: BankRule, filename: str) -> bool:
         v, p = filename.lower(), rule.match_value.lower()
-        if rule.match_type == "contains":   return p in v
+        print(f"{v} {rule.match_type} {p}")
+        print(f"{fnmatch(v, p)}")
+        if rule.match_type == "contains":   
+            if fnmatch(v, f"{p}.csv"):
+                return True
+            else: 
+                return p in v
         if rule.match_type == "startswith": return v.startswith(p)
         if rule.match_type == "endswith":   return v.endswith(p)
         if rule.match_type == "exact":      return v == p

@@ -37,8 +37,15 @@ def _engine():
     return create_engine(f"postgresql+psycopg://{user}:{password}@{host}:{port}/{db}")
 
 def _q(sql: str, **params):
-    with _engine().connect() as conn:
-        return conn.execute(text(sql), params).fetchall()
+    try:
+        with _engine().connect() as conn:
+            return conn.execute(text(sql), params).fetchall()
+    except Exception as e:
+        # View doesn't exist yet (fresh DB, no data uploaded) — return empty
+        msg = str(e)
+        if "does not exist" in msg or "UndefinedTable" in msg or "undefined_table" in msg:
+            return []
+        raise
 
 def _kpi(spend: float, income: float) -> dict:
     return {"spend": round(spend, 2), "income": round(income, 2),
@@ -65,14 +72,14 @@ def _spend_income_kpi(view: str, year: int | None = None) -> dict:
         FROM {view}
         {where}
     """, **({"year": year} if year else {}))
-    spend = float(rows[0][0])
+    spend = float(rows[0][0]) if rows else 0.0
 
     income_rows = _q(f"""
         SELECT COALESCE(SUM(amount), 0) AS income
         FROM {V_INCOME}
         {where}
     """, **({"year": year} if year else {}))
-    income = float(income_rows[0][0])
+    income = float(income_rows[0][0]) if income_rows else 0.0
 
     return _kpi(spend, income)
 

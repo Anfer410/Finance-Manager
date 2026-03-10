@@ -82,8 +82,8 @@ def _profile_section() -> None:
                         state["error"] = "Passwords do not match."
                         profile_feedback.refresh()
                         return
-                    if len(pw) < 6:
-                        state["error"] = "Password must be at least 6 characters."
+                    if len(pw) < 4:
+                        state["error"] = "Password must be at least 4 characters."
                         profile_feedback.refresh()
                         return
                     updates["password"] = pw
@@ -179,8 +179,8 @@ def _edit_user_dialog(u: auth.AuthUser, on_change) -> None:
                     state["error"] = "Passwords do not match."
                     dialog_feedback.refresh()
                     return
-                if len(pw) < 6:
-                    state["error"] = "Password must be at least 6 characters."
+                if len(pw) < 4:
+                    state["error"] = "Password must be at least 4 characters."
                     dialog_feedback.refresh()
                     return
                 updates["password"] = pw
@@ -256,8 +256,8 @@ def _add_user_dialog(on_change) -> None:
                 state["error"] = "Passwords do not match."
                 dialog_feedback.refresh()
                 return
-            if len(pw) < 6:
-                state["error"] = "Password must be at least 6 characters."
+            if len(pw) < 4:
+                state["error"] = "Password must be at least 4 characters."
                 dialog_feedback.refresh()
                 return
             existing = auth.get_user_by_username(username)

@@ -59,6 +59,14 @@ class ViewManager:
 
     def refresh(self) -> None:
         """Rebuild all views in dependency order."""
+        # Drop all views first in reverse-dependency order so stale schemas
+        # never block recreation (e.g. column renames, reordering).
+        with self.engine.begin() as conn:
+            for v in ("v_transactions", "v_all_spend",
+                      "v_income", "v_debit_spend",
+                      "v_credit_spend", "v_credit_payments"):
+                conn.execute(text(f"DROP VIEW IF EXISTS {self.schema}.{v} CASCADE"))
+
         rules      = load_rules()
         cfg        = load_config()
         rule_map   = self._build_rule_map(rules)
@@ -328,7 +336,7 @@ class ViewManager:
                 branch += f"\n      AND NOT {pay_filter}"
             branches.append(branch)
 
-        self._create_view("v_credit_spend", branches)
+        self._create_view("v_credit_spend", branches, fallback="SELECT NULL::TEXT AS person, NULL::DATE AS transaction_date, NULL::TEXT AS description, NULL::NUMERIC AS amount, NULL::TEXT AS bank, NULL::TEXT AS category, NULL::TEXT AS cost_type, NULL::TEXT AS source_bank WHERE FALSE")
 
     # ── v_debit_spend ─────────────────────────────────────────────────────────
 
@@ -425,7 +433,7 @@ class ViewManager:
 
             branches.append(branch)
 
-        self._create_view("v_debit_spend", branches)
+        self._create_view("v_debit_spend", branches, fallback="SELECT NULL::TEXT AS person, NULL::DATE AS transaction_date, NULL::TEXT AS description, NULL::NUMERIC AS amount, NULL::TEXT AS bank, NULL::TEXT AS category, NULL::TEXT AS cost_type, NULL::TEXT AS source_bank WHERE FALSE")
 
     # ── v_income ─────────────────────────────────────────────────────────────
 
@@ -464,32 +472,33 @@ class ViewManager:
 
             branches.append(branch)
 
-        self._create_view("v_income", branches)
+        self._create_view("v_income", branches, fallback="SELECT NULL::TEXT AS person, NULL::DATE AS transaction_date, NULL::TEXT AS description, NULL::NUMERIC AS amount, NULL::TEXT AS bank WHERE FALSE")
 
     # ── v_all_spend ───────────────────────────────────────────────────────────
 
     def _build_all_spend_view(self) -> None:
         """Union of credit + debit spend with a source tag."""
+        cols = "person, transaction_date, description, amount, bank, category, cost_type, source_bank"
         sql = (
-            f"CREATE OR REPLACE VIEW {self.schema}.v_all_spend AS\n"
-            f"    SELECT *, 'credit'::TEXT AS source FROM {self.schema}.v_credit_spend\n"
+            f"    SELECT {cols}, 'credit'::TEXT AS source FROM {self.schema}.v_credit_spend\n"
             f"    UNION ALL\n"
-            f"    SELECT *, 'debit'::TEXT  AS source FROM {self.schema}.v_debit_spend\n"
+            f"    SELECT {cols}, 'debit'::TEXT  AS source FROM {self.schema}.v_debit_spend\n"
         )
         with self.engine.begin() as conn:
-            conn.execute(text(sql))
+            conn.execute(text(f"DROP VIEW IF EXISTS {self.schema}.v_all_spend CASCADE"))
+            conn.execute(text(f"CREATE VIEW {self.schema}.v_all_spend AS\n{sql}"))
 
     # ── v_transactions (legacy) ───────────────────────────────────────────────
 
     def _build_legacy_transactions_view(self, tables: list[str], rule_map: dict) -> None:
         """Kept for backward compatibility — mirrors v_all_spend."""
         sql = (
-            f"CREATE OR REPLACE VIEW {self.schema}.v_transactions AS\n"
             f"    SELECT person, transaction_date, description, amount, bank\n"
             f"    FROM {self.schema}.v_all_spend\n"
         )
         with self.engine.begin() as conn:
-            conn.execute(text(sql))
+            conn.execute(text(f"DROP VIEW IF EXISTS {self.schema}.v_transactions CASCADE"))
+            conn.execute(text(f"CREATE VIEW {self.schema}.v_transactions AS\n{sql}"))
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -503,9 +512,9 @@ class ViewManager:
         else:
             body = "\n    UNION ALL\n".join(branches)
 
-        sql = f"CREATE OR REPLACE VIEW {self.schema}.{view_name} AS\n{body}\n"
         with self.engine.begin() as conn:
-            conn.execute(text(sql))
+            conn.execute(text(f"DROP VIEW IF EXISTS {self.schema}.{view_name} CASCADE"))
+            conn.execute(text(f"CREATE VIEW {self.schema}.{view_name} AS\n{body}\n"))
         print(f"[ViewManager] {view_name} — {len(branches)} branch(es)")
 
     def _raw_tables(self) -> list[str]:

@@ -81,8 +81,7 @@ def frame(title: str, version: str, get_logo_func=None):
         nav_links.append({'link': dashboard_link, 'icon': dashboard_icon,
                           'patterns': ['/'], 'exact': True})
 
-        ui.separator()
-
+        
         # Admin-only nav items
         if is_admin:
             with ui.link('', '/categories').classes('w-full no-underline text-black') \
@@ -93,6 +92,26 @@ def frame(title: str, version: str, get_logo_func=None):
                     sidebar_labels.append(categories_label)
             nav_links.append({'link': categories_link, 'icon': categories_icon,
                               'patterns': ['/categories'], 'exact': True})
+            ui.separator()
+            
+            with ui.link('', '/loans').classes('w-full no-underline text-black') \
+                    .style('border-radius: 2rem;') as loans_link:
+                with ui.row().classes('items-center mb-2 mt-2 cursor-pointer w-full no-wrap'):
+                    loans_icon  = ui.icon('account_balance_wallet').classes('ml-5 text-2xl flex-shrink-0')
+                    loans_label = ui.label('Loans').classes('text-lg sidebar-label ml-3 flex-shrink-0')
+                    sidebar_labels.append(loans_label)
+            nav_links.append({'link': loans_link, 'icon': loans_icon,
+                              'patterns': ['/loans'], 'exact': True})
+
+            with ui.link('', '/loan-planning').classes('w-full no-underline text-black') \
+                    .style('border-radius: 2rem;') as loan_planning_link:
+                with ui.row().classes('items-center mb-2 mt-2 cursor-pointer w-full no-wrap'):
+                    loan_planning_icon  = ui.icon('calculate').classes('ml-5 text-2xl flex-shrink-0')
+                    loan_planning_label = ui.label('Loan Planning').classes('text-lg sidebar-label ml-3 flex-shrink-0')
+                    sidebar_labels.append(loan_planning_label)
+            nav_links.append({'link': loan_planning_link, 'icon': loan_planning_icon,
+                              'patterns': ['/loan-planning'], 'exact': True})
+        ui.separator()
 
         with ui.link('', '/upload').classes('w-full no-underline text-black') \
                 .style('border-radius: 2rem;') as upload_link:

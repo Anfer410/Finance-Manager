@@ -6,19 +6,20 @@ from pathlib import Path
 
 from nicegui import app, ui
 
+from db_migration import run_migrations
+
 import header
 import pages.finance_dashboard_content
 import pages.upload_content
 import pages.categories_content
 import pages.settings_content
 import pages.login_content
+import pages.loans_content
+import pages.loan_planning_content
 
 import services.auth as auth
 
-# TODO: remove after testing
-import pages.design_system_content
-import pages.icons_content
-
+from services.helpers import read_secrets
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 with open('config.json') as f:
@@ -27,6 +28,7 @@ with open('config.json') as f:
 appName    = config["appName"]
 appVersion = config["appVersion"]
 appPort    = config["appPort"]
+appEnv     = read_secrets()['APP_ENV']
 
 app.add_static_files('/assets', 'assets')
 
@@ -73,12 +75,12 @@ def login_page():
 @with_base_layout
 def root():
     ui.sub_pages({
-        '/':            index,
-        '/upload':      upload,
-        '/categories':  categories,
-        '/settings':    settings,
-        '/design-system': design_system,
-        '/icons':       icons,
+        '/':               index,
+        '/upload':         upload,
+        '/categories':     categories,
+        '/settings':       settings,
+        '/loans':          loans,
+        '/loan-planning':  loan_planning,
     })
 
 
@@ -99,15 +101,20 @@ def categories():
 def settings():
     pages.settings_content.content()
 
-def icons():
-    pages.icons_content.content()
+def loans():
+    pages.loans_content.content()
 
-def design_system():
-    pages.design_system_content.content()
+def loan_planning():
+    pages.loan_planning_content.content()
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
-# ui.run(root, storage_secret="myStorageSecret", title=appName, port=appPort,
-    #    favicon='ico.ico', reconnect_timeout=20)
-ui.run(root, host='0.0.0.0', storage_secret="faoieb[ofbaeoidfaadkladfj]", title=appName, port=appPort, favicon='ico.ico', reconnect_timeout=20, reload=False)   # prod
+
+if appEnv == "prod":
+    app.on_startup(run_migrations)
+    ui.run(root, host='0.0.0.0', storage_secret="faoieb[ofbaeoidfaadkladfj]", title=appName, port=appPort, favicon='ico.ico', reconnect_timeout=20, reload=False)   # prod
+else:
+    ui.run(root, storage_secret="myStorageSecret", title=appName, port=appPort, favicon='ico.ico', reconnect_timeout=20)
+# ui.run(root, host='0.0.0.0', storage_secret="faoieb[ofbaeoidfaadkladfj]", title=appName, port=appPort, favicon='ico.ico', reconnect_timeout=20, reload=False)   # prod
+#app.on_startup(run_migrations)
 # ui.run(root, storage_secret="myStorageSecret", title=appName, port=appPort, favicon='ico.ico', reload=False, native=True, window_size=(1600, 900))    # native

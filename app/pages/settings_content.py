@@ -14,6 +14,7 @@ from datetime import datetime
 from services.transaction_config import load_config, save_config
 from services.bank_rules import load_rules, save_rules, BankRule
 from services.category_rules import load_category_config, save_category_config, CategoryConfig, Category, CategoryRule
+from services.raw_table_manager import default_manager
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -82,8 +83,8 @@ def _profile_section() -> None:
                         state["error"] = "Passwords do not match."
                         profile_feedback.refresh()
                         return
-                    if len(pw) < 4:
-                        state["error"] = "Password must be at least 4 characters."
+                    if len(pw) < 6:
+                        state["error"] = "Password must be at least 6 characters."
                         profile_feedback.refresh()
                         return
                     updates["password"] = pw
@@ -179,8 +180,8 @@ def _edit_user_dialog(u: auth.AuthUser, on_change) -> None:
                     state["error"] = "Passwords do not match."
                     dialog_feedback.refresh()
                     return
-                if len(pw) < 4:
-                    state["error"] = "Password must be at least 4 characters."
+                if len(pw) < 6:
+                    state["error"] = "Password must be at least 6 characters."
                     dialog_feedback.refresh()
                     return
                 updates["password"] = pw
@@ -256,8 +257,8 @@ def _add_user_dialog(on_change) -> None:
                 state["error"] = "Passwords do not match."
                 dialog_feedback.refresh()
                 return
-            if len(pw) < 4:
-                state["error"] = "Password must be at least 4 characters."
+            if len(pw) < 6:
+                state["error"] = "Password must be at least 6 characters."
                 dialog_feedback.refresh()
                 return
             existing = auth.get_user_by_username(username)
@@ -402,7 +403,10 @@ def content() -> None:
         # User management — admin only
         if auth.is_admin():
             _user_management_section()
-            _aliases_section()
+            # _aliases_section()
+            _finance_data_export_section()
+            _finance_data_import_section()
+            _raw_export_section()
             _export_import_section()
 
 
@@ -412,14 +416,14 @@ def _export_import_section() -> None:
 
     def _build_export() -> dict:
         """Assemble all config into a single portable dict."""
-        cat_cfg   = load_category_config()
+        cat_cfg    = load_category_config()
         bank_rules = load_rules()
-        txn_cfg   = load_config()
+        txn_cfg    = load_config()
         return {
-            "_version": 1,
+            "_version": 2,
             "_exported_at": datetime.now().isoformat(timespec="seconds"),
             "categories": cat_cfg.to_dict(),
-            "bank_rules": [r.to_dict() for r in bank_rules],
+            "banks": [r.to_dict() for r in bank_rules],
             "transaction_config": txn_cfg.to_dict(),
         }
 
@@ -445,7 +449,7 @@ def _export_import_section() -> None:
                 ui.label('Export settings').classes('text-sm font-semibold text-zinc-700')
                 ui.label(
                     'Downloads a JSON file containing all categories, category rules, '
-                    'bank detection rules, and transaction config. '
+                    'configured banks, and transaction config. '
                     'Use this to back up your config or migrate to another instance.'
                 ).classes('text-xs text-zinc-400')
                 ui.button('Export config', icon='download', on_click=_do_export) \
@@ -477,7 +481,7 @@ def _export_import_section() -> None:
                         try:
                             raw = await e.file.read()
                             data = json.loads(raw)
-                            if data.get('_version') != 1:
+                            if data.get('_version') not in (1, 2):
                                 import_state['error'] = 'Unrecognised file format.'
                                 import_ui.refresh()
                                 return
@@ -532,10 +536,11 @@ def _export_import_section() -> None:
                         bool(cat_data),
                     )
 
-                    br_data = data.get('bank_rules')
+                    # v2 uses 'banks', v1 used 'bank_rules' — support both
+                    br_data = data.get('banks') or data.get('bank_rules')
                     _toggle_row(
-                        'bank_rules', 'Bank detection rules',
-                        f"{len(br_data)} rules" if br_data else '',
+                        'banks', 'Configured banks',
+                        f"{len(br_data)} banks" if br_data else '',
                         bool(br_data),
                     )
 
@@ -563,9 +568,9 @@ def _export_import_section() -> None:
                                 save_category_config(cfg)
                                 imported.append('categories')
 
-                            if sections.get('bank_rules') and sections['bank_rules'].value and br_data:
+                            if sections.get('banks') and sections['banks'].value and br_data:
                                 save_rules([BankRule.from_dict(r) for r in br_data])
-                                imported.append('bank rules')
+                                imported.append('banks')
 
                             if sections.get('transaction_config') and sections['transaction_config'].value and txn_data:
                                 from services.transaction_config import TransactionConfig
@@ -593,3 +598,319 @@ def _export_import_section() -> None:
                             .classes('bg-zinc-800 text-white rounded-lg px-4')
 
             import_ui()
+
+
+# ── Finance data export ────────────────────────────────────────────────────────
+
+def _finance_data_export_section() -> None:
+
+    def _query_csv(sql: str) -> str:
+        import csv, io as _io
+        from sqlalchemy import text
+        from services.db import get_engine
+        with get_engine().connect() as conn:
+            result = conn.execute(text(sql))
+            rows   = result.fetchall()
+            cols   = list(result.keys())
+        buf = _io.StringIO()
+        w   = csv.writer(buf)
+        w.writerow(cols)
+        w.writerows([[str(v) if v is not None else "" for v in row] for row in rows])
+        return buf.getvalue()
+
+    def _download(fname_prefix: str, sql_fn):
+        def _do():
+            try:
+                csv_data = sql_fn()
+                b64      = base64.b64encode(csv_data.encode()).decode()
+                fname    = f"{fname_prefix}_{datetime.now().strftime('%Y%m%d')}.csv"
+                ui.run_javascript(f"""
+                    const a = document.createElement('a');
+                    a.href = 'data:text/csv;base64,{b64}';
+                    a.download = '{fname}';
+                    a.click();
+                """)
+            except Exception as ex:
+                ui.notify(f'Export failed: {ex}', type='negative', position='top')
+        return _do
+
+    with _card('Finance data export', 'table_chart'):
+        _section_header('Finance data export', 'table_chart')
+        with ui.column().classes('px-6 py-5 gap-3 w-full'):
+            ui.label(
+                'Export processed transaction data and loan records as CSV. '
+                'Useful for backups or migrating to another instance.'
+            ).classes('text-xs text-zinc-400')
+
+            from services.db import get_schema
+            schema = get_schema()
+
+            rows_cfg = [
+                (
+                    'Debit transactions',
+                    'account_balance',
+                    'debit_transactions',
+                    lambda: _query_csv(
+                        f"SELECT account_key, transaction_date, description, amount, "
+                        f"person, source_file, inserted_at "
+                        f"FROM {schema}.transactions_debit ORDER BY transaction_date DESC"
+                    ),
+                ),
+                (
+                    'Credit transactions',
+                    'credit_card',
+                    'credit_transactions',
+                    lambda: _query_csv(
+                        f"SELECT account_key, transaction_date, description, debit, credit, "
+                        f"person, source_file, inserted_at "
+                        f"FROM {schema}.transactions_credit ORDER BY transaction_date DESC"
+                    ),
+                ),
+                (
+                    'Loans',
+                    'account_balance_wallet',
+                    'loans',
+                    lambda: _query_csv(
+                        f"SELECT id, name, loan_type, rate_type, interest_rate, "
+                        f"original_principal, term_months, start_date, monthly_payment, "
+                        f"current_balance, balance_as_of, lender, notes, is_active, "
+                        f"created_at, updated_at "
+                        f"FROM {schema}.app_loans ORDER BY id"
+                    ),
+                ),
+            ]
+
+            for label, icon_name, fname_prefix, sql_fn in rows_cfg:
+                with ui.row().classes('items-center gap-3 w-full px-1'):
+                    ui.icon(icon_name).classes('text-zinc-300 text-base')
+                    ui.label(label).classes('text-sm text-zinc-700 flex-1')
+                    ui.button('Download CSV', icon='download',
+                              on_click=_download(fname_prefix, sql_fn)) \
+                        .props('flat dense no-caps') \
+                        .classes('text-zinc-600')
+
+
+# ── Finance data import ────────────────────────────────────────────────────────
+
+def _finance_data_import_section() -> None:
+
+    _TYPE_LABELS = {
+        'debit':  'Debit transactions',
+        'credit': 'Credit transactions',
+        'loans':  'Loans',
+    }
+
+    import_state: dict = {'error': '', 'preview': None, 'file_type': None}
+
+    with _card('Finance data import', 'upload_file'):
+        _section_header('Finance data import', 'upload_file')
+        with ui.column().classes('px-6 py-5 gap-3 w-full'):
+            ui.label(
+                'Import debit transactions, credit transactions, or loan records from a '
+                'previously exported CSV. Duplicate transactions are skipped automatically.'
+            ).classes('text-xs text-zinc-400')
+
+            @ui.refreshable
+            def import_ui() -> None:
+                if import_state['error']:
+                    with ui.row().classes('items-center gap-2'):
+                        ui.icon('error_outline').classes('text-red-400 text-base')
+                        ui.label(import_state['error']).classes('text-sm text-red-500')
+                    ui.button('Try again', on_click=lambda: (
+                        import_state.update({'error': '', 'preview': None, 'file_type': None}),
+                        import_ui.refresh(),
+                    )).props('flat no-caps').classes('text-zinc-500 self-start mt-1')
+                    return
+
+                if import_state['preview'] is None:
+                    async def handle_file(e):
+                        import csv
+                        import io as _io
+                        import_state['error'] = ''
+                        try:
+                            raw  = (await e.file.read()).decode('utf-8-sig')
+                            rows = list(csv.DictReader(_io.StringIO(raw)))
+                            if not rows:
+                                import_state['error'] = 'CSV file is empty.'
+                                import_ui.refresh()
+                                return
+                            hdrs = set(rows[0].keys())
+                            if {'account_key', 'transaction_date', 'description', 'amount'}.issubset(hdrs):
+                                ftype = 'debit'
+                            elif {'account_key', 'transaction_date', 'description', 'debit', 'credit'}.issubset(hdrs):
+                                ftype = 'credit'
+                            elif {'name', 'loan_type', 'interest_rate', 'start_date'}.issubset(hdrs):
+                                ftype = 'loans'
+                            else:
+                                import_state['error'] = (
+                                    'Unrecognised CSV format — could not detect type from headers.'
+                                )
+                                import_ui.refresh()
+                                return
+                            import_state['preview']   = rows
+                            import_state['file_type'] = ftype
+                            import_ui.refresh()
+                        except Exception as ex:
+                            import_state['error'] = f'Could not parse file: {ex}'
+                            import_ui.refresh()
+
+                    ui.upload(
+                        label='Choose CSV file',
+                        on_upload=handle_file,
+                        auto_upload=True,
+                        max_files=1,
+                    ).props('accept=.csv').classes('w-full')
+
+                else:
+                    rows      = import_state['preview']
+                    file_type = import_state['file_type']
+                    type_lbl  = _TYPE_LABELS[file_type]
+
+                    with ui.row().classes('items-center gap-2 mb-1'):
+                        ui.icon('check_circle').classes('text-green-500 text-base')
+                        ui.label(f'{type_lbl} — {len(rows)} rows ready to import') \
+                            .classes('text-xs text-zinc-500')
+
+                    def do_import():
+                        from sqlalchemy import text as _text
+                        from services.db import get_engine, get_schema
+                        schema  = get_schema()
+                        engine  = get_engine()
+                        inserted = skipped = 0
+
+                        with engine.connect() as conn:
+                            for row in rows:
+                                try:
+                                    with conn.begin_nested():
+                                        if file_type == 'debit':
+                                            conn.execute(_text(f"""
+                                                INSERT INTO {schema}.transactions_debit
+                                                    (account_key, transaction_date, description,
+                                                     amount, person, source_file, inserted_at)
+                                                VALUES (:ak, :td, :desc, :amt, :person, :src,
+                                                        COALESCE(NULLIF(:ins,''), NOW()::TEXT)::TIMESTAMPTZ)
+                                                ON CONFLICT DO NOTHING
+                                            """), {
+                                                'ak':     row['account_key'],
+                                                'td':     row['transaction_date'],
+                                                'desc':   row['description'],
+                                                'amt':    float(row['amount'] or 0),
+                                                'person': row.get('person', ''),
+                                                'src':    row.get('source_file', ''),
+                                                'ins':    row.get('inserted_at', ''),
+                                            })
+                                        elif file_type == 'credit':
+                                            conn.execute(_text(f"""
+                                                INSERT INTO {schema}.transactions_credit
+                                                    (account_key, transaction_date, description,
+                                                     debit, credit, person, source_file, inserted_at)
+                                                VALUES (:ak, :td, :desc, :deb, :cred, :person, :src,
+                                                        COALESCE(NULLIF(:ins,''), NOW()::TEXT)::TIMESTAMPTZ)
+                                                ON CONFLICT DO NOTHING
+                                            """), {
+                                                'ak':     row['account_key'],
+                                                'td':     row['transaction_date'],
+                                                'desc':   row['description'],
+                                                'deb':    float(row.get('debit')  or 0),
+                                                'cred':   float(row.get('credit') or 0),
+                                                'person': row.get('person', ''),
+                                                'src':    row.get('source_file', ''),
+                                                'ins':    row.get('inserted_at', ''),
+                                            })
+                                        else:  # loans
+                                            is_act = row.get('is_active', 'True')
+                                            conn.execute(_text(f"""
+                                                INSERT INTO {schema}.app_loans
+                                                    (name, loan_type, rate_type, interest_rate,
+                                                     original_principal, term_months, start_date,
+                                                     monthly_payment, current_balance, balance_as_of,
+                                                     lender, notes, is_active)
+                                                VALUES (:name, :ltype, :rtype, :rate,
+                                                        :principal, :term, :start,
+                                                        :payment, :balance, :bal_date,
+                                                        :lender, :notes, :active)
+                                            """), {
+                                                'name':      row['name'],
+                                                'ltype':     row.get('loan_type', 'other'),
+                                                'rtype':     row.get('rate_type', 'fixed'),
+                                                'rate':      float(row.get('interest_rate') or 0),
+                                                'principal': float(row.get('original_principal') or 0),
+                                                'term':      int(row.get('term_months') or 360),
+                                                'start':     row['start_date'],
+                                                'payment':   float(row.get('monthly_payment') or 0),
+                                                'balance':   float(row.get('current_balance') or 0),
+                                                'bal_date':  row['balance_as_of'],
+                                                'lender':    row.get('lender', ''),
+                                                'notes':     row.get('notes', ''),
+                                                'active':    str(is_act).lower() in ('true', '1', 't'),
+                                            })
+                                    inserted += 1
+                                except Exception:
+                                    skipped += 1
+                            conn.commit()
+
+                        msg = f'Imported {inserted} {type_lbl.lower()}'
+                        if skipped:
+                            msg += f', {skipped} skipped (duplicates or errors)'
+                        ui.notify(msg, type='positive', position='top')
+                        import_state.update({'preview': None, 'file_type': None, 'error': ''})
+                        import_ui.refresh()
+
+                    with ui.row().classes('gap-2 mt-1'):
+                        ui.button('Cancel', on_click=lambda: (
+                            import_state.update({'preview': None, 'file_type': None, 'error': ''}),
+                            import_ui.refresh(),
+                        )).props('flat no-caps').classes('text-zinc-500')
+                        ui.button('Import', icon='upload', on_click=do_import) \
+                            .props('unelevated no-caps') \
+                            .classes('bg-zinc-800 text-white rounded-lg px-4')
+
+            import_ui()
+
+
+# ── Raw data export ────────────────────────────────────────────────────────────
+
+def _raw_export_section() -> None:
+    with _card('Raw data export', 'table_view'):
+        _section_header('Raw data export', 'table_view')
+        with ui.column().classes('px-6 py-5 gap-4 w-full'):
+
+            ui.label(
+                'Download the original parsed transaction data for each bank account. '
+                'These tables are populated on every upload and serve as the source archive.'
+            ).classes('text-xs text-zinc-400')
+
+            try:
+                mgr   = default_manager()
+                banks = mgr.list_banks()
+            except Exception as ex:
+                ui.label(f'Could not load tables: {ex}').classes('text-sm text-red-500')
+                return
+
+            if not banks:
+                ui.label('No raw data tables found yet — upload some transactions first.') \
+                    .classes('text-sm text-zinc-400')
+                return
+
+            for bank in banks:
+                def _download(b=bank):
+                    try:
+                        csv_data = default_manager().export_csv(b)
+                        b64      = base64.b64encode(csv_data.encode()).decode()
+                        fname    = f"raw_{b}_{datetime.now().strftime('%Y%m%d')}.csv"
+                        ui.run_javascript(f"""
+                            const a = document.createElement('a');
+                            a.href = 'data:text/csv;base64,{b64}';
+                            a.download = '{fname}';
+                            a.click();
+                        """)
+                    except Exception as ex:
+                        ui.notify(f'Export failed: {ex}', type='negative', position='top')
+
+                label = bank.replace('_', ' ').title()
+                with ui.row().classes('items-center gap-3 w-full px-1'):
+                    ui.icon('description').classes('text-zinc-300 text-base')
+                    ui.label(label).classes('text-sm text-zinc-700 flex-1')
+                    ui.button('Download CSV', icon='download', on_click=_download) \
+                        .props('flat dense no-caps') \
+                        .classes('text-zinc-600')

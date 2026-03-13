@@ -216,8 +216,8 @@ class CategoryConfig:
 
 def load_category_config() -> CategoryConfig:
     try:
-        from services.db_config import load_categories_data
-        data = load_categories_data()
+        from services.config_repo import load_categories
+        data = load_categories()
         if data:
             cfg = CategoryConfig.from_dict(data)
             # Backfill any missing default categories
@@ -241,8 +241,8 @@ def load_category_config() -> CategoryConfig:
 
 def save_category_config(cfg: CategoryConfig) -> None:
     try:
-        from services.db_config import save_categories_data
-        save_categories_data(cfg.to_dict())
+        from services.config_repo import save_categories
+        save_categories(cfg.to_dict())
         return
     except Exception as e:
         print(f"[category_rules] DB save failed ({e}), falling back to file")

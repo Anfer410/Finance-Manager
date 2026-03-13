@@ -44,19 +44,34 @@ def _psycopg_dsn(conn: tuple) -> str:
     user, password, host, port, db = conn
     return f"host={host} port={port} user={user} password={password} dbname={db}"
 
+# Convenience: build a manager using the app-wide DB config
+def default_manager(schema: str | None = None) -> "RawTableManager":
+    from services.db import get_conn_tuple, get_schema
+    return RawTableManager(get_conn_tuple(), schema=schema or get_schema())
+
 
 # ── CSV pre-processors ────────────────────────────────────────────────────────
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
     Lowercase column names, replace spaces/special chars with underscores.
-    e.g. "Transaction Date" → "transaction_date", "Amount ($)" → "amount"
+    Empty or whitespace-only column names become col_0, col_1, ...
+    Duplicate names are suffixed _2, _3 ...
     """
     df = df.copy()
-    df.columns = [
-        re.sub(r"[^a-z0-9]+", "_", c.strip().lower()).strip("_")
-        for c in df.columns
-    ]
+    seen: dict[str, int] = {}
+    new_cols = []
+    for i, c in enumerate(df.columns):
+        name = re.sub(r"[^a-z0-9]+", "_", str(c).strip().lower()).strip("_")
+        if not name:
+            name = f"col_{i}"
+        if name in seen:
+            seen[name] += 1
+            name = f"{name}_{seen[name]}"
+        else:
+            seen[name] = 1
+        new_cols.append(name)
+    df.columns = new_cols
     return df
 
 
@@ -73,16 +88,20 @@ def register_parser(prefix: str):
 @register_parser("wf")
 def _parse_wells_fargo(raw: bytes) -> pd.DataFrame:
     """
-    Wells Fargo CSVs have NO header row — columns are:
-      Date, Amount, *, Check Number, Description
+    Wells Fargo CSVs have NO header row.
+    Standard layout: Date, Amount, *, Check Number, Description (5 cols)
+    Some exports have a 6th trailing column — handled gracefully.
     """
     import io
-    df = pd.read_csv(
-        io.BytesIO(raw),
-        header=None,
-        names=["transaction_date", "amount", "flag", "check_number", "description"],
-    )
-    return df
+    WF_COLS = ["transaction_date", "amount", "flag", "check_number", "description"]
+    df = pd.read_csv(io.BytesIO(raw), header=None, dtype=str)
+    n = len(df.columns)
+    if n <= len(WF_COLS):
+        df.columns = WF_COLS[:n]
+    else:
+        # Extra columns beyond the standard 5 get generic names
+        df.columns = WF_COLS + [f"col_{i}" for i in range(n - len(WF_COLS))]
+    return _normalize_columns(df)
 
 
 @register_parser("cap1")
@@ -99,16 +118,58 @@ def _parse_citi(raw: bytes) -> pd.DataFrame:
     return _normalize_columns(df)
 
 
-def parse_csv(raw: bytes, prefix: str) -> pd.DataFrame:
+def parse_csv(raw: bytes, prefix: str, column_map: dict | None = None) -> pd.DataFrame:
     """
-    Parse raw CSV bytes using the bank-specific parser if registered,
-    otherwise fall back to generic pandas read_csv + column normalization.
+    Parse raw CSV bytes into a DataFrame with normalised column names.
+
+    When column_map is provided (set by the wizard on BankRule.column_map):
+      - It maps role → actual_col_name as the wizard recorded from the sample file
+      - For headered files:  actual_col_name is the real header text, e.g. "Trans Date"
+      - For headerless files: actual_col_name is "col_0", "col_1" ... (sniff() output)
+      - We detect which case we're in by checking if any actual_col_name appears in
+        the normalised first row.  If yes → has header.  If no → headerless, read with
+        header=None and assign col_0, col_1 ... so the names match column_map keys.
+
+    Without column_map (legacy banks configured before the wizard):
+      - Try registered bank-specific parsers keyed by prefix
+      - Fall back to generic read_csv with header
     """
     import io
+
+    if column_map:
+        actual_names = {v for v in column_map.values() if v}
+
+        # Peek at first row with header to see if column names match what wizard recorded
+        df_peek = pd.read_csv(io.BytesIO(raw), dtype=str, nrows=0)
+        norm_headers = {
+            re.sub(r"[^a-z0-9]+", "_", c.strip().lower()).strip("_")
+            for c in df_peek.columns
+        }
+        has_header = bool(actual_names & norm_headers)  # any overlap → has header
+
+        if has_header:
+            df = pd.read_csv(io.BytesIO(raw), dtype=str)
+            return _normalize_columns(df)
+        else:
+            # Headerless — read without header, assign col_0, col_1 ...
+            # These match what the wizard stored in column_map
+            df = pd.read_csv(io.BytesIO(raw), header=None, dtype=str)
+            df.columns = [f"col_{i}" for i in range(len(df.columns))]
+            return df  # already normalised — col_N names are clean
+
+    # Legacy path (banks added before the wizard had column mapping)
     parser = BANK_CSV_PARSERS.get(prefix)
+    if parser is None:
+        for reg_prefix, reg_parser in BANK_CSV_PARSERS.items():
+            if prefix.startswith(reg_prefix):
+                parser = reg_parser
+                break
+
     if parser:
         return parser(raw)
-    df = pd.read_csv(io.BytesIO(raw))
+
+    # Generic fallback — read with header
+    df = pd.read_csv(io.BytesIO(raw), dtype=str)
     return _normalize_columns(df)
 
 
@@ -140,6 +201,9 @@ class RawTableManager:
         table_name = f"raw_{self._sanitize(bank_name)}"
         df = self._coerce_types(df)
 
+        # Final safety net: re-normalize columns to guarantee no empty names
+        df = _normalize_columns(df)
+
         # Inject person as the first column so it's part of the schema from creation
         df = df.copy()
         df.insert(0, "person", person)
@@ -153,6 +217,26 @@ class RawTableManager:
 
     def table_exists(self, bank_name: str) -> bool:
         return self._table_exists(f"raw_{self._sanitize(bank_name)}")
+
+    def list_banks(self) -> list[str]:
+        """Returns bank names (raw_ prefix stripped) for all raw_* tables in the schema."""
+        names = inspect(self.engine).get_table_names(schema=self.schema)
+        return [n[4:] for n in sorted(names) if n.startswith("raw_")]
+
+    def export_csv(self, bank_name: str) -> str:
+        """Returns all rows from raw_<bank_name> as a CSV string."""
+        import csv
+        import io as _io
+        table = f"{self.schema}.raw_{self._sanitize(bank_name)}"
+        with self.engine.connect() as conn:
+            result = conn.execute(text(f"SELECT * FROM {table} ORDER BY _id"))
+            rows = result.fetchall()
+            cols = list(result.keys())
+        buf = _io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(cols)
+        writer.writerows(rows)
+        return buf.getvalue()
 
     # ── Internals ─────────────────────────────────────────────────────────────
 

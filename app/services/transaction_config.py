@@ -46,8 +46,8 @@ class TransactionConfig:
 
 def load_config() -> TransactionConfig:
     try:
-        from services.db_config import load_transaction_config_data
-        data = load_transaction_config_data()
+        from services.config_repo import load_transaction_cfg
+        data = load_transaction_cfg()
         if data:
             return TransactionConfig.from_dict(data)
     except Exception as e:
@@ -60,8 +60,8 @@ def load_config() -> TransactionConfig:
 
 def save_config(cfg: TransactionConfig) -> None:
     try:
-        from services.db_config import save_transaction_config_data
-        save_transaction_config_data(cfg.to_dict())
+        from services.config_repo import save_transaction_cfg
+        save_transaction_cfg(cfg.to_dict())
         return
     except Exception as e:
         print(f"[transaction_config] DB save failed ({e}), falling back to file")

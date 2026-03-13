@@ -8,10 +8,9 @@ from nicegui import ui
 import services.finance_dashboard_data as data
 from services.transaction_config import load_config, save_config
 from services.view_manager import ViewManager
-from services.helpers import read_secrets
-_secrets = read_secrets()
-_DB_CONN = (_secrets['DB_USER'], _secrets['DB_PASSWORD'], _secrets['DB_HOST'], _secrets['DB_PORT'], _secrets['DB_NAME'])
-_SCHEMA  = _secrets['DB_SCHEMA']
+from services.db import get_conn_tuple, get_schema
+_DB_CONN = get_conn_tuple()
+_SCHEMA  = get_schema()
 
 
 # ── Charts components ────────────────────────────────────────────────

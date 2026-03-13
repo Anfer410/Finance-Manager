@@ -10,31 +10,22 @@ Queries the purpose-built views:
 
 from __future__ import annotations
 from datetime import datetime
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
-from services.helpers import read_secrets
-secrets = read_secrets()
-DB_CONN = (
-    secrets["DB_USER"],
-    secrets["DB_PASSWORD"],
-    secrets["DB_HOST"],
-    secrets["DB_PORT"],
-    secrets["DB_NAME"],
-)
-SCHEMA = secrets["DB_SCHEMA"]
+from services.db import get_engine, get_schema
 
-V_ALL_SPEND    = f"{SCHEMA}.v_all_spend"
-V_CREDIT_SPEND = f"{SCHEMA}.v_credit_spend"
-V_DEBIT_SPEND  = f"{SCHEMA}.v_debit_spend"
-V_INCOME       = f"{SCHEMA}.v_income"
+_SCHEMA        = get_schema()
+V_ALL_SPEND    = f"{_SCHEMA}.v_all_spend"
+V_CREDIT_SPEND = f"{_SCHEMA}.v_credit_spend"
+V_DEBIT_SPEND  = f"{_SCHEMA}.v_debit_spend"
+V_INCOME       = f"{_SCHEMA}.v_income"
 
 MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun",
                 "Jul","Aug","Sep","Oct","Nov","Dec"]
 
 
 def _engine():
-    user, password, host, port, db = DB_CONN
-    return create_engine(f"postgresql+psycopg://{user}:{password}@{host}:{port}/{db}")
+    return get_engine()
 
 def _q(sql: str, **params):
     try:
@@ -133,6 +124,63 @@ def get_monthly_spend_series(year: int) -> dict:
         "income": income_vals,
         "budget": budget,
     }
+
+
+# ── Year-over-year 3-year monthly series ─────────────────────────────────────
+
+def get_year_over_year_monthly_spend_series(year_back: int = 2) -> dict:
+    """
+    Monthly spend + income from Jan of (today.year - year_back) through current month,
+    with a rolling surplus that carries forward across months.
+    Returns the same shape as get_monthly_spend_series() so _spend_income_chart
+    can consume it directly.
+    """
+    from datetime import date
+
+    today = date.today()
+    start = date(today.year - year_back, 1, 1)
+    end   = today.replace(day=1)
+
+    spend_rows = _q(f"""
+        SELECT DATE_TRUNC('month', transaction_date)::DATE AS mo,
+               COALESCE(SUM(amount), 0)
+        FROM {V_ALL_SPEND}
+        WHERE transaction_date >= :start
+        GROUP BY mo ORDER BY mo
+    """, start=start)
+
+    income_rows = _q(f"""
+        SELECT DATE_TRUNC('month', transaction_date)::DATE AS mo,
+               COALESCE(SUM(amount), 0)
+        FROM {V_INCOME}
+        WHERE transaction_date >= :start
+        GROUP BY mo ORDER BY mo
+    """, start=start)
+
+    # Build full month list
+    month_dates: list[date] = []
+    cur = start
+    while cur <= end:
+        month_dates.append(cur)
+        cur = date(cur.year + (cur.month // 12), cur.month % 12 + 1, 1)
+
+    spend_map  = {r[0]: float(r[1]) for r in spend_rows}
+    income_map = {r[0]: float(r[1]) for r in income_rows}
+
+    labels = [d.strftime("%b '%y") for d in month_dates]
+    spend  = [round(spend_map.get(d, 0.0),  2) for d in month_dates]
+    income = [round(income_map.get(d, 0.0), 2) for d in month_dates]
+
+    budget: list[float | None] = []
+    rolling = 0.0
+    for s, inc in zip(spend, income):
+        if s == 0 and inc == 0:
+            budget.append(None)
+        else:
+            rolling = round(rolling + inc - s, 2)
+            budget.append(rolling)
+
+    return {"months": labels, "spend": spend, "income": income, "budget": budget}
 
 
 # ── Spend per bank series ─────────────────────────────────────────────────────

@@ -16,15 +16,15 @@ def read_secrets() -> dict:
     DB_PORT = int(os.getenv('DB_PORT', 5432))
     DB_NAME = os.getenv('DB_NAME', 'finance-manager')
     DB_SCHEMA = os.getenv('DB_SCHEMA', 'finance')
-    ARCHIVE_PATH = os.getenv('ARCHIVES_FOLDER', '.archive')
+    APP_ENV = os.getenv('APP_ENV', 'dev')
 
     return {
+        "APP_ENV" : APP_ENV,
         "PORT": PORT,
         "DB_USER": DB_USER,
         "DB_PASSWORD": DB_PASSWORD,
         "DB_HOST": DB_HOST,
         "DB_PORT": DB_PORT,
         "DB_NAME": DB_NAME,
-        "DB_SCHEMA": DB_SCHEMA,
-        "ARCHIVE_PATH": ARCHIVE_PATH
+        "DB_SCHEMA": DB_SCHEMA
     }

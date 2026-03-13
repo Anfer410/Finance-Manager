@@ -22,21 +22,13 @@ from dataclasses import dataclass
 from typing import Optional
 
 import bcrypt
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from nicegui import app, ui
 
-from services.helpers import read_secrets
+from services.db import get_engine, get_schema
 
-
-# ── DB engine (module-level singleton) ────────────────────────────────────────
-
-def _engine():
-    s = read_secrets()
-    url = (f"postgresql+psycopg://{s['DB_USER']}:{s['DB_PASSWORD']}"
-           f"@{s['DB_HOST']}:{s['DB_PORT']}/{s['DB_NAME']}")
-    return create_engine(url), s["DB_SCHEMA"]
-
-_ENGINE, _SCHEMA = _engine()
+_ENGINE = get_engine()
+_SCHEMA = get_schema()
 
 
 # ── Password helpers ──────────────────────────────────────────────────────────

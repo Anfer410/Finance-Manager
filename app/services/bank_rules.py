@@ -8,7 +8,7 @@ from typing import Literal, Optional
 import json
 from pathlib import Path
 from datetime import datetime
-from fnmatch import fnmatch
+
 
 MatchField  = Literal["filename"]
 MatchType   = Literal["contains", "startswith", "endswith", "exact"]
@@ -43,6 +43,19 @@ class BankRule:
     # e.g. "member_name" for Citi
     member_name_column: str = ""
 
+    # ── Per-rule member name aliases ─────────────────────────────────────────
+    # Maps raw member_name value → user_id (stable across display_name changes).
+    # e.g. {"ANDRZEJ": 1, "JESSICA": 2}
+    # Resolved to person_name at view-build time via app_users table.
+    member_aliases: dict = field(default_factory=dict)
+
+    # ── Column mapping (set by wizard, used by UploadPipeline) ──────────────
+    # Maps logical role → actual normalised column name in this bank's CSV.
+    # e.g. {"date": "trans_date", "amount": "transaction_amount"}
+    column_map:    dict = field(default_factory=dict)
+    # Explicit dedup columns stored after wizard; [] means auto-detect
+    dedup_columns: list = field(default_factory=list)
+
     # ── Filename config ────────────────────────────────────────────────────
     person_override: Optional[str] = None
     note: str = ""
@@ -59,46 +72,46 @@ class BankRule:
 # ── Default rules ─────────────────────────────────────────────────────────────
 
 DEFAULT_RULES: list[BankRule] = [
-    BankRule(
-        bank_name="Capital One",
-        prefix="cap1",
-        match_type="contains",
-        match_value="transaction_download",
-        account_type="credit",
-        payment_category="Payment/Credit",
-        payment_description="MOBILE PYMT",
-        checking_payment_pattern="CAPITAL ONE",
-        note="e.g. 2024-01-15_transaction_download.csv",
-    ),
-    BankRule(
-        bank_name="Wells Fargo Checking",
-        prefix="wf",
-        match_type="contains",
-        match_value="Checking",
-        account_type="checking",
-        note="e.g. Checking1234.csv",
-    ),
-    BankRule(
-        bank_name="Wells Fargo Savings",
-        prefix="wf",
-        match_type="contains",
-        match_value="Savings",
-        account_type="checking",
-        person_override="mutual",
-        note="e.g. Savings5678.csv",
-    ),
-    BankRule(
-        bank_name="Citi",
-        prefix="citi",
-        match_type="contains",
-        match_value="citi",
-        account_type="credit",
-        payment_description="ONLINE PAYMENT",
-        checking_payment_pattern="CITI CARD",
-        member_name_column="member_name",
-        person_override="",
-        note="e.g. Citi_export.csv",
-    ),
+    # BankRule(
+    #     bank_name="Capital One",
+    #     prefix="cap1",
+    #     match_type="contains",
+    #     match_value="transaction_download",
+    #     account_type="credit",
+    #     payment_category="Payment/Credit",
+    #     payment_description="MOBILE PYMT",
+    #     checking_payment_pattern="CAPITAL ONE",
+    #     note="e.g. 2024-01-15_transaction_download.csv",
+    # ),
+    # BankRule(
+    #     bank_name="Wells Fargo Checking",
+    #     prefix="wf",
+    #     match_type="contains",
+    #     match_value="Checking",
+    #     account_type="checking",
+    #     note="e.g. Checking1234.csv",
+    # ),
+    # BankRule(
+    #     bank_name="Wells Fargo Savings",
+    #     prefix="wf",
+    #     match_type="contains",
+    #     match_value="Savings",
+    #     account_type="checking",
+    #     person_override="mutual",
+    #     note="e.g. Savings5678.csv",
+    # ),
+    # BankRule(
+    #     bank_name="Citi",
+    #     prefix="citi",
+    #     match_type="contains",
+    #     match_value="citi",
+    #     account_type="credit",
+    #     payment_description="ONLINE PAYMENT",
+    #     checking_payment_pattern="CITI CARD",
+    #     member_name_column="member_name",
+    #     person_override="",
+    #     note="e.g. Citi_export.csv",
+    # ),
 ]
 
 
@@ -109,8 +122,8 @@ RULES_FILE = Path("bank_rules_config.json")  # kept for fallback only
 
 def load_rules() -> list[BankRule]:
     try:
-        from services.db_config import load_bank_rules_data
-        raw = load_bank_rules_data()
+        from services.config_repo import load_bank_rules
+        raw = load_bank_rules()
         if raw:
             rules = [BankRule.from_dict(r) for r in raw]
             default_by_name = {r.bank_name: r for r in DEFAULT_RULES}
@@ -136,8 +149,8 @@ def load_rules() -> list[BankRule]:
 
 def save_rules(rules: list[BankRule]) -> None:
     try:
-        from services.db_config import save_bank_rules_data
-        save_bank_rules_data([r.to_dict() for r in rules])
+        from services.config_repo import save_bank_rules
+        save_bank_rules([r.to_dict() for r in rules])
         return
     except Exception as e:
         print(f"[bank_rules] DB save failed ({e}), falling back to file")
@@ -155,13 +168,7 @@ class RuleMatcher:
 
     def _matches(self, rule: BankRule, filename: str) -> bool:
         v, p = filename.lower(), rule.match_value.lower()
-        print(f"{v} {rule.match_type} {p}")
-        print(f"{fnmatch(v, p)}")
-        if rule.match_type == "contains":   
-            if fnmatch(v, f"{p}.csv"):
-                return True
-            else: 
-                return p in v
+        if rule.match_type == "contains":   return p in v
         if rule.match_type == "startswith": return v.startswith(p)
         if rule.match_type == "endswith":   return v.endswith(p)
         if rule.match_type == "exact":      return v == p

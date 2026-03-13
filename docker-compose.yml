@@ -6,9 +6,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-finance-manager}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password} # TODO: Change this
+      POSTGRES_PORT: 5432
       TZ: ${TZ:-UTC}
     ports:
-      - "5432:${DB_PORT:-5432}"
+      - "5432:5432"
   app:
     build: .
     environment:

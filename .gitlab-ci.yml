@@ -13,6 +13,8 @@ version-bump:
   tags:
     - docker
   image: gitlab.iveydomek.xyz:5050/components/docker/python:latest
+  variables:
+    GIT_DEPTH: 0
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE !~ /^chore: release/'
       when: on_success
@@ -21,6 +23,7 @@ version-bump:
     - git config user.email "gitlab-ci@$CI_SERVER_HOST"
     - git config user.name "GitLab CI"
     - git remote set-url origin "https://oauth2:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+    - git checkout "$CI_COMMIT_BRANCH"
     - semantic-release version
     - semantic-release publish
 

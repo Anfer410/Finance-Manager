@@ -10,6 +10,9 @@ default:
 
 version-bump:
   stage: version
+  tags:
+    - docker
+  image: gitlab.iveydomek.xyz:5050/components/docker/python:latest
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE !~ /^chore: release/'
       when: on_success

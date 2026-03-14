@@ -1,21 +1,21 @@
 from nicegui import ui
-from styles.dashboards import _GRID, _TT_AXIS, _LEGEND, _C_SPEND, _C_INCOME, _C_PAYROLL, _C_NET_POS, _C_NET_NEG, _BANK_COLORS
+from styles.dashboards import GRID, TT_AXIS, LEGEND, C_SPEND, C_INCOME, C_PAYROLL, C_NET_POS, C_NET_NEG, BANK_COLORS
 
 # ── KPI card ──────────────────────────────────────────────────────────────────
 
-def _kpi_card(title: str, icon: str, kpi: dict) -> None:
+def kpi_card(title: str, icon: str, kpi: dict) -> None:
     net = kpi['net']
-    net_color = _C_NET_POS if net >= 0 else _C_NET_NEG
+    net_color = C_NET_POS if net >= 0 else C_NET_NEG
     with ui.element('div').classes('card flex-1').style('min-width:200px'):
         with ui.row().classes('items-center justify-between mb-3'):
             ui.label(title).classes('label-text')
             ui.icon(icon).style('font-size:1.2rem;color:var(--muted-fg)')
         with ui.row().classes('items-center justify-between'):
             ui.label('Spend').classes('text-xs text-muted')
-            ui.label(f"${kpi['spend']:,.0f}").classes('text-sm font-semibold').style(f'color:{_C_SPEND}')
+            ui.label(f"${kpi['spend']:,.0f}").classes('text-sm font-semibold').style(f'color:{C_SPEND}')
         with ui.row().classes('items-center justify-between'):
             ui.label('Income').classes('text-xs text-muted')
-            ui.label(f"${kpi['income']:,.0f}").classes('text-sm font-semibold').style(f'color:{_C_INCOME}')
+            ui.label(f"${kpi['income']:,.0f}").classes('text-sm font-semibold').style(f'color:{C_INCOME}')
         ui.separator().classes('my-2')
         ui.label(f"{'▲' if net >= 0 else '▼'} ${abs(net):,.0f}") \
             .classes('text-xl font-bold').style(f'color:{net_color}')
@@ -24,14 +24,14 @@ def _kpi_card(title: str, icon: str, kpi: dict) -> None:
 
 # ── Chart builders ────────────────────────────────────────────────────────────
 
-def _spend_income_chart(series: dict) -> None:
+def spend_income_chart(series: dict) -> None:
     import json
     budget      = series.get('budget', [None] * 12)
     budget_json = json.dumps(budget)
 
     ui.echart({
         'tooltip': {
-            **_TT_AXIS, 'axisPointer': {'type': 'shadow'},
+            **TT_AXIS, 'axisPointer': {'type': 'shadow'},
             ':formatter': f"""params => {{
                 let lines = params.map(p => {{
                     if (p.value == null) return null;
@@ -42,8 +42,8 @@ def _spend_income_chart(series: dict) -> None:
                 return params[0].name + '<br/>' + lines.join('<br/>');
             }}""",
         },
-        'legend': {**_LEGEND, 'data': ['Spend', 'Income', 'Budget'], 'left': 'center', 'top': 0},
-        'grid': _GRID,
+        'legend': {**LEGEND, 'data': ['Spend', 'Income', 'Budget'], 'left': 'center', 'top': 0},
+        'grid': GRID,
         'xAxis': {
             'type': 'category', 'data': series['months'],
             'axisLine': {'lineStyle': {'color': '#e4e4e7'}},
@@ -60,7 +60,7 @@ def _spend_income_chart(series: dict) -> None:
                 'name': 'Spend', 'type': 'bar',
                 'data': series['spend'],
                 'barMaxWidth': 28,
-                'itemStyle': {'color': _C_SPEND, 'borderRadius': [4, 4, 0, 0]},
+                'itemStyle': {'color': C_SPEND, 'borderRadius': [4, 4, 0, 0]},
                 'label': {'show': True, 'position': 'top', 'color': '#71717a', 'fontSize': 10,
                           ':formatter': 'v => v.value > 0 ? "$" + (v.value/1000).toFixed(1) + "k" : ""'},
             },
@@ -68,8 +68,8 @@ def _spend_income_chart(series: dict) -> None:
                 'name': 'Income', 'type': 'line', 'smooth': 0.3,
                 'data': series['income'],
                 'symbol': 'circle', 'symbolSize': 6,
-                'lineStyle': {'width': 2.5, 'color': _C_INCOME},
-                'itemStyle': {'color': _C_INCOME, 'borderWidth': 2, 'borderColor': '#fff'},
+                'lineStyle': {'width': 2.5, 'color': C_INCOME},
+                'itemStyle': {'color': C_INCOME, 'borderWidth': 2, 'borderColor': '#fff'},
                 'label': {'show': True, 'position': 'top', 'color': '#71717a', 'fontSize': 10,
                           ':formatter': 'v => v.value > 0 ? "$" + (v.value/1000).toFixed(1) + "k" : ""'},
             },
@@ -80,13 +80,13 @@ def _spend_income_chart(series: dict) -> None:
                 'lineStyle': {'width': 2, 'type': 'dashed', 'color': '#a78bfa'},
                 ':itemStyle': f"""(params) => {{
                     let v = ({budget_json})[params.dataIndex];
-                    return {{ color: v >= 0 ? '{_C_NET_POS}' : '{_C_NET_NEG}', borderColor: '#fff', borderWidth: 2 }};
+                    return {{ color: v >= 0 ? '{C_NET_POS}' : '{C_NET_NEG}', borderColor: '#fff', borderWidth: 2 }};
                 }}""",
                 'label': {
                     'show': True, 'position': 'top', 'fontSize': 10,
                     ':color': f"""(params) => {{
                         let v = ({budget_json})[params.dataIndex];
-                        return v == null ? 'transparent' : v >= 0 ? '{_C_NET_POS}' : '{_C_NET_NEG}';
+                        return v == null ? 'transparent' : v >= 0 ? '{C_NET_POS}' : '{C_NET_NEG}';
                     }}""",
                     ':formatter': f"""(params) => {{
                         let v = ({budget_json})[params.dataIndex];
@@ -100,15 +100,15 @@ def _spend_income_chart(series: dict) -> None:
     }).classes('w-full').style('height:300px')
 
 
-def _per_bank_chart(series: dict) -> None:
+def per_bank_chart(series: dict) -> None:
     banks = series['banks']
     if not banks:
         ui.label('No spend data for this year.').classes('text-sm text-muted py-8 text-center w-full')
         return
     ui.echart({
-        'tooltip': {**_TT_AXIS, 'axisPointer': {'type': 'cross'}},
-        'legend': {**_LEGEND, 'data': list(banks.keys()), 'left': 'center', 'top': 0},
-        'grid': _GRID,
+        'tooltip': {**TT_AXIS, 'axisPointer': {'type': 'cross'}},
+        'legend': {**LEGEND, 'data': list(banks.keys()), 'left': 'center', 'top': 0},
+        'grid': GRID,
         'xAxis': {
             'type': 'category', 'data': series['months'],
             'axisLine': {'lineStyle': {'color': '#e4e4e7'}},
@@ -124,8 +124,8 @@ def _per_bank_chart(series: dict) -> None:
             {
                 'name': bank, 'type': 'line', 'smooth': 0.3, 'data': values,
                 'symbol': 'circle', 'symbolSize': 5,
-                'lineStyle': {'width': 2, 'color': _BANK_COLORS[i % len(_BANK_COLORS)]},
-                'itemStyle': {'color': _BANK_COLORS[i % len(_BANK_COLORS)]},
+                'lineStyle': {'width': 2, 'color': BANK_COLORS[i % len(BANK_COLORS)]},
+                'itemStyle': {'color': BANK_COLORS[i % len(BANK_COLORS)]},
                 'emphasis': {'focus': 'series'},
                 'label': {'show': True, 'position': 'top', 'color': '#71717a', 'fontSize': 10,
                           ':formatter': 'v => v.value > 0 ? "$" + (v.value/1000).toFixed(1) + "k" : ""'},
@@ -135,7 +135,7 @@ def _per_bank_chart(series: dict) -> None:
     }).classes('w-full').style('height:300px')
 
 
-def _employer_income_chart(series: dict) -> None:
+def employer_income_chart(series: dict) -> None:
     legend  = []
     charts  = []
 
@@ -149,7 +149,7 @@ def _employer_income_chart(series: dict) -> None:
         charts.append({
             'name': 'Payroll', 'type': 'bar', 'data': series['payroll'],
             'stack': 'income', 'barMaxWidth': 28,
-            'itemStyle': {'color': _C_PAYROLL, 'borderRadius': [0, 0, 0, 0]},
+            'itemStyle': {'color': C_PAYROLL, 'borderRadius': [0, 0, 0, 0]},
             'label': _label,
         })
 
@@ -165,9 +165,9 @@ def _employer_income_chart(series: dict) -> None:
     })
 
     ui.echart({
-        'tooltip': {**_TT_AXIS, 'axisPointer': {'type': 'shadow'}},
-        'legend': {**_LEGEND, 'data': legend, 'left': 'center', 'top': 0},
-        'grid': _GRID,
+        'tooltip': {**TT_AXIS, 'axisPointer': {'type': 'shadow'}},
+        'legend': {**LEGEND, 'data': legend, 'left': 'center', 'top': 0},
+        'grid': GRID,
         'xAxis': {
             'type': 'category', 'data': series['months'],
             'axisLine': {'lineStyle': {'color': '#e4e4e7'}},
@@ -185,7 +185,7 @@ def _employer_income_chart(series: dict) -> None:
 
 # ── Category charts ─────────────────────────────────────────────────────────
 
-def _category_donut(series: dict, inverted: bool = False) -> None:
+def category_donut(series: dict, inverted: bool = False) -> None:
     if not series["categories"]:
         ui.label("No data.").classes("text-sm text-muted text-center py-8 w-full")
         return
@@ -215,7 +215,7 @@ def _category_donut(series: dict, inverted: bool = False) -> None:
 
     ui.echart({
         "tooltip": {"trigger": "item", ":formatter": tooltip_fmt},
-        "legend": {**_LEGEND, "orient": "vertical", "right": "2%", "top": "center",
+        "legend": {**LEGEND, "orient": "vertical", "right": "2%", "top": "center",
                    "textStyle": {"fontSize": 11, "color": "#71717a"}},
         "series": [{
             "type": "pie", "radius": ["42%", "68%"],
@@ -238,7 +238,7 @@ def _category_donut(series: dict, inverted: bool = False) -> None:
     }).classes("w-full").style("height:300px")
 
 
-def _category_trend_chart(series: dict, on_category_click=None, active_category: str | None = None) -> None:
+def category_trend_chart(series: dict, on_category_click=None, active_category: str | None = None) -> None:
     cats = series["categories"]
     if not cats:
         ui.label("No data.").classes("text-sm text-muted text-center py-8 w-full")
@@ -276,7 +276,7 @@ def _category_trend_chart(series: dict, on_category_click=None, active_category:
 
     chart = ui.echart({
         "tooltip": {
-            **_TT_AXIS, "axisPointer": {"type": "shadow"},
+            **TT_AXIS, "axisPointer": {"type": "shadow"},
             ":formatter": """params => {
                 let visible = params.filter(p => p.value > 0);
                 let total   = visible.reduce((s, p) => s + p.value, 0);
@@ -285,9 +285,9 @@ def _category_trend_chart(series: dict, on_category_click=None, active_category:
                 return params[0].name + '<br/>' + lines.join('<br/>');
             }""",
         },
-        "legend": {**_LEGEND, "top": 0, "left": "center",
+        "legend": {**LEGEND, "top": 0, "left": "center",
                    "data": cat_names, "textStyle": {"fontSize": 10}},
-        "grid": _GRID,
+        "grid": GRID,
         "xAxis": {
             "type": "category", "data": series["months"],
             "axisLine": {"lineStyle": {"color": "#e4e4e7"}},
@@ -304,11 +304,11 @@ def _category_trend_chart(series: dict, on_category_click=None, active_category:
     ).classes("w-full").style("height:320px; cursor:pointer")
 
 
-def _fixed_vs_variable_chart(series: dict) -> None:
+def fixed_vs_variable_chart(series: dict) -> None:
     ui.echart({
-        "tooltip": {**_TT_AXIS, "axisPointer": {"type": "shadow"}},
-        "legend": {**_LEGEND, "data": ["Fixed", "Variable"], "left": "center", "top": 0},
-        "grid": _GRID,
+        "tooltip": {**TT_AXIS, "axisPointer": {"type": "shadow"}},
+        "legend": {**LEGEND, "data": ["Fixed", "Variable"], "left": "center", "top": 0},
+        "grid": GRID,
         "xAxis": {
             "type": "category", "data": series["months"],
             "axisLine": {"lineStyle": {"color": "#e4e4e7"}},
@@ -341,7 +341,7 @@ def _fixed_vs_variable_chart(series: dict) -> None:
 
 # ── Daily transaction drill-down ─────────────────────────────────────────────
 
-def _weekly_transactions_chart(series: dict, on_category_click=None, active_category: str | None = None) -> None:
+def weekly_transactions_chart(series: dict, on_category_click=None, active_category: str | None = None) -> None:
     """
     ~52 bars for the year, one per ISO week (Mon–Sun), stacked by category.
     Tooltip shows every individual transaction in that week.
@@ -351,7 +351,7 @@ def _weekly_transactions_chart(series: dict, on_category_click=None, active_cate
         return
 
     import json
-    from services.category_rules import load_category_config
+    from data.category_rules import load_category_config
     cfg_cat   = load_category_config()
     color_map = {c.name: c.color for c in cfg_cat.categories}
 
@@ -463,13 +463,13 @@ def _weekly_transactions_chart(series: dict, on_category_click=None, active_cate
 
 # ── Transactions table ────────────────────────────────────────────────────────
 
-def _transactions_table(rows: list[dict]) -> None:
+def transactions_table(rows: list[dict]) -> None:
     """
     Paginated, searchable table of all spend transactions.
     The search input is handled at the dashboard level (triggers a data refresh).
     This function just renders the static table for the given rows.
     """
-    from services.category_rules import load_category_config
+    from data.category_rules import load_category_config
     cfg_cat   = load_category_config()
     color_map = {c.name: c.color for c in cfg_cat.categories}
 

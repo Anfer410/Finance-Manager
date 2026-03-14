@@ -2,6 +2,23 @@
 
 ## 2026-03-13
 
+app/services/loan_service.py
+
+Added monthly_insurance: float = 0.0 to LoanRecord
+compute_amortization: uses monthly_payment - monthly_insurance as the P&I payment — insurance is excluded from principal/interest math
+compute_stats: same adjustment for the interest_paid back-calculation
+load_loans / save_loan / _row_to_loan: all include the new column
+app/db_migration.py
+
+ALTER TABLE ... ADD COLUMN IF NOT EXISTS monthly_insurance for existing databases
+Column added to the CREATE TABLE for fresh installs
+app/pages/loans_content.py
+
+Dialog: added "Homeowner insurance $/mo" input field alongside the monthly payment field
+Summary panel: when insurance > 0, shows a P&I / Insurance breakdown under the monthly payment row
+
+## 2026-03-13
+
 ### Features
 
 #### Loans module
@@ -21,12 +38,12 @@
 - `write_to_consolidated()` normalises and bulk-inserts rows into `transactions_debit`/`transactions_credit` using `INSERT … ON CONFLICT DO NOTHING`.
 - `_resolve_person()` resolves `member_name` column values to `person_name` via `BankRule.member_aliases`.
 
-#### `services/db.py` (new)
+#### `data.db.py` (new)
 - Single source of truth for DB connectivity: `get_engine()` (LRU-cached), `get_schema()`, `get_conn_tuple()`, `get_url()`, `get_psycopg_dsn()`.
 - `ArchiveConfig` dataclass and `get_archive_cfg()` with priority: DB (`app_settings` table) → env vars → defaults.
 
 #### `services/config_repo.py` (new)
-- Unified config persistence layer replacing `services/db_config.py`. Provides `load_bank_rules` / `save_bank_rules`, `load_categories` / `save_categories`, `load_transaction_cfg` / `save_transaction_cfg`, `load_app_settings` / `save_app_settings` / `patch_app_settings`.
+- Unified config persistence layer replacing `data.db_config.py`. Provides `load_bank_rules` / `save_bank_rules`, `load_categories` / `save_categories`, `load_transaction_cfg` / `save_transaction_cfg`, `load_app_settings` / `save_app_settings` / `patch_app_settings`.
 - Backward-compat shims retained for transitional callers.
 
 #### Add-bank wizard (upload page)
@@ -64,7 +81,7 @@
 - `_person_case_for_rule()` resolves `member_aliases` via subquery to `app_users.person_name` (stable across display-name renames).
 
 #### DB connectivity consolidation
-- `auth.py`, `finance_dashboard_data.py`, `handle_upload.py`, `bank_rules.py`, `category_rules.py`, `transaction_config.py` all migrated to `services.db.get_engine()` / `get_schema()`.
+- `auth.py`, `finance_dashboard_data.py`, `handle_upload.py`, `bank_rules.py`, `category_rules.py`, `transaction_config.py` all migrated to `data.db.get_engine()` / `get_schema()`.
 
 #### `handle_upload.py` simplification
 - Reduced to a thin NiceGUI adapter; all logic delegated to `upload_pipeline.pipeline.run()`.
@@ -89,5 +106,5 @@
 
 - `pages/design_system_content.py` and `pages/icons_content.py` routes removed from `main.py`.
 - `_aliases_section()` call commented out in Settings.
-- `services/db_config.py` superseded by `services/config_repo.py` (shims retained for transition).
+- `data.db_config.py` superseded by `services/config_repo.py` (shims retained for transition).
 - Hardcoded `DEDUP_COLUMNS` dicts and `archive_upload()` removed from `handle_upload.py`.

@@ -5,10 +5,10 @@ finance_dashboard_content.py
 from __future__ import annotations
 from datetime import datetime
 from nicegui import ui
-import services.finance_dashboard_data as data
+import data.finance_dashboard_data as data
 from services.transaction_config import load_config, save_config
 from services.view_manager import ViewManager
-from services.db import get_conn_tuple, get_schema
+from data.db import get_conn_tuple, get_schema
 _DB_CONN = get_conn_tuple()
 _SCHEMA  = get_schema()
 
@@ -16,9 +16,9 @@ _SCHEMA  = get_schema()
 # ── Charts components ────────────────────────────────────────────────
 
 from components.finance_charts import (
-    _kpi_card, _spend_income_chart, _per_bank_chart, _employer_income_chart,
-    _category_donut, _fixed_vs_variable_chart, _category_trend_chart,
-    _weekly_transactions_chart, _transactions_table,
+    kpi_card, spend_income_chart, per_bank_chart, employer_income_chart,
+    category_donut, fixed_vs_variable_chart, category_trend_chart,
+    weekly_transactions_chart, transactions_table,
 )
 
 
@@ -199,15 +199,15 @@ def content() -> None:
                     .tooltip('Clear category filter')
 
         with ui.row().classes('w-full gap-4 flex-wrap mb-4'):
-            _kpi_card('All Time',   'all_inclusive',  data.get_alltime_kpi())
-            _kpi_card(f'{y} Total', 'calendar_today', data.get_yearly_kpi(y))
+            kpi_card('All Time',   'all_inclusive',  data.get_alltime_kpi())
+            kpi_card(f'{y} Total', 'calendar_today', data.get_yearly_kpi(y))
 
         with ui.row().classes('w-full gap-4 flex-wrap mb-4'):
             with ui.element('div').classes('card flex-1').style('min-width:320px'):
                 with ui.row().classes('items-center justify-between mb-3'):
                     ui.label('Monthly Spend vs Income').classes('section-title')
                     ui.label(str(y)).classes('text-xs text-muted')
-                _spend_income_chart(data.get_monthly_spend_series(y))
+                spend_income_chart(data.get_monthly_spend_series(y))
 
         person = state.get('person') or None
 
@@ -216,13 +216,13 @@ def content() -> None:
                 with ui.row().classes('items-center justify-between mb-3'):
                     ui.label('Spend per Account').classes('section-title')
                     ui.label(str(y)).classes('text-xs text-muted')
-                _per_bank_chart(data.get_spend_per_bank_series(y))
+                per_bank_chart(data.get_spend_per_bank_series(y))
 
             with ui.element('div').classes('card flex-1').style('min-width:280px'):
                 with ui.row().classes('items-center justify-between mb-3'):
                     ui.label('Monthly Payroll Income').classes('section-title')
                     ui.label(str(y)).classes('text-xs text-muted')
-                _employer_income_chart(data.get_employer_income_series(y))
+                employer_income_chart(data.get_employer_income_series(y))
 
         # Category spend donut + fixed vs variable
         with ui.row().classes('w-full gap-4 flex-wrap mb-4'):
@@ -231,7 +231,7 @@ def content() -> None:
 
                 @ui.refreshable
                 def _donut_view() -> None:
-                    _category_donut(data.get_spend_by_category(y, person), inverted=donut_state['inverted'])
+                    category_donut(data.get_spend_by_category(y, person), inverted=donut_state['inverted'])
 
                 def _toggle_invert() -> None:
                     donut_state['inverted'] = not donut_state['inverted']
@@ -251,7 +251,7 @@ def content() -> None:
                 with ui.row().classes('items-center justify-between mb-3'):
                     ui.label('Fixed vs Variable').classes('section-title')
                     ui.label(str(y)).classes('text-xs text-muted')
-                _fixed_vs_variable_chart(data.get_fixed_vs_variable(y, person))
+                fixed_vs_variable_chart(data.get_fixed_vs_variable(y, person))
 
         # Category trend stacked bar
         with ui.element('div').classes('card w-full mb-4'):
@@ -263,7 +263,7 @@ def content() -> None:
                 dashboard.refresh(y)
                 txn_table.refresh()
 
-            _category_trend_chart(
+            category_trend_chart(
                 data.get_category_trend(y, person),
                 on_category_click=_on_cat_click,
                 active_category=state.get('category'),
@@ -274,7 +274,7 @@ def content() -> None:
             with ui.row().classes('items-center justify-between mb-3'):
                 ui.label('Weekly Transactions').classes('section-title')
                 ui.label(str(y)).classes('text-xs text-muted')
-            _weekly_transactions_chart(
+            weekly_transactions_chart(
                 data.get_weekly_transactions(y, person, state.get('category')),
                 on_category_click=_on_cat_click,
                 active_category=state.get('category'),
@@ -440,7 +440,7 @@ def content() -> None:
         @ui.refreshable
         def txn_table() -> None:
             if filter_state['mode'] == 'simple':
-                _transactions_table(data.get_transactions_table(
+                transactions_table(data.gettransactions_table(
                     state['year'], state.get('person'),
                     category=state.get('category'),
                     filters={
@@ -452,7 +452,7 @@ def content() -> None:
                     },
                 ))
             else:
-                _transactions_table(data.get_transactions_table(
+                transactions_table(data.gettransactions_table(
                     state['year'], state.get('person'),
                     search=filter_state['search'],
                     category=state.get('category'),

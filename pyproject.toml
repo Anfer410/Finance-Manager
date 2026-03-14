@@ -1,0 +1,18 @@
+[tool.semantic_release]
+version_variables = ["app/config.json:appVersion"]
+branch = "main"
+commit_message = "chore: release {version} [skip ci]"
+tag_format = "v{version}"
+logging_use_named_masks = false
+
+[tool.semantic_release.changelog]
+exclude_commit_patterns = [
+    "^chore: release",
+    "^Merge branch",
+]
+
+[tool.semantic_release.commit_parser_options]
+# Conventional Commits: feat → minor, fix/perf → patch, breaking → major
+allowed_tags = ["feat", "fix", "perf", "refactor", "docs", "style", "test", "chore", "ci", "build"]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]

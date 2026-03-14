@@ -24,19 +24,8 @@ import sys
 from datetime import date
 from pathlib import Path
 from getpass import getpass
-
-from sqlalchemy import create_engine, text
-
-from services.helpers import read_secrets
-
-
-# ── Connection ─────────────────────────────────────────────────────────────────
-
-def _engine():
-    s = read_secrets()
-    url = (f"postgresql+psycopg://{s['DB_USER']}:{s['DB_PASSWORD']}"
-           f"@{s['DB_HOST']}:{s['DB_PORT']}/{s['DB_NAME']}")
-    return create_engine(url), s["DB_SCHEMA"]
+from sqlalchemy import Engine, text
+from data.db import get_engine, get_schema
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -50,7 +39,8 @@ def run_migrations() -> None:
     Never drops or alters existing objects — fully idempotent.
     """
     try:
-        engine, schema = _engine()
+        engine = get_engine()
+        schema = get_schema()
         with engine.begin() as conn:
             _create_app_tables(conn, schema)
             _create_transaction_tables(conn, schema)
@@ -107,6 +97,12 @@ def _create_app_tables(conn, schema: str) -> None:
         )
     """))
 
+    # Add monthly_insurance column to existing app_loans tables
+    conn.execute(text(f"""
+        ALTER TABLE {schema}.app_loans
+        ADD COLUMN IF NOT EXISTS monthly_insurance NUMERIC(12,2) NOT NULL DEFAULT 0
+    """))
+
     conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS {schema}.app_loans (
             id                           SERIAL PRIMARY KEY,
@@ -118,6 +114,7 @@ def _create_app_tables(conn, schema: str) -> None:
             term_months                  INT           NOT NULL DEFAULT 360,
             start_date                   DATE          NOT NULL,
             monthly_payment              NUMERIC(12,2) NOT NULL DEFAULT 0,
+            monthly_insurance            NUMERIC(12,2) NOT NULL DEFAULT 0,
             current_balance              NUMERIC(14,2) NOT NULL DEFAULT 0,
             balance_as_of                DATE          NOT NULL,
             arm_adjustment_period_months INT,
@@ -255,7 +252,7 @@ def _default_bank_rules() -> dict:
     path = Path("bank_rules_config.json")
     if path.exists():
         return {"rules": json.loads(path.read_text())}
-    from services.bank_rules import DEFAULT_RULES
+    from data.bank_rules import DEFAULT_RULES
     return {"rules": [r.to_dict() for r in DEFAULT_RULES]}
 
 
@@ -263,7 +260,7 @@ def _default_categories() -> dict:
     path = Path("category_rules.json")
     if path.exists():
         return json.loads(path.read_text())
-    from services.category_rules import DEFAULT_CATEGORIES, DEFAULT_RULES
+    from data.category_rules import DEFAULT_CATEGORIES, DEFAULT_RULES
     return {"categories": DEFAULT_CATEGORIES, "rules": DEFAULT_RULES}
 
 

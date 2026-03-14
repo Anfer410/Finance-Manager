@@ -22,28 +22,19 @@ Raw tables remain in the DB as archive; this file no longer touches them.
 
 from __future__ import annotations
 
-from sqlalchemy import create_engine, text
-from services.bank_rules import load_rules, BankRule
+from sqlalchemy import Engine, text
+from data.bank_rules import load_rules, BankRule
 from services.transaction_config import load_config
-from services.category_rules import load_category_config
-
-
-def _sqlalchemy_url(conn: tuple) -> str:
-    user, password, host, port, db = conn
-    return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{db}"
-
-def _q(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
+from data.category_rules import load_category_config
 
 def _esc(s: str) -> str:
     return s.replace("'", "''")
 
 
 class ViewManager:
-    def __init__(self, db_connection_string: tuple, schema: str = "public"):
-        self.conn_tuple = db_connection_string
+    def __init__(self, engine: Engine , schema: str = "public"):
         self.schema     = schema
-        self.engine     = create_engine(_sqlalchemy_url(db_connection_string))
+        self.engine     = engine
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -391,5 +382,5 @@ class ViewManager:
 
 
 def default_view_manager(schema: str | None = None) -> ViewManager:
-    from services.db import get_conn_tuple, get_schema
+    from data.db import get_conn_tuple, get_schema
     return ViewManager(get_conn_tuple(), schema=schema or get_schema())

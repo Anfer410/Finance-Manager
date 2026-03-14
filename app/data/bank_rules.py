@@ -5,8 +5,6 @@ Rules are stored as dicts (easily serializable to JSON/DB) and matched dynamical
 
 from dataclasses import dataclass, field, asdict
 from typing import Literal, Optional
-import json
-from pathlib import Path
 from datetime import datetime
 
 
@@ -45,7 +43,7 @@ class BankRule:
 
     # ── Per-rule member name aliases ─────────────────────────────────────────
     # Maps raw member_name value → user_id (stable across display_name changes).
-    # e.g. {"ANDRZEJ": 1, "JESSICA": 2}
+    # e.g. {"JOHN": 1, "ANNA": 2}
     # Resolved to person_name at view-build time via app_users table.
     member_aliases: dict = field(default_factory=dict)
 
@@ -71,55 +69,10 @@ class BankRule:
 
 # ── Default rules ─────────────────────────────────────────────────────────────
 
-DEFAULT_RULES: list[BankRule] = [
-    # BankRule(
-    #     bank_name="Capital One",
-    #     prefix="cap1",
-    #     match_type="contains",
-    #     match_value="transaction_download",
-    #     account_type="credit",
-    #     payment_category="Payment/Credit",
-    #     payment_description="MOBILE PYMT",
-    #     checking_payment_pattern="CAPITAL ONE",
-    #     note="e.g. 2024-01-15_transaction_download.csv",
-    # ),
-    # BankRule(
-    #     bank_name="Wells Fargo Checking",
-    #     prefix="wf",
-    #     match_type="contains",
-    #     match_value="Checking",
-    #     account_type="checking",
-    #     note="e.g. Checking1234.csv",
-    # ),
-    # BankRule(
-    #     bank_name="Wells Fargo Savings",
-    #     prefix="wf",
-    #     match_type="contains",
-    #     match_value="Savings",
-    #     account_type="checking",
-    #     person_override="mutual",
-    #     note="e.g. Savings5678.csv",
-    # ),
-    # BankRule(
-    #     bank_name="Citi",
-    #     prefix="citi",
-    #     match_type="contains",
-    #     match_value="citi",
-    #     account_type="credit",
-    #     payment_description="ONLINE PAYMENT",
-    #     checking_payment_pattern="CITI CARD",
-    #     member_name_column="member_name",
-    #     person_override="",
-    #     note="e.g. Citi_export.csv",
-    # ),
-]
+DEFAULT_RULES: list[BankRule] = []
 
 
 # ── Persistent rule store ─────────────────────────────────────────────────────
-
-RULES_FILE = Path("bank_rules_config.json")  # kept for fallback only
-
-
 def load_rules() -> list[BankRule]:
     try:
         from services.config_repo import load_bank_rules
@@ -139,12 +92,8 @@ def load_rules() -> list[BankRule]:
                     rule.payment_category = default.payment_category
             return rules
     except Exception as e:
-        print(f"[bank_rules] DB load failed ({e}), falling back to file/defaults")
+        print(f"[bank_rules] DB load failed ({e})")
 
-    if RULES_FILE.exists():
-        data = json.loads(RULES_FILE.read_text())
-        return [BankRule.from_dict(r) for r in data]
-    return list(DEFAULT_RULES)
 
 
 def save_rules(rules: list[BankRule]) -> None:
@@ -153,8 +102,8 @@ def save_rules(rules: list[BankRule]) -> None:
         save_bank_rules([r.to_dict() for r in rules])
         return
     except Exception as e:
-        print(f"[bank_rules] DB save failed ({e}), falling back to file")
-    RULES_FILE.write_text(json.dumps([r.to_dict() for r in rules], indent=2))
+        print(f"[bank_rules] DB save failed ({e})")
+    
 
 
 # ── Matcher ───────────────────────────────────────────────────────────────────

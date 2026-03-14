@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass, replace
-from datetime import date, timedelta
+from datetime import date
 from typing import Optional
 
 from sqlalchemy import text
@@ -38,11 +38,11 @@ from sqlalchemy import text
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _engine():
-    from services.db import get_engine
+    from data.db import get_engine
     return get_engine()
 
 def _schema() -> str:
-    from services.db import get_schema
+    from data.db import get_schema
     return get_schema()
 
 def _add_months(d: date, n: int) -> date:
@@ -88,6 +88,7 @@ class LoanRecord:
     lender:                       str = ""
     notes:                        str = ""
     is_active:                    bool = True
+    monthly_insurance:            float = 0.0
 
 
 @dataclass
@@ -124,7 +125,8 @@ def load_loans() -> list[LoanRecord]:
                    monthly_payment, current_balance, balance_as_of,
                    arm_adjustment_period_months, arm_rate_cap, arm_lifetime_cap,
                    payment_description_pattern, payment_account_key,
-                   lender, notes, is_active
+                   lender, notes, is_active,
+                   COALESCE(monthly_insurance, 0) AS monthly_insurance
             FROM {schema}.app_loans
             WHERE is_active = TRUE
             ORDER BY id
@@ -146,6 +148,7 @@ def save_loan(loan: LoanRecord) -> int:
         "term_months":                  loan.term_months,
         "start_date":                   loan.start_date,
         "monthly_payment":              loan.monthly_payment,
+        "monthly_insurance":            loan.monthly_insurance or 0.0,
         "current_balance":              loan.current_balance,
         "balance_as_of":                loan.balance_as_of,
         "arm_adjustment_period_months": loan.arm_adjustment_period_months,
@@ -163,14 +166,14 @@ def save_loan(loan: LoanRecord) -> int:
                 INSERT INTO {schema}.app_loans
                     (name, loan_type, rate_type, interest_rate,
                      original_principal, term_months, start_date,
-                     monthly_payment, current_balance, balance_as_of,
+                     monthly_payment, monthly_insurance, current_balance, balance_as_of,
                      arm_adjustment_period_months, arm_rate_cap, arm_lifetime_cap,
                      payment_description_pattern, payment_account_key,
                      lender, notes, is_active, updated_at)
                 VALUES
                     (:name, :loan_type, :rate_type, :interest_rate,
                      :original_principal, :term_months, :start_date,
-                     :monthly_payment, :current_balance, :balance_as_of,
+                     :monthly_payment, :monthly_insurance, :current_balance, :balance_as_of,
                      :arm_adjustment_period_months, :arm_rate_cap, :arm_lifetime_cap,
                      :payment_description_pattern, :payment_account_key,
                      :lender, :notes, :is_active, NOW())
@@ -186,6 +189,7 @@ def save_loan(loan: LoanRecord) -> int:
                     original_principal = :original_principal,
                     term_months = :term_months, start_date = :start_date,
                     monthly_payment = :monthly_payment,
+                    monthly_insurance = :monthly_insurance,
                     current_balance = :current_balance, balance_as_of = :balance_as_of,
                     arm_adjustment_period_months = :arm_adjustment_period_months,
                     arm_rate_cap = :arm_rate_cap, arm_lifetime_cap = :arm_lifetime_cap,
@@ -224,6 +228,7 @@ def _row_to_loan(r) -> LoanRecord:
         lender=r[16] or "",
         notes=r[17] or "",
         is_active=r[18],
+        monthly_insurance=float(r[19]) if r[19] is not None else 0.0,
     )
 
 
@@ -236,7 +241,8 @@ def compute_amortization(loan: LoanRecord) -> list[AmortizationRow]:
     """
     monthly_rate = (loan.interest_rate / 100) / 12
     balance      = loan.current_balance
-    payment      = loan.monthly_payment
+    # Insurance is not applied to principal/interest — use P&I portion only
+    payment      = loan.monthly_payment - (loan.monthly_insurance or 0.0)
     current_date = loan.balance_as_of
     rows         = []
     MAX_MONTHS   = loan.term_months + 24   # safety cap
@@ -275,9 +281,10 @@ def compute_stats(loan: LoanRecord) -> LoanStats:
         months_remaining         = 0
         total_interest_remaining = 0.0
 
-    months_elapsed = _months_between(loan.start_date, loan.balance_as_of)
-    principal_paid = round(max(loan.original_principal - loan.current_balance, 0.0), 2)
-    interest_paid  = round(max(loan.monthly_payment * months_elapsed - principal_paid, 0.0), 2)
+    months_elapsed  = _months_between(loan.start_date, loan.balance_as_of)
+    principal_paid  = round(max(loan.original_principal - loan.current_balance, 0.0), 2)
+    pi_payment      = loan.monthly_payment - (loan.monthly_insurance or 0.0)
+    interest_paid   = round(max(pi_payment * months_elapsed - principal_paid, 0.0), 2)
     equity_pct     = round(principal_paid / loan.original_principal * 100, 1) if loan.original_principal > 0 else 0.0
     daily_interest = round(loan.current_balance * (loan.interest_rate / 100) / 365, 2)
 

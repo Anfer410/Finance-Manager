@@ -41,11 +41,12 @@ def content() -> None:
 
         with ui.element("div").classes("login-card"):
 
+            ui.label("Username")
             username_input = ui.input(
                 label="Username",
                 placeholder="Enter your username",
             ).props("outlined dense").classes("w-full mb-3")
-
+            ui.label("Password")
             password_input = ui.input(
                 label="Password",
                 placeholder="Enter your password",

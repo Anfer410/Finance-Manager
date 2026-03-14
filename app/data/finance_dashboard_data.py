@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from sqlalchemy import text
 
-from services.db import get_engine, get_schema
+from data.db import get_engine, get_schema
 
 _SCHEMA        = get_schema()
 V_ALL_SPEND    = f"{_SCHEMA}.v_all_spend"
@@ -132,7 +132,7 @@ def get_year_over_year_monthly_spend_series(year_back: int = 2) -> dict:
     """
     Monthly spend + income from Jan of (today.year - year_back) through current month,
     with a rolling surplus that carries forward across months.
-    Returns the same shape as get_monthly_spend_series() so _spend_income_chart
+    Returns the same shape as get_monthly_spend_series() so spend_income_chart
     can consume it directly.
     """
     from datetime import date
@@ -274,7 +274,7 @@ def get_spend_by_category(year: int, person: str | None = None) -> dict:
         ORDER BY total DESC
     """, year=year, **({"person": person} if person else {}))
 
-    from services.category_rules import load_category_config
+    from data.category_rules import load_category_config
     cfg_cat   = load_category_config()
     color_map = {c.name: c.color for c in cfg_cat.categories}
 
@@ -299,7 +299,7 @@ def get_category_trend(year: int, person: str | None = None) -> dict:
         ORDER BY category, m
     """, year=year, **({"person": person} if person else {}))
 
-    from services.category_rules import load_category_config
+    from data.category_rules import load_category_config
     cfg_cat   = load_category_config()
     color_map = {c.name: c.color for c in cfg_cat.categories}
 
@@ -479,7 +479,7 @@ def _parse_search(search: str):
     return col_filters, free_text, date_from, date_to
 
 
-def get_transactions_table(
+def gettransactions_table(
     year: int,
     person: str | None = None,
     search: str = "",

@@ -23,8 +23,7 @@ from __future__ import annotations
 
 import io
 import re
-from dataclasses import dataclass, field
-from datetime import date
+from dataclasses import dataclass
 from typing import Literal
 
 import pandas as pd
@@ -209,7 +208,7 @@ def _resolve_person(row: pd.Series, rule, member_col: str | None, default_person
             if alias_raw.upper() in raw_val or raw_val in alias_raw.upper():
                 # Resolve user_id → person_name
                 try:
-                    from services.db import get_engine, get_schema
+                    from data.db import get_engine, get_schema
                     from sqlalchemy import text
                     engine = get_engine()
                     schema = get_schema()
@@ -239,7 +238,7 @@ def write_to_consolidated(
     Returns number of rows inserted.
     """
     from sqlalchemy import text
-    from services.db import get_engine, get_schema
+    from data.db import get_engine, get_schema
     from db_migration import ensure_partition_for_year
 
     engine      = get_engine()
@@ -391,7 +390,7 @@ class UploadPipeline:
         bank_rule=None,
         col_mapping: ColumnMapping | None = None,
     ) -> UploadResult:
-        from services.bank_rules import _matcher, load_rules, BankRule
+        from data.bank_rules import _matcher, load_rules
         from services.raw_table_manager import parse_csv, default_manager
         from services.view_manager import default_view_manager
 
@@ -515,8 +514,6 @@ class UploadPipeline:
         try:
             vm = default_view_manager()
             vm.refresh()
-            from services.view_manager import diagnose
-            diagnose()
         except Exception as ex:
             print(f"[UploadPipeline] view refresh failed: {ex}")
 

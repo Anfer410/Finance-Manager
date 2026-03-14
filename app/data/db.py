@@ -1,5 +1,5 @@
 """
-services/db.py
+data.db.py
 
 Single source of truth for database connectivity and app-level settings
 (archive path, archive enabled flag).
@@ -8,7 +8,7 @@ Every other module imports from here instead of calling read_secrets() directly
 for DB purposes.
 
 Usage:
-    from services.db import get_engine, get_schema, get_conn_tuple, get_archive_cfg
+    from data.db import get_engine, get_schema, get_conn_tuple, get_archive_cfg
 
     engine = get_engine()
     schema = get_schema()
@@ -18,36 +18,31 @@ Usage:
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Optional
-
-import dotenv
 from sqlalchemy import Engine, create_engine
+from services.helpers import env
 
-dotenv.load_dotenv()
 
 
 # ── Connection config (from env) ──────────────────────────────────────────────
 
-def _env(key: str, default: str = "") -> str:
-    return os.getenv(key, default)
+
 
 
 def get_conn_tuple() -> tuple[str, str, str, int, str]:
     """Return (user, password, host, port, dbname) from environment."""
     return (
-        _env("DB_USER",     "psqlroot"),
-        _env("DB_PASSWORD", "password"),
-        _env("DB_HOST",     "localhost"),
-        int(_env("DB_PORT", "5432")),
-        _env("DB_NAME",     "finance-manager"),
+        env("DB_USER",     "psqlroot"),
+        env("DB_PASSWORD", "password"),
+        env("DB_HOST",     "localhost"),
+        int(env("DB_PORT", "5432")),
+        env("DB_NAME",     "finance-manager"),
     )
 
 
 def get_schema() -> str:
-    return _env("DB_SCHEMA", "finance")
+    return env("DB_SCHEMA", "finance")
 
 
 def get_url() -> str:
@@ -101,6 +96,6 @@ def get_archive_cfg() -> ArchiveConfig:
         pass
 
     return ArchiveConfig(
-        path    = _env("ARCHIVES_FOLDER",  ".archive"),
-        enabled = _env("ARCHIVE_ENABLED",  "true").lower() not in ("false", "0", "no"),
+        path    = env("ARCHIVES_FOLDER",  ".archive"),
+        enabled = env("ARCHIVE_ENABLED",  "true").lower() not in ("false", "0", "no"),
     )

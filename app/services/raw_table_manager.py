@@ -11,7 +11,8 @@ import re
 import uuid
 import pandas as pd
 import psycopg
-from sqlalchemy import create_engine, text, inspect
+from sqlalchemy import text, inspect
+from data.db import get_engine, get_schema, get_psycopg_dsn
 
 
 # ── Type mapping: pandas dtype → Postgres column type ────────────────────────
@@ -34,20 +35,9 @@ def _quote(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-# ── Connection helpers ────────────────────────────────────────────────────────
-
-def _sqlalchemy_url(conn: tuple) -> str:
-    user, password, host, port, db = conn
-    return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{db}"
-
-def _psycopg_dsn(conn: tuple) -> str:
-    user, password, host, port, db = conn
-    return f"host={host} port={port} user={user} password={password} dbname={db}"
-
 # Convenience: build a manager using the app-wide DB config
-def default_manager(schema: str | None = None) -> "RawTableManager":
-    from services.db import get_conn_tuple, get_schema
-    return RawTableManager(get_conn_tuple(), schema=schema or get_schema())
+def default_manager() -> "RawTableManager":
+    return RawTableManager()
 
 
 # ── CSV pre-processors ────────────────────────────────────────────────────────
@@ -180,15 +170,14 @@ class RawTableManager:
     Manages raw_<bank> tables.
 
     Usage:
-        mgr = RawTableManager(db_connection_string, schema="finance")
+        mgr = RawTableManager()
         inserted = mgr.upsert(df, bank_name="wells_fargo_checking",
                               dedup_columns=["transaction_date","amount","description"])
     """
 
-    def __init__(self, db_connection_string: tuple, schema: str = "public"):
-        self.conn_tuple = db_connection_string
-        self.schema     = schema
-        self.engine     = create_engine(_sqlalchemy_url(db_connection_string))
+    def __init__(self):
+        self.schema = get_schema()
+        self.engine = get_engine()
         self._ensure_schema()
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -322,7 +311,7 @@ class RawTableManager:
         cols            = list(df.columns)
         col_list        = ", ".join(_quote(c) for c in cols)
 
-        with psycopg.connect(_psycopg_dsn(self.conn_tuple)) as pg_conn:
+        with psycopg.connect(get_psycopg_dsn()) as pg_conn:
             with pg_conn.cursor() as cur:
                 # Session-scoped temp table — no constraints so duplicate rows
                 # in the source CSV are accepted here and deduplicated on insert

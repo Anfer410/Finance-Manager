@@ -19,8 +19,8 @@ from services.loan_service import (
     compute_stats, match_payments, get_monthly_spend_income,
 )
 
-from components.finance_charts import _spend_income_chart
-from services.finance_dashboard_data import get_year_over_year_monthly_spend_series
+from components.finance_charts import spend_income_chart
+from data.finance_dashboard_data import get_year_over_year_monthly_spend_series
 from pages.loan_planning_content import _baseline_section
 
 LOAN_TYPES  = ["mortgage", "auto", "student", "personal", "heloc", "other"]
@@ -96,7 +96,7 @@ def _overview_chart() -> None:
                     ui.icon("show_chart").classes("text-5xl text-zinc-200")
                     ui.label("No transaction data yet").classes("text-sm text-zinc-400")
                 return
-            _spend_income_chart(series)
+            spend_income_chart(series)
 
 
 # ── Loan card ─────────────────────────────────────────────────────────────────
@@ -262,6 +262,10 @@ def _summary_panel(loan: LoanRecord, stats: LoanStats) -> None:
         _srow("Original loan",  f"${loan.original_principal:,.0f}")
         _srow("Remaining",      f"${loan.current_balance:,.0f}")
         _srow("Monthly pmt",    f"${loan.monthly_payment:,.0f}")
+        if loan.monthly_insurance:
+            pi = loan.monthly_payment - loan.monthly_insurance
+            _srow("  P&I",       f"${pi:,.0f}")
+            _srow("  Insurance", f"${loan.monthly_insurance:,.0f}")
         _srow("Interest rate",  f"{loan.interest_rate:.2f}%")
         _srow("Term",           f"{loan.term_months // 12}yr {loan.term_months % 12}mo")
         _srow("Start date",     loan.start_date.strftime("%b %Y"))
@@ -399,9 +403,13 @@ def _loan_dialog(loan: LoanRecord | None, on_refresh) -> None:
                 rate_in = _num("", loan.interest_rate if loan else 6.5,
                                 fmt="%.3f", min=0, max=30).classes("w-full")
             with ui.column().classes("flex-1 gap-0"):
-                _lbl("Monthly payment $")
+                _lbl("Monthly payment $ (total)")
                 payment_in = _num("", loan.monthly_payment if loan else 0,
                                    min=0).classes("w-full")
+            with ui.column().classes("flex-1 gap-0"):
+                _lbl("Homeowner insurance $/mo")
+                insurance_in = _num("", loan.monthly_insurance if loan else 0.0,
+                                     min=0).classes("w-full")
 
         with ui.row().classes("gap-3 w-full"):
             with ui.column().classes("flex-1 gap-0"):
@@ -518,6 +526,7 @@ def _loan_dialog(loan: LoanRecord | None, on_refresh) -> None:
                 term_months                 = int(term_in.value or 360),
                 start_date                  = start_date,
                 monthly_payment             = float(payment_in.value or 0),
+                monthly_insurance           = float(insurance_in.value or 0),
                 current_balance             = float(balance_in.value or 0),
                 balance_as_of               = balance_date,
                 arm_adjustment_period_months= int(arm_period_in.value or 60) if is_arm else None,

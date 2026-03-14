@@ -25,7 +25,7 @@ import bcrypt
 from sqlalchemy import text
 from nicegui import app, ui
 
-from services.db import get_engine, get_schema
+from data.db import get_engine, get_schema
 
 _ENGINE = get_engine()
 _SCHEMA = get_schema()

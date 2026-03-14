@@ -7,14 +7,14 @@ from pathlib import Path
 from nicegui import ui, events
 
 import services.auth as auth
-from services.bank_rules import BankRule, load_rules, save_rules
+from data.bank_rules import BankRule, load_rules, save_rules
 from services.handle_upload import handle_upload
 from services.upload_pipeline import (
     sniff, suggest_mapping, ColumnMapping,
     REQUIRED_ROLES, SniffResult,
 )
 from services.notifications import notify
-from services.db import get_engine, get_schema
+from data.db import get_engine, get_schema
 
 
 ACCOUNT_COLORS = {
@@ -425,7 +425,7 @@ def _open_add_bank_wizard(on_done):
                             "(the app will uppercase it), then pick the matching user."
                         ).classes("text-xs text-zinc-400")
                     with ui.row().classes("w-full items-end gap-2"):
-                        raw_val_in = ui.input(placeholder="e.g. ANDRZEJ") \
+                        raw_val_in = ui.input(placeholder="e.g. JOHN") \
                             .classes("flex-1").props("outlined dense")
                         user_sel = ui.select(
                             user_opt_labels, label=None,
@@ -1361,7 +1361,7 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
                         "then pick the matching user."
                     ).classes("text-xs text-zinc-400")
                 with ui.row().classes("w-full items-end gap-2"):
-                    raw_val_in = ui.input(placeholder="e.g. ANDRZEJ") \
+                    raw_val_in = ui.input(placeholder="e.g. JOHN") \
                         .classes("flex-1").props("outlined dense")
                     user_sel = ui.select(
                         user_opt_labels,

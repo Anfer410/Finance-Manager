@@ -6,14 +6,15 @@ Settings page:
   - Admin only: user management (add, edit, deactivate users)
 """
 
-from nicegui import ui
 import services.auth as auth
 import json
 import base64
+
+from nicegui import ui
 from datetime import datetime
 from services.transaction_config import load_config, save_config
-from services.bank_rules import load_rules, save_rules, BankRule
-from services.category_rules import load_category_config, save_category_config, CategoryConfig, Category, CategoryRule
+from data.bank_rules import load_rules, save_rules, BankRule
+from data.category_rules import load_category_config, save_category_config, CategoryConfig, Category, CategoryRule
 from services.raw_table_manager import default_manager
 
 
@@ -292,7 +293,7 @@ def _add_user_dialog(on_change) -> None:
 def _user_management_section() -> None:
     # Pull persons from transaction data for the person selector
     try:
-        from services.finance_dashboard_data import get_persons
+        from data.finance_dashboard_data import get_persons
         all_persons = get_persons()
     except Exception:
         all_persons = []
@@ -344,7 +345,7 @@ def _aliases_section() -> None:
             ui.label(
                 'Maps member name substrings from bank CSVs to person identifiers. '
                 'Used for banks like Citi that store cardholder name instead of a person tag '
-                '(e.g. "ANDRZEJ" → "andy").'
+                '(e.g. "JOHN" → "andy").'
             ).classes('text-xs text-zinc-400')
 
             @ui.refreshable
@@ -370,7 +371,7 @@ def _aliases_section() -> None:
             render_alias_chips()
 
             with ui.row().classes('items-center gap-2'):
-                alias_name_in  = ui.input(label='Bank member name', placeholder='e.g. ANDRZEJ') \
+                alias_name_in  = ui.input(label='Bank member name', placeholder='e.g. JOHN') \
                     .props('outlined dense').classes('flex-1')
                 alias_value_in = ui.input(label='Person alias', placeholder='e.g. andy') \
                     .props('outlined dense').classes('w-36')
@@ -607,7 +608,7 @@ def _finance_data_export_section() -> None:
     def _query_csv(sql: str) -> str:
         import csv, io as _io
         from sqlalchemy import text
-        from services.db import get_engine
+        from data.db import get_engine
         with get_engine().connect() as conn:
             result = conn.execute(text(sql))
             rows   = result.fetchall()
@@ -642,7 +643,7 @@ def _finance_data_export_section() -> None:
                 'Useful for backups or migrating to another instance.'
             ).classes('text-xs text-zinc-400')
 
-            from services.db import get_schema
+            from data.db import get_schema
             schema = get_schema()
 
             rows_cfg = [
@@ -773,7 +774,7 @@ def _finance_data_import_section() -> None:
 
                     def do_import():
                         from sqlalchemy import text as _text
-                        from services.db import get_engine, get_schema
+                        from data.db import get_engine, get_schema
                         schema  = get_schema()
                         engine  = get_engine()
                         inserted = skipped = 0

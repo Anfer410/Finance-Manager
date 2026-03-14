@@ -7,36 +7,23 @@ Route: /categories
 
 from __future__ import annotations
 from nicegui import ui
-from services.category_rules import (
+from data.category_rules import (
     load_category_config, save_category_config,
     Category, CategoryRule, CategoryConfig,
 )
 from services.view_manager import ViewManager
+from data.db import get_engine, get_schema
 
-from services.helpers import read_secrets
-secrets = read_secrets()
-DB_CONN = (
-    secrets["DB_USER"],
-    secrets["DB_PASSWORD"],
-    secrets["DB_HOST"],
-    secrets["DB_PORT"],
-    secrets["DB_NAME"],
-)
-SCHEMA = secrets["DB_SCHEMA"]
+from styles.dashboards import COST_TYPES, FIXED_COLOR, VAR_COLOR
 
-COST_TYPES    = ["variable", "fixed"]
-FIXED_COLOR   = "#60a5fa"
-VAR_COLOR     = "#fb923c"
+SCHEMA = get_schema()
+ENGINE = get_engine()
 
-
-def _badge(text: str, color: str) -> None:
-    ui.element('span').classes('px-2 py-0.5 rounded-full text-xs font-medium text-white') \
-        .style(f'background:{color}').text = text
 
 
 def content() -> None:
     cfg = load_category_config()
-    vm  = ViewManager(DB_CONN, schema=SCHEMA)
+    vm  = ViewManager(engine=ENGINE, schema=SCHEMA)
 
     with ui.row().classes('w-full items-center justify-between mb-2'):
         with ui.column().classes('gap-0'):

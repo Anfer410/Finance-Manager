@@ -32,7 +32,7 @@ class TransactionConfig:
     # Used by view_manager to resolve person from member_name columns.
     # Key: substring to match in the member_name column (case-insensitive)
     # Value: person alias (e.g. "andy", "jess")
-    # Example: {"ANDRZEJ": "andy", "JESSICA": "jess"}
+    # Example: {"JOHN": "andy", "ANNA": "jess"}
     member_aliases: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict:

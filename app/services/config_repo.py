@@ -2,7 +2,7 @@
 services/config_repo.py
 
 Single repository for all persisted configuration.
-Replaces services/db_config.py — callers should switch to this module.
+Replaces data.db_config.py — callers should switch to this module.
 
 All functions read from / write to the app_config_* and app_settings tables.
 The dataclass models (BankRule, CategoryConfig, TransactionConfig) live in
@@ -37,7 +37,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from services.db import get_engine, get_schema
+from data.db import get_engine, get_schema
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ def load_categories() -> dict:
     data = _config_get("categories")
     if not data:
         # Seed from defaults on first call
-        from services.category_rules import DEFAULT_CATEGORIES, DEFAULT_RULES
+        from data.category_rules import DEFAULT_CATEGORIES, DEFAULT_RULES
         return {"categories": DEFAULT_CATEGORIES, "rules": DEFAULT_RULES}
     return data
 

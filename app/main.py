@@ -16,10 +16,9 @@ import pages.settings_content
 import pages.login_content
 import pages.loans_content
 import pages.loan_planning_content
-
 import services.auth as auth
 
-from services.helpers import read_secrets
+from services.helpers import env
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 with open('config.json') as f:
@@ -28,7 +27,7 @@ with open('config.json') as f:
 appName    = config["appName"]
 appVersion = config["appVersion"]
 appPort    = config["appPort"]
-appEnv     = read_secrets()['APP_ENV']
+appEnv     = env("APP_ENV", "dev")
 
 app.add_static_files('/assets', 'assets')
 

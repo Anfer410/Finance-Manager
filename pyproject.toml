@@ -5,6 +5,10 @@ commit_message = "chore: release {version} [skip ci]"
 tag_format = "v{version}"
 logging_use_named_masks = false
 
+[tool.semantic_release.remote]
+type = "gitlab"
+token = { env = "GITLAB_TOKEN" }
+
 [tool.semantic_release.changelog]
 exclude_commit_patterns = [
     "^chore: release",

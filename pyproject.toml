@@ -7,6 +7,7 @@ logging_use_named_masks = false
 
 [tool.semantic_release.remote]
 type = "gitlab"
+domain = "gitlab.iveydomek.xyz"
 token = { env = "GITLAB_TOKEN" }
 
 [tool.semantic_release.changelog]

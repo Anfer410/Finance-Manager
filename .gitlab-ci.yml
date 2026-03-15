@@ -20,11 +20,13 @@ version-bump:
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE !~ /^chore: release/'
       when: on_success
   script:
-    - pip install python-semantic-release
+    - pip install "python-semantic-release>=9,<10"
+    - export GL_TOKEN="$GITLAB_TOKEN"
     - git config user.email "gitlab-ci@$CI_SERVER_HOST"
     - git config user.name "GitLab CI"
     - git remote set-url origin "https://oauth2:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
     - git checkout "$CI_COMMIT_BRANCH"
+    - git pull origin "$CI_COMMIT_BRANCH"
     - semantic-release version
     - semantic-release publish
 

@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-03-15
+    Assure that all services use services.notifications notify vs ui.notify
+
 ## 2026-03-13
 
 app/services/loan_service.py

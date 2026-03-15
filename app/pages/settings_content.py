@@ -12,10 +12,12 @@ import base64
 
 from nicegui import ui
 from datetime import datetime
+
+from services.notifications import notify
 from services.transaction_config import load_config, save_config
+from services.raw_table_manager import default_manager
 from data.bank_rules import load_rules, save_rules, BankRule
 from data.category_rules import load_category_config, save_category_config, CategoryConfig, Category, CategoryRule
-from services.raw_table_manager import default_manager
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -439,7 +441,7 @@ def _export_import_section() -> None:
             a.download = '{filename}';
             a.click();
         """)
-        ui.notify(f'Exported {filename}', type='positive', position='top')
+        notify(f'Exported {filename}', type='positive', position='top')
 
     with _card('Data migration', 'import_export'):
         _section_header('Data migration', 'import_export')
@@ -579,14 +581,14 @@ def _export_import_section() -> None:
                                 imported.append('transaction config')
 
                             if imported:
-                                ui.notify(f"Imported: {', '.join(imported)}", type='positive', position='top')
+                                notify(f"Imported: {', '.join(imported)}", type='positive', position='top')
                             else:
-                                ui.notify('Nothing selected to import.', type='warning', position='top')
+                                notify('Nothing selected to import.', type='warning', position='top')
 
                             import_state['preview'] = None
                             import_ui.refresh()
                         except Exception as ex:
-                            ui.notify(f'Import failed: {ex}', type='negative', position='top')
+                            notify(f'Import failed: {ex}', type='negative', position='top')
 
                     with ui.row().classes('gap-2 mt-1'):
                         ui.button('Cancel', on_click=lambda: (
@@ -632,7 +634,7 @@ def _finance_data_export_section() -> None:
                     a.click();
                 """)
             except Exception as ex:
-                ui.notify(f'Export failed: {ex}', type='negative', position='top')
+                notify(f'Export failed: {ex}', type='negative', position='top')
         return _do
 
     with _card('Finance data export', 'table_chart'):
@@ -853,7 +855,7 @@ def _finance_data_import_section() -> None:
                         msg = f'Imported {inserted} {type_lbl.lower()}'
                         if skipped:
                             msg += f', {skipped} skipped (duplicates or errors)'
-                        ui.notify(msg, type='positive', position='top')
+                        notify(msg, type='positive', position='top')
                         import_state.update({'preview': None, 'file_type': None, 'error': ''})
                         import_ui.refresh()
 
@@ -906,7 +908,7 @@ def _raw_export_section() -> None:
                             a.click();
                         """)
                     except Exception as ex:
-                        ui.notify(f'Export failed: {ex}', type='negative', position='top')
+                        notify(f'Export failed: {ex}', type='negative', position='top')
 
                 label = bank.replace('_', ' ').title()
                 with ui.row().classes('items-center gap-3 w-full px-1'):

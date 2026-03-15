@@ -8,12 +8,13 @@ Route: /categories
 from __future__ import annotations
 from nicegui import ui
 from data.category_rules import (
-    load_category_config, save_category_config,
+    load_category_config, 
+    save_category_config,
     Category, CategoryRule, CategoryConfig,
 )
 from services.view_manager import ViewManager
 from data.db import get_engine, get_schema
-
+from services.notifications import notify
 from styles.dashboards import COST_TYPES, FIXED_COLOR, VAR_COLOR
 
 SCHEMA = get_schema()
@@ -220,6 +221,6 @@ def _save(vm, cfg: CategoryConfig) -> None:
     save_category_config(cfg)
     try:
         vm.refresh()
-        ui.notify('Saved & views rebuilt.', type='positive', position='top')
+        notify('Saved & views rebuilt.', type='positive', position='top')
     except Exception as e:
-        ui.notify(f'Saved but view rebuild failed: {e}', type='warning', position='top')
+        notify(f'Saved but view rebuild failed: {e}', type='warning', position='top')

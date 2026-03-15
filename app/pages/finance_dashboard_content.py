@@ -2,10 +2,13 @@
 finance_dashboard_content.py
 """
 
+import data.finance_dashboard_data as data
+
 from __future__ import annotations
 from datetime import datetime
 from nicegui import ui
-import data.finance_dashboard_data as data
+
+from services.notifications import notify
 from services.transaction_config import load_config, save_config
 from services.view_manager import ViewManager
 from data.db import get_conn_tuple, get_schema
@@ -131,9 +134,9 @@ def _open_settings_dialog(on_save_callback) -> None:
             def _refresh_views() -> None:
                 try:
                     ViewManager(_DB_CONN, schema=_SCHEMA).refresh()
-                    ui.notify('Views refreshed.', type='positive', position='top')
+                    notify('Views refreshed.', type='positive', position='top')
                 except Exception as ex:
-                    ui.notify(f'Refresh failed: {ex}', type='negative', position='top')
+                    notify(f'Refresh failed: {ex}', type='negative', position='top')
 
             ui.button('Refresh views', icon='refresh', on_click=_refresh_views) \
                 .props('flat no-caps').classes('text-zinc-500')
@@ -144,7 +147,7 @@ def _open_settings_dialog(on_save_callback) -> None:
 
                 def _save() -> None:
                     save_config(cfg)
-                    ui.notify('Settings saved — refreshing charts.', type='positive', position='top')
+                    notify('Settings saved — refreshing charts.', type='positive', position='top')
                     dlg.close()
                     on_save_callback()
 

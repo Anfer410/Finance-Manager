@@ -98,6 +98,41 @@ def _create_app_tables(conn, schema: str) -> None:
     """))
 
     conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.app_dashboards (
+            id          SERIAL PRIMARY KEY,
+            user_id     INTEGER NOT NULL
+                        REFERENCES {schema}.app_users(id) ON DELETE CASCADE,
+            name        TEXT NOT NULL,
+            is_default  BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+
+    # Only one default dashboard per user
+    conn.execute(text(f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_app_dashboards_user_default
+        ON {schema}.app_dashboards (user_id)
+        WHERE is_default = TRUE
+    """))
+
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.app_dashboard_widgets (
+            id           SERIAL PRIMARY KEY,
+            dashboard_id INTEGER NOT NULL
+                         REFERENCES {schema}.app_dashboards(id) ON DELETE CASCADE,
+            chart_id     TEXT NOT NULL,
+            position     SMALLINT NOT NULL,
+            col_span     SMALLINT NOT NULL DEFAULT 2
+                         CHECK (col_span BETWEEN 1 AND 4),
+            row_span     SMALLINT NOT NULL DEFAULT 1
+                         CHECK (row_span BETWEEN 1 AND 2),
+            config       JSONB NOT NULL DEFAULT '{{}}',
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+
+    conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS {schema}.app_loans (
             id                           SERIAL PRIMARY KEY,
             name                         TEXT          NOT NULL,

@@ -2,16 +2,17 @@
 finance_dashboard_content.py
 """
 
-import data.finance_dashboard_data as data
-
 from __future__ import annotations
+
 from datetime import datetime
 from nicegui import ui
-
 from services.notifications import notify
+
 from services.transaction_config import load_config, save_config
 from services.view_manager import ViewManager
 from data.db import get_conn_tuple, get_schema
+
+import data.finance_dashboard_data as data
 _DB_CONN = get_conn_tuple()
 _SCHEMA  = get_schema()
 

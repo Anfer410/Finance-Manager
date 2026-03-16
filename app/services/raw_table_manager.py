@@ -7,6 +7,7 @@ Manages dynamic raw_<bank> tables in Postgres.
 - No Alembic involvement (these are data tables, not schema tables)
 """
 
+import json
 import re
 import uuid
 import pandas as pd
@@ -193,9 +194,11 @@ class RawTableManager:
         # Final safety net: re-normalize columns to guarantee no empty names
         df = _normalize_columns(df)
 
-        # Inject person as the first column so it's part of the schema from creation
+        # Inject person as the first column so it's part of the schema from creation.
+        # Raw tables are TEXT-based archives, so serialize the ID list to a JSON string.
+        person_str = json.dumps(person) if isinstance(person, list) else str(person)
         df = df.copy()
-        df.insert(0, "person", person)
+        df.insert(0, "person", person_str)
 
         if not self._table_exists(table_name):
             self._create_table(df, table_name, dedup_columns)

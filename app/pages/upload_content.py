@@ -17,6 +17,19 @@ from pages.bank_wizard_component import (
 )
 
 
+import re as _re
+
+def _bank_alias(rule: BankRule) -> str:
+    """Return the human-readable account alias for a BankRule (e.g. 'Checking', 'Daily Spending')."""
+    slug   = _re.sub(r"[^a-z0-9]+", "_", rule.bank_name.strip().lower()).strip("_")
+    prefix = rule.prefix
+    if prefix.startswith(slug + "_"):
+        return prefix[len(slug) + 1:].replace("_", " ").title()
+    if prefix == slug:
+        return ""
+    return prefix.replace("_", " ").title()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Transaction search dialog  (used by edit dialog to browse raw_ tables)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -283,8 +296,6 @@ def _open_transaction_search_dialog(
 
 def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
     """Edit an existing BankRule or delete it."""
-    import re as _re
-
     all_users    = auth.get_all_users()
     active_users = [u for u in all_users if u.is_active]
     user_opt_map: dict[str, int] = {
@@ -298,17 +309,7 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
         for rv, uid in (rule.member_aliases or {}).items()
     ]
 
-    def _to_slug(text: str) -> str:
-        return _re.sub(r"[^a-z0-9]+", "_", text.strip().lower()).strip("_")
-
-    bank_slug     = _to_slug(rule.bank_name)
-    stored_prefix = rule.prefix
-    if stored_prefix.startswith(bank_slug + "_"):
-        alias_display = stored_prefix[len(bank_slug) + 1:].replace("_", " ").title()
-    elif stored_prefix == bank_slug:
-        alias_display = ""
-    else:
-        alias_display = stored_prefix.replace("_", " ").title()
+    alias_display = _bank_alias(rule)
 
     is_credit = rule.account_type == "credit"
 
@@ -498,21 +499,37 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
             ui.separator()
             with ui.column().classes("w-full gap-1"):
                 ui.label("Person override (optional)").classes("text-sm font-medium text-zinc-700")
-                ui.label("Force every row from this bank to one person. Useful for shared accounts.") \
-                    .classes("text-xs text-zinc-400")
-            has_override = rule.person_override is not None
-            with ui.row().classes("w-full gap-3 items-center"):
-                override_sw = ui.switch("Enable person override", value=has_override) \
-                    .classes("text-sm shrink-0")
-                person_override_in = ui.input(
-                    value=rule.person_override or "",
-                    placeholder="e.g. mutual",
-                ).classes("flex-1").props("outlined dense")
-                person_override_in.set_visibility(has_override)
-                override_sw.on(
-                    "update:model-value",
-                    lambda e: person_override_in.set_visibility(e.args)
-                )
+                ui.label(
+                    "Pin every row from this bank to specific people. "
+                    "Select multiple for a shared/mutual account."
+                ).classes("text-xs text-zinc-400")
+
+            has_override = bool(rule.person_override)
+            # Track which user IDs are selected for the override
+            override_ids: set[int] = set(rule.person_override or [])
+
+            override_sw = ui.switch("Enable person override", value=has_override) \
+                .classes("text-sm")
+
+            override_container = ui.column().classes("w-full gap-1 pl-1")
+            override_container.set_visibility(has_override)
+            override_sw.on(
+                "update:model-value",
+                lambda e: override_container.set_visibility(e.args)
+            )
+
+            with override_container:
+                for u in active_users:
+                    chk = ui.checkbox(
+                        f"{u.person_name}  ({u.display_name})",
+                        value=(u.id in override_ids),
+                    )
+                    chk.on(
+                        "update:model-value",
+                        lambda e, uid=u.id: (
+                            override_ids.add(uid) if e.args else override_ids.discard(uid)
+                        ),
+                    )
 
         with ui.row().classes("items-center justify-between px-6 py-4 border-t border-zinc-100"):
             ui.button("Delete bank", icon="delete_outline", on_click=lambda: _confirm_delete()) \
@@ -537,7 +554,7 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
         rule.payment_description      = payment_desc_in.value.strip() if is_credit else ""
         rule.checking_payment_pattern = checking_pat_in.value.strip() if is_credit else ""
         rule.member_aliases           = {a["raw_value"]: a["user_id"] for a in alias_rows}
-        rule.person_override          = person_override_in.value.strip() if override_sw.value else None
+        rule.person_override          = sorted(override_ids) if override_sw.value and override_ids else None
         dlg.close()
         on_save(rule)
 
@@ -566,7 +583,6 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
 # ─────────────────────────────────────────────────────────────────────────────
 # Bank sidebar card
 # ─────────────────────────────────────────────────────────────────────────────
-
 def _bank_card(rule: BankRule, selected_ref: dict, on_select, on_edit) -> None:
     is_sel = selected_ref["value"] == rule.prefix
     _, acct_icon = ACCOUNT_COLORS.get(rule.account_type, ("", "account_balance"))
@@ -585,9 +601,11 @@ def _bank_card(rule: BankRule, selected_ref: dict, on_select, on_edit) -> None:
                     "text-sm font-medium truncate " +
                     ("text-white" if is_sel else "text-zinc-800")
                 )
-                ui.label(rule.account_type).classes(
-                    "text-[11px] " + ("text-zinc-300" if is_sel else "text-zinc-400")
-                )
+                alias = _bank_alias(rule)
+                if alias:
+                    ui.label(alias).classes(
+                        "text-[11px] " + ("text-zinc-300" if is_sel else "text-zinc-400")
+                    )
         ui.button(icon="settings", on_click=lambda r=rule: on_edit(r)) \
             .props("flat round dense") \
             .classes("text-zinc-400 hover:text-zinc-700 shrink-0")
@@ -598,21 +616,20 @@ def _bank_card(rule: BankRule, selected_ref: dict, on_select, on_edit) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def content() -> None:
-    person_ref   = {"value": ""}
+    person_ref   = {"value": None}
     selected_ref = {"value": "auto"}   # "auto" or rule.prefix
 
     if auth.is_admin():
-        all_users = auth.get_all_users()
-        seen: set = set()
-        person_options = [
-            u.person_name for u in all_users
-            if u.is_active and not (u.person_name in seen or seen.add(u.person_name))
-        ]
+        all_users_list = auth.get_all_users()
+        active_users   = [u for u in all_users_list if u.is_active]
     else:
-        person_options = [auth.current_person_name()]
+        cur = auth.get_user_by_id(auth.current_user_id())
+        active_users = [cur] if cur else []
 
-    default_person      = auth.current_person_name() or (person_options[0] if person_options else "")
-    person_ref["value"] = default_person
+    # {user_id: display_label} for the radio
+    person_options  = {u.id: u.person_name for u in active_users}
+    default_user_id = auth.current_user_id() or (active_users[0].id if active_users else None)
+    person_ref["value"] = default_user_id
 
     with ui.row().classes("w-full items-center justify-between mb-2"):
         with ui.column().classes("gap-0"):
@@ -712,7 +729,7 @@ def content() -> None:
                 with ui.row().classes("items-center gap-3"):
                     ui.label("Person:").classes("text-sm text-zinc-500 shrink-0")
                     radio = ui.radio(
-                        {p: p for p in person_options}, value=default_person
+                        person_options, value=default_user_id
                     ).classes("inline-flex items-center gap-3")
                     radio.on(
                         "update:model-value",
@@ -751,12 +768,17 @@ def content() -> None:
                                 ui.label(active_rule.prefix).classes("font-mono")
 
                         if active_rule.person_override is not None:
+                            _uid_name = {u.id: u.person_name for u in active_users}
+                            _names = ", ".join(
+                                _uid_name.get(uid, f"#{uid}")
+                                for uid in (active_rule.person_override or [])
+                            ) or "—"
                             with ui.row().classes(
                                 "items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs "
                                 "bg-teal-50 border-teal-200 text-teal-700"
                             ):
-                                ui.icon("person").classes("text-base")
-                                ui.label(active_rule.person_override or "—").classes("font-mono")
+                                ui.icon("people").classes("text-base")
+                                ui.label(_names).classes("font-mono")
                 else:
                     with ui.row().classes("items-center gap-2"):
                         with ui.row().classes(

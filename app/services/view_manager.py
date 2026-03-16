@@ -90,34 +90,6 @@ class ViewManager:
 
         return cat_expr, ctype_expr
 
-    # ── Person expression ──────────────────────────────────────────────────────
-
-    def _person_case_for_rule(self, rule: BankRule) -> str | None:
-        """
-        Build a SQL CASE expression that re-resolves person for rows from this
-        rule's account_key, using member_aliases {raw_value: user_id}.
-
-        Returns None if this rule has no member aliases (person column is
-        already correct from upload time).
-        """
-        if not rule.member_aliases:
-            return None
-
-        cases = []
-        for raw_val, user_id in rule.member_aliases.items():
-            escaped = _esc(raw_val)
-            cases.append(
-                f"WHEN person ILIKE '%{escaped}%' THEN "
-                f"(SELECT person_name FROM {self.schema}.app_users "
-                f" WHERE id = {user_id} LIMIT 1)"
-            )
-
-        if not cases:
-            return None
-
-        case_sql = "\n        ".join(cases)
-        return f"CASE {case_sql} ELSE person END"
-
     # ── Payment filter ─────────────────────────────────────────────────────────
 
     def _payment_where(self, rule: BankRule) -> str:
@@ -168,7 +140,7 @@ class ViewManager:
         self._create_view(
             "v_credit_payments", branches,
             fallback=(
-                "SELECT NULL::TEXT AS person, NULL::DATE AS transaction_date, "
+                "SELECT NULL::INTEGER[] AS person, NULL::DATE AS transaction_date, "
                 "NULL::TEXT AS description, NULL::NUMERIC AS amount, "
                 "NULL::TEXT AS bank WHERE FALSE"
             ),
@@ -188,13 +160,10 @@ class ViewManager:
             ak         = _esc(rule.prefix)
             pay_filter = self._payment_where(rule)
             bank_label = rule.bank_name.replace("'", "''")
-            person_expr = (
-                self._person_case_for_rule(rule) or "person"
-            )
 
             excl = f"\n      AND NOT {pay_filter}" if pay_filter else ""
             branches.append(
-                f"    SELECT ({person_expr}) AS person,\n"
+                f"    SELECT person,\n"
                 f"           transaction_date,\n"
                 f"           description,\n"
                 f"           debit AS amount,\n"
@@ -212,7 +181,7 @@ class ViewManager:
         self._create_view(
             "v_credit_spend", branches,
             fallback=(
-                "SELECT NULL::TEXT AS person, NULL::DATE AS transaction_date, "
+                "SELECT NULL::INTEGER[] AS person, NULL::DATE AS transaction_date, "
                 "NULL::TEXT AS description, NULL::NUMERIC AS amount, "
                 "NULL::TEXT AS bank, NULL::TEXT AS category, "
                 "NULL::TEXT AS cost_type, NULL::TEXT AS source_bank WHERE FALSE"
@@ -248,7 +217,6 @@ class ViewManager:
 
             ak         = _esc(rule.prefix)
             bank_label = rule.bank_name.replace("'", "''")
-            person_expr = self._person_case_for_rule(rule) or "person"
 
             # Build exclusion clauses
             excls = []
@@ -284,7 +252,7 @@ class ViewManager:
             excl_sql = "\n".join(excls)
 
             branches.append(
-                f"    SELECT ({person_expr}) AS person,\n"
+                f"    SELECT person,\n"
                 f"           transaction_date,\n"
                 f"           description,\n"
                 f"           ABS(amount) AS amount,\n"
@@ -301,7 +269,7 @@ class ViewManager:
         self._create_view(
             "v_debit_spend", branches,
             fallback=(
-                "SELECT NULL::TEXT AS person, NULL::DATE AS transaction_date, "
+                "SELECT NULL::INTEGER[] AS person, NULL::DATE AS transaction_date, "
                 "NULL::TEXT AS description, NULL::NUMERIC AS amount, "
                 "NULL::TEXT AS bank, NULL::TEXT AS category, "
                 "NULL::TEXT AS cost_type, NULL::TEXT AS source_bank WHERE FALSE"
@@ -317,7 +285,6 @@ class ViewManager:
 
             ak         = _esc(rule.prefix)
             bank_label = rule.bank_name.replace("'", "''")
-            person_expr = self._person_case_for_rule(rule) or "person"
 
             transfer_excl = "\n".join(
                 f"      AND description NOT ILIKE '%{_esc(p)}%'"
@@ -325,7 +292,7 @@ class ViewManager:
             )
 
             branches.append(
-                f"    SELECT ({person_expr}) AS person,\n"
+                f"    SELECT person,\n"
                 f"           transaction_date,\n"
                 f"           description,\n"
                 f"           amount,\n"
@@ -339,7 +306,7 @@ class ViewManager:
         self._create_view(
             "v_income", branches,
             fallback=(
-                "SELECT NULL::TEXT AS person, NULL::DATE AS transaction_date, "
+                "SELECT NULL::INTEGER[] AS person, NULL::DATE AS transaction_date, "
                 "NULL::TEXT AS description, NULL::NUMERIC AS amount, "
                 "NULL::TEXT AS bank WHERE FALSE"
             ),

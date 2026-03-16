@@ -44,7 +44,7 @@ class BankRule:
     # ── Per-rule member name aliases ─────────────────────────────────────────
     # Maps raw member_name value → user_id (stable across display_name changes).
     # e.g. {"JOHN": 1, "ANNA": 2}
-    # Resolved to person_name at view-build time via app_users table.
+    # Resolved to user IDs at upload time via app_users table.
     member_aliases: dict = field(default_factory=dict)
 
     # ── Column mapping (set by wizard, used by UploadPipeline) ──────────────
@@ -55,7 +55,9 @@ class BankRule:
     dedup_columns: list = field(default_factory=list)
 
     # ── Filename config ────────────────────────────────────────────────────
-    person_override: Optional[str] = None
+    # List of user IDs. For a single-person account use [user_id].
+    # For shared/mutual accounts list all owner IDs, e.g. [1, 2].
+    person_override: Optional[list] = None
     note: str = ""
 
     def to_dict(self) -> dict:
@@ -123,13 +125,15 @@ class RuleMatcher:
         if rule.match_type == "exact":      return v == p
         return False
 
-    def match(self, filename: str, person: str) -> Optional[tuple[str, str, str]]:
-        """Returns (bank_name, output_filename, resolved_person) or None."""
+    def match(self, filename: str, person: int) -> Optional[tuple[str, str, list[int] | int]]:
+        """Returns (bank_name, output_filename, resolved_person) or None.
+        resolved_person is list[int] (from person_override) or int (the caller's user ID)."""
         for rule in self._get_rules():
             if self._matches(rule, filename):
-                date       = datetime.now().strftime("%Y%m%d")
-                person_seg = rule.person_override if rule.person_override is not None else person
-                parts      = [rule.prefix, date] + ([person_seg] if person_seg else [])
+                date        = datetime.now().strftime("%Y%m%d")
+                person_seg  = rule.person_override if rule.person_override is not None else person
+                person_part = str(person_seg[0] if isinstance(person_seg, list) else person_seg)
+                parts       = [rule.prefix, date, person_part]
                 return rule.bank_name, "_".join(parts) + ".csv", person_seg
         return None
 

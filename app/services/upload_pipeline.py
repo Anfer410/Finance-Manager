@@ -197,38 +197,25 @@ class UploadResult:
 
 # ── Consolidated table writer ─────────────────────────────────────────────────
 
-def _resolve_person(row: pd.Series, rule, member_col: str | None, default_person: str) -> str:
+def _resolve_person(row: pd.Series, rule, member_col: str | None, default_person_ids: list[int]) -> list[int]:
     """
     Resolve the person for a single row using rule.member_aliases.
-    Falls back to default_person (from person_ref or person_override).
+    Returns a list of user IDs.
+    Falls back to default_person_ids (already resolved IDs from person_ref or person_override).
     """
     if member_col and member_col in row.index and rule and rule.member_aliases:
         raw_val = str(row[member_col]).strip().upper()
         for alias_raw, user_id in rule.member_aliases.items():
             if alias_raw.upper() in raw_val or raw_val in alias_raw.upper():
-                # Resolve user_id → person_name
-                try:
-                    from data.db import get_engine, get_schema
-                    from sqlalchemy import text
-                    engine = get_engine()
-                    schema = get_schema()
-                    with engine.connect() as conn:
-                        res = conn.execute(
-                            text(f"SELECT person_name FROM {schema}.app_users WHERE id = :uid"),
-                            {"uid": user_id}
-                        ).fetchone()
-                        if res:
-                            return res[0]
-                except Exception:
-                    pass
-    return default_person
+                return [int(user_id)]
+    return default_person_ids
 
 
 def write_to_consolidated(
     df: pd.DataFrame,
     rule,
     mapping: "ColumnMapping",
-    person: str,
+    person: list[int],
     source_file: str,
 ) -> int:
     """
@@ -409,6 +396,13 @@ class UploadPipeline:
             bank_name = bank_rule.bank_name
             if bank_rule.person_override is not None:
                 person = bank_rule.person_override
+
+        # Normalise person to list[int] — person_override is already list[int];
+        # a bare int comes from the upload UI (single user selected).
+        if isinstance(person, int):
+            person = [person]
+        elif not isinstance(person, list):
+            person = []
 
         prefix = bank_rule.prefix if bank_rule else "unknown"
 

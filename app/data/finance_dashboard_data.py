@@ -262,9 +262,9 @@ def get_employer_income_series(year: int) -> dict:
 
 # ── Category queries ──────────────────────────────────────────────────────────
 
-def get_spend_by_category(year: int, person: str | None = None) -> dict:
+def get_spend_by_category(year: int, person: int | None = None) -> dict:
     """Total spend per category for the year, sorted descending."""
-    person_filter = "AND person = :person" if person else ""
+    person_filter = "AND :person_id = ANY(person)" if person else ""
     rows = _q(f"""
         SELECT category, cost_type, COALESCE(SUM(amount), 0) AS total
         FROM {V_ALL_SPEND}
@@ -272,7 +272,7 @@ def get_spend_by_category(year: int, person: str | None = None) -> dict:
         {person_filter}
         GROUP BY category, cost_type
         ORDER BY total DESC
-    """, year=year, **({"person": person} if person else {}))
+    """, year=year, **({"person_id": person} if person else {}))
 
     from data.category_rules import load_category_config
     cfg_cat   = load_category_config()
@@ -286,9 +286,9 @@ def get_spend_by_category(year: int, person: str | None = None) -> dict:
     }
 
 
-def get_category_trend(year: int, person: str | None = None) -> dict:
+def get_category_trend(year: int, person: int | None = None) -> dict:
     """Monthly spend per category — for stacked bar trend chart."""
-    person_filter = "AND person = :person" if person else ""
+    person_filter = "AND :person_id = ANY(person)" if person else ""
     rows = _q(f"""
         SELECT category, EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS total
@@ -297,7 +297,7 @@ def get_category_trend(year: int, person: str | None = None) -> dict:
         {person_filter}
         GROUP BY category, m
         ORDER BY category, m
-    """, year=year, **({"person": person} if person else {}))
+    """, year=year, **({"person_id": person} if person else {}))
 
     from data.category_rules import load_category_config
     cfg_cat   = load_category_config()
@@ -318,9 +318,9 @@ def get_category_trend(year: int, person: str | None = None) -> dict:
     }
 
 
-def get_fixed_vs_variable(year: int, person: str | None = None) -> dict:
+def get_fixed_vs_variable(year: int, person: int | None = None) -> dict:
     """Monthly fixed vs variable spend split."""
-    person_filter = "AND person = :person" if person else ""
+    person_filter = "AND :person_id = ANY(person)" if person else ""
     rows = _q(f"""
         SELECT cost_type, EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS total
@@ -329,7 +329,7 @@ def get_fixed_vs_variable(year: int, person: str | None = None) -> dict:
         {person_filter}
         GROUP BY cost_type, m
         ORDER BY cost_type, m
-    """, year=year, **({"person": person} if person else {}))
+    """, year=year, **({"person_id": person} if person else {}))
 
     fixed    = [0.0] * 12
     variable = [0.0] * 12
@@ -348,10 +348,16 @@ def get_fixed_vs_variable(year: int, person: str | None = None) -> dict:
 
 
 def get_persons() -> list[str]:
-    """Distinct person values across all spend."""
+    """Distinct person_name values across all spend (resolved from INTEGER[] user IDs)."""
     rows = _q(f"""
-        SELECT DISTINCT person FROM {V_ALL_SPEND}
-        WHERE person IS NOT NULL ORDER BY person
+        SELECT DISTINCT u.person_name
+        FROM {_SCHEMA}.app_users u
+        WHERE u.id IN (
+            SELECT DISTINCT unnest(person)
+            FROM {V_ALL_SPEND}
+            WHERE cardinality(person) > 0
+        )
+        ORDER BY u.person_name
     """)
     return [r[0] for r in rows]
 
@@ -367,15 +373,27 @@ def get_filter_options(year: int) -> dict:
         """, year=year)
         return [str(r[0]) for r in rows]
 
+    persons_rows = _q(f"""
+        SELECT DISTINCT u.person_name
+        FROM {_SCHEMA}.app_users u
+        WHERE u.id IN (
+            SELECT DISTINCT unnest(person)
+            FROM {V_ALL_SPEND}
+            WHERE EXTRACT(YEAR FROM transaction_date) = :year
+              AND cardinality(person) > 0
+        )
+        ORDER BY u.person_name
+    """, year=year)
+
     return {
         "categories": _distinct("category"),
         "cost_types":  _distinct("cost_type"),
         "banks":       _distinct("bank"),
-        "persons":     _distinct("person"),
+        "persons":     [r[0] for r in persons_rows],
     }
 
 
-def get_weekly_transactions(year: int, person: str | None = None, category: str | None = None) -> dict:
+def get_weekly_transactions(year: int, person: int | None = None, category: str | None = None) -> dict:
     """
     Returns all individual transactions for a full year grouped by ISO week.
     Produces ~52 buckets labelled by the week's Monday date (e.g. "Jan 6").
@@ -383,8 +401,8 @@ def get_weekly_transactions(year: int, person: str | None = None, category: str 
     from collections import defaultdict
     import datetime as dt
 
-    person_filter   = "AND person = :person"     if person   else ""
-    category_filter = "AND category = :category" if category else ""
+    person_filter   = "AND :person_id = ANY(person)" if person   else ""
+    category_filter = "AND category = :category"    if category else ""
     rows = _q(f"""
         SELECT
             transaction_date,
@@ -397,8 +415,8 @@ def get_weekly_transactions(year: int, person: str | None = None, category: str 
           {category_filter}
         ORDER BY transaction_date, category, amount DESC
     """, year=year,
-       **( {"person":   person}   if person   else {}),
-       **( {"category": category} if category else {}))
+       **( {"person_id": person}   if person   else {}),
+       **( {"category":  category} if category else {}))
 
     # Key = Monday of the ISO week, formatted as "Jan 6"
     by_week: dict[str, list[dict]] = defaultdict(list)
@@ -481,7 +499,7 @@ def _parse_search(search: str):
 
 def gettransactions_table(
     year: int,
-    person: str | None = None,
+    person: int | None = None,
     search: str = "",
     category: str | None = None,
     filters: dict | None = None,   # explicit filters from simple mode — bypasses _parse_search
@@ -491,8 +509,8 @@ def gettransactions_table(
     `filters` dict (from simple mode): keys = cost_type, bank, from_date, to_date
     `search` string (from advanced mode): supports category=x  type=x  from=  to=  free text
     """
-    person_filter   = "AND person = :person"     if person   else ""
-    category_filter = "AND category = :category" if category else ""
+    person_filter   = "AND :person_id = ANY(person)" if person   else ""
+    category_filter = "AND category = :category"     if category else ""
 
     extra_clauses: list[str] = []
     extra_params:  dict      = {}
@@ -560,16 +578,20 @@ def gettransactions_table(
             cost_type,
             amount,
             bank,
-            person
-        FROM {V_ALL_SPEND}
+            (
+                SELECT STRING_AGG(u.person_name, ', ' ORDER BY u.id)
+                FROM {_SCHEMA}.app_users u
+                WHERE u.id = ANY(s.person)
+            ) AS person_names
+        FROM {V_ALL_SPEND} s
         WHERE EXTRACT(YEAR FROM transaction_date) = :year
           {person_filter}
           {category_filter}
           {extra_filter}
         ORDER BY transaction_date DESC
     """, year=year,
-       **( {"person":   person}   if person   else {}),
-       **( {"category": category} if category else {}),
+       **( {"person_id": person}   if person   else {}),
+       **( {"category":  category} if category else {}),
        **extra_params)
 
     return [

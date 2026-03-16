@@ -75,7 +75,7 @@ def frame(title: str, version: str, get_logo_func=None):
         with ui.link('', '/').classes('w-full no-underline text-black') \
                 .style('border-radius: 2rem;') as dashboard_link:
             with ui.row().classes('items-center mb-2 mt-2 cursor-pointer w-full no-wrap'):
-                dashboard_icon  = ui.icon('account_balance').classes('ml-5 text-2xl flex-shrink-0')
+                dashboard_icon  = ui.image('/assets/images/dashboard.png').classes('ml-5 w-10 h-10 flex-shrink-0')
                 dashboard_label = ui.label('Finance Dashboard').classes('text-lg sidebar-label ml-3 flex-shrink-0')
                 sidebar_labels.append(dashboard_label)
         nav_links.append({'link': dashboard_link, 'icon': dashboard_icon,
@@ -87,7 +87,7 @@ def frame(title: str, version: str, get_logo_func=None):
             with ui.link('', '/categories').classes('w-full no-underline text-black') \
                     .style('border-radius: 2rem;') as categories_link:
                 with ui.row().classes('items-center mb-2 mt-2 cursor-pointer w-full no-wrap'):
-                    categories_icon  = ui.icon('category').classes('ml-5 text-2xl flex-shrink-0')
+                    categories_icon  = ui.image('/assets/images/categories.png').classes('ml-5 w-10 h-10 flex-shrink-0')
                     categories_label = ui.label('Categories').classes('text-lg sidebar-label ml-3 flex-shrink-0')
                     sidebar_labels.append(categories_label)
             nav_links.append({'link': categories_link, 'icon': categories_icon,
@@ -97,7 +97,7 @@ def frame(title: str, version: str, get_logo_func=None):
             with ui.link('', '/loans').classes('w-full no-underline text-black') \
                     .style('border-radius: 2rem;') as loans_link:
                 with ui.row().classes('items-center mb-2 mt-2 cursor-pointer w-full no-wrap'):
-                    loans_icon  = ui.icon('account_balance_wallet').classes('ml-5 text-2xl flex-shrink-0')
+                    loans_icon  = ui.image('/assets/images/loan.png').classes('ml-5 w-10 h-10 flex-shrink-0')
                     loans_label = ui.label('Loans').classes('text-lg sidebar-label ml-3 flex-shrink-0')
                     sidebar_labels.append(loans_label)
             nav_links.append({'link': loans_link, 'icon': loans_icon,
@@ -106,7 +106,7 @@ def frame(title: str, version: str, get_logo_func=None):
             with ui.link('', '/loan-planning').classes('w-full no-underline text-black') \
                     .style('border-radius: 2rem;') as loan_planning_link:
                 with ui.row().classes('items-center mb-2 mt-2 cursor-pointer w-full no-wrap'):
-                    loan_planning_icon  = ui.icon('calculate').classes('ml-5 text-2xl flex-shrink-0')
+                    loan_planning_icon  = ui.image('/assets/images/loan_planning.png').classes('ml-5 w-10 h-10 flex-shrink-0')
                     loan_planning_label = ui.label('Loan Planning').classes('text-lg sidebar-label ml-3 flex-shrink-0')
                     sidebar_labels.append(loan_planning_label)
             nav_links.append({'link': loan_planning_link, 'icon': loan_planning_icon,
@@ -116,7 +116,7 @@ def frame(title: str, version: str, get_logo_func=None):
         with ui.link('', '/upload').classes('w-full no-underline text-black') \
                 .style('border-radius: 2rem;') as upload_link:
             with ui.row().classes('items-center mb-2 mt-2 cursor-pointer w-full no-wrap'):
-                upload_icon  = ui.icon('cloud_upload').classes('ml-5 text-2xl flex-shrink-0 material-icon-outlined')
+                upload_icon  = ui.image('/assets/images/upload.png').classes('ml-5 w-10 h-10 flex-shrink-0')
                 upload_label = ui.label('Upload data').classes('text-lg sidebar-label ml-3 flex-shrink-0')
                 sidebar_labels.append(upload_label)
         nav_links.append({'link': upload_link, 'icon': upload_icon,

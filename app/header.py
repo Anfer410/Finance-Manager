@@ -127,7 +127,7 @@ def frame(title: str, version: str, get_logo_func=None):
         with ui.link('', '/settings').classes('w-full no-underline text-black') \
                 .style('border-radius: 2rem;') as settings_link:
             with ui.row().classes('items-center mb-2 mt-2 cursor-pointer w-full no-wrap'):
-                settings_icon  = ui.icon('settings').classes('ml-5 text-2xl flex-shrink-0')
+                settings_icon  = ui.image('/assets/images/settings.png').classes('ml-5 w-10 h-10 flex-shrink-0')
                 settings_label = ui.label('Settings').classes('text-lg sidebar-label ml-3 flex-shrink-0')
                 sidebar_labels.append(settings_label)
         nav_links.append({'link': settings_link, 'icon': settings_icon,

@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.2.0 (2026-03-16)
+
+### Features
+
+- Refactor bank wizard
+  ([`025bf95`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/025bf95a86f52625039350a601aaf3b7fd7383cb))
+
+
 ## v1.1.0 (2026-03-15)
 
 ### Bug Fixes

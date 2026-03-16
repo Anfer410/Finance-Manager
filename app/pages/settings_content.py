@@ -607,12 +607,12 @@ def _export_import_section() -> None:
 
 def _finance_data_export_section() -> None:
 
-    def _query_csv(sql: str) -> str:
+    def _query_csv(sql: str, params: dict | None = None) -> str:
         import csv, io as _io
         from sqlalchemy import text
         from data.db import get_engine
         with get_engine().connect() as conn:
-            result = conn.execute(text(sql))
+            result = conn.execute(text(sql), params or {})
             rows   = result.fetchall()
             cols   = list(result.keys())
         buf = _io.StringIO()
@@ -620,22 +620,6 @@ def _finance_data_export_section() -> None:
         w.writerow(cols)
         w.writerows([[str(v) if v is not None else "" for v in row] for row in rows])
         return buf.getvalue()
-
-    def _download(fname_prefix: str, sql_fn):
-        def _do():
-            try:
-                csv_data = sql_fn()
-                b64      = base64.b64encode(csv_data.encode()).decode()
-                fname    = f"{fname_prefix}_{datetime.now().strftime('%Y%m%d')}.csv"
-                ui.run_javascript(f"""
-                    const a = document.createElement('a');
-                    a.href = 'data:text/csv;base64,{b64}';
-                    a.download = '{fname}';
-                    a.click();
-                """)
-            except Exception as ex:
-                notify(f'Export failed: {ex}', type='negative', position='top')
-        return _do
 
     with _card('Finance data export', 'table_chart'):
         _section_header('Finance data export', 'table_chart')
@@ -648,47 +632,83 @@ def _finance_data_export_section() -> None:
             from data.db import get_schema
             schema = get_schema()
 
-            rows_cfg = [
-                (
-                    'Debit transactions',
-                    'account_balance',
-                    'debit_transactions',
-                    lambda: _query_csv(
-                        f"SELECT account_key, transaction_date, description, amount, "
-                        f"person, source_file, inserted_at "
-                        f"FROM {schema}.transactions_debit ORDER BY transaction_date DESC"
-                    ),
-                ),
-                (
-                    'Credit transactions',
-                    'credit_card',
-                    'credit_transactions',
-                    lambda: _query_csv(
-                        f"SELECT account_key, transaction_date, description, debit, credit, "
-                        f"person, source_file, inserted_at "
-                        f"FROM {schema}.transactions_credit ORDER BY transaction_date DESC"
-                    ),
-                ),
-                (
-                    'Loans',
-                    'account_balance_wallet',
-                    'loans',
-                    lambda: _query_csv(
-                        f"SELECT id, name, loan_type, rate_type, interest_rate, "
-                        f"original_principal, term_months, start_date, monthly_payment, "
-                        f"current_balance, balance_as_of, lender, notes, is_active, "
-                        f"created_at, updated_at "
-                        f"FROM {schema}.app_loans ORDER BY id"
-                    ),
-                ),
+            try:
+                all_users = auth.get_all_users()
+            except Exception:
+                all_users = []
+            person_options = {0: 'All'} | {u.id: u.person_name.title() for u in all_users if u.is_active}
+            export_state   = {'person_id': 0}
+
+            with ui.row().classes('items-center gap-2 w-full px-1 pb-1'):
+                ui.label('Person:').classes('text-xs text-zinc-500 shrink-0')
+                ui.select(
+                    options=person_options,
+                    value=0,
+                    on_change=lambda e: export_state.update({'person_id': e.value}),
+                ).classes('w-44').props('outlined dense')
+
+            ROWS = [
+                ('Debit transactions',  'account_balance',        'debit_transactions'),
+                ('Credit transactions', 'credit_card',            'credit_transactions'),
+                ('Loans',               'account_balance_wallet', 'loans'),
             ]
 
-            for label, icon_name, fname_prefix, sql_fn in rows_cfg:
+            for label, icon_name, fname_base in ROWS:
+                def _download(fb=fname_base, lbl=label):
+                    def _do():
+                        try:
+                            pid   = export_state['person_id'] or None  # 0 → None (All)
+                            pname = (person_options.get(pid or 0, 'all')
+                                     .lower().replace(' ', '_'))
+                            if fb == 'debit_transactions':
+                                if pid:
+                                    sql    = (f"SELECT account_key, transaction_date, description, amount, "
+                                              f"person, source_file, inserted_at "
+                                              f"FROM {schema}.transactions_debit "
+                                              f"WHERE :pid = ANY(person) ORDER BY transaction_date DESC")
+                                    params = {'pid': pid}
+                                else:
+                                    sql    = (f"SELECT account_key, transaction_date, description, amount, "
+                                              f"person, source_file, inserted_at "
+                                              f"FROM {schema}.transactions_debit ORDER BY transaction_date DESC")
+                                    params = {}
+                            elif fb == 'credit_transactions':
+                                if pid:
+                                    sql    = (f"SELECT account_key, transaction_date, description, debit, credit, "
+                                              f"person, source_file, inserted_at "
+                                              f"FROM {schema}.transactions_credit "
+                                              f"WHERE :pid = ANY(person) ORDER BY transaction_date DESC")
+                                    params = {'pid': pid}
+                                else:
+                                    sql    = (f"SELECT account_key, transaction_date, description, debit, credit, "
+                                              f"person, source_file, inserted_at "
+                                              f"FROM {schema}.transactions_credit ORDER BY transaction_date DESC")
+                                    params = {}
+                            else:  # loans — no person filter
+                                sql    = (f"SELECT id, name, loan_type, rate_type, interest_rate, "
+                                          f"original_principal, term_months, start_date, monthly_payment, "
+                                          f"current_balance, balance_as_of, lender, notes, is_active, "
+                                          f"created_at, updated_at FROM {schema}.app_loans ORDER BY id")
+                                params = {}
+                                pname  = 'all'
+
+                            csv_data = _query_csv(sql, params)
+                            b64      = base64.b64encode(csv_data.encode()).decode()
+                            fname    = f"{fb}_{pname}_{datetime.now().strftime('%Y%m%d')}.csv"
+                            ui.run_javascript(f"""
+                                const a = document.createElement('a');
+                                a.href = 'data:text/csv;base64,{b64}';
+                                a.download = '{fname}';
+                                a.click();
+                            """)
+                        except Exception as ex:
+                            notify(f'Export failed: {ex}', type='negative', position='top')
+                    return _do
+
                 with ui.row().classes('items-center gap-3 w-full px-1'):
                     ui.icon(icon_name).classes('text-zinc-300 text-base')
                     ui.label(label).classes('text-sm text-zinc-700 flex-1')
-                    ui.button('Download CSV', icon='download',
-                              on_click=_download(fname_prefix, sql_fn)) \
+                    ui.button('Download CSV', icon='download', on_click=_download()) \
                         .props('flat dense no-caps') \
                         .classes('text-zinc-600')
 
@@ -914,74 +934,76 @@ def _raw_export_section() -> None:
                     .classes('text-sm text-zinc-400')
                 return
 
-            # Build prefix → rule map and user_id → person_name map for filename construction
+            import re as _re
             rules_by_prefix = {r.prefix: r for r in (load_rules() or [])}
 
-            from data.db import get_engine, get_schema
-            from sqlalchemy import text as _text
             try:
-                with get_engine().connect() as _conn:
-                    _rows = _conn.execute(_text(
-                        f"SELECT id, person_name FROM {get_schema()}.app_users"
-                    )).fetchall()
-                person_name_by_id = {r[0]: r[1] for r in _rows}
+                all_users = auth.get_all_users()
             except Exception:
-                person_name_by_id = {}
+                all_users = []
 
-            import re as _re
+            current_uid    = auth.current_user_id() or 0
+            person_options = {u.id: u.person_name.title() for u in all_users if u.is_active}
 
-            def _export_filename(account_key: str) -> str:
-                rule = rules_by_prefix.get(account_key)
-                if rule:
-                    bank_slug  = _re.sub(r"[^a-z0-9]+", "_", rule.bank_name.strip().lower()).strip("_")
-                    # Derive account alias: the part of prefix after the bank slug, or the full prefix
-                    if rule.prefix.startswith(bank_slug + "_"):
-                        acct_part = rule.prefix[len(bank_slug) + 1:]
+            # Build account options: account_key → human-readable label
+            def _account_label(ak: str) -> str:
+                rl = rules_by_prefix.get(ak)
+                if not rl:
+                    return ak.replace('_', ' ').title()
+                bank_slug = _re.sub(r"[^a-z0-9]+", "_", rl.bank_name.strip().lower()).strip("_")
+                if rl.prefix.startswith(bank_slug + "_"):
+                    alias = rl.prefix[len(bank_slug) + 1:].replace("_", " ").title()
+                    return f"{rl.bank_name} — {alias}"
+                return rl.bank_name
+
+            account_options  = {ak: _account_label(ak) for ak in accounts}
+            raw_export_state = {
+                'person_id':  current_uid if current_uid in person_options else next(iter(person_options), None),
+                'account_key': accounts[0],
+            }
+
+            with ui.row().classes('items-center gap-2 w-full px-1 pb-2 flex-wrap'):
+                ui.label('Person:').classes('text-xs text-zinc-500 shrink-0')
+                ui.select(
+                    options=person_options,
+                    value=raw_export_state['person_id'],
+                    on_change=lambda e: raw_export_state.update({'person_id': e.value}),
+                ).classes('w-44').props('outlined dense')
+                ui.label('Account:').classes('text-xs text-zinc-500 shrink-0 ml-3')
+                ui.select(
+                    options=account_options,
+                    value=raw_export_state['account_key'],
+                    on_change=lambda e: raw_export_state.update({'account_key': e.value}),
+                ).classes('w-56').props('outlined dense')
+
+            def _do_raw_download():
+                try:
+                    ak   = raw_export_state['account_key']
+                    pid  = raw_export_state['person_id']
+                    rl   = rules_by_prefix.get(ak)
+                    pname = _re.sub(
+                        r"[^a-z0-9]+", "_",
+                        person_options.get(pid, str(pid)).lower()
+                    ).strip("_")
+                    if rl:
+                        bank_slug  = _re.sub(r"[^a-z0-9]+", "_", rl.bank_name.strip().lower()).strip("_")
+                        acct_part  = (rl.prefix[len(bank_slug) + 1:]
+                                      if rl.prefix.startswith(bank_slug + "_") else rl.prefix)
+                        full_alias = f"{bank_slug}_{acct_part}"
                     else:
-                        acct_part = rule.prefix
-                    full_alias = f"{bank_slug}_{acct_part}"
-                    # Resolve person segment
-                    override = rule.person_override or []
-                    if len(override) == 1:
-                        person_part = _re.sub(
-                            r"[^a-z0-9]+", "_",
-                            person_name_by_id.get(override[0], str(override[0])).lower()
-                        ).strip("_")
-                    elif len(override) > 1:
-                        person_part = f"user_{auth.current_user_id() or 0}"
-                    else:
-                        person_part = f"user_{auth.current_user_id() or 0}"
-                else:
-                    full_alias  = account_key
-                    person_part = f"user_{auth.current_user_id() or 0}"
-                return f"raw_{full_alias}_{person_part}.csv"
+                        full_alias = ak
+                    fname    = f"raw_{full_alias}_{pname}.csv"
+                    csv_data = default_manager().export_csv(ak, person_id=pid)
+                    b64      = base64.b64encode(csv_data.encode()).decode()
+                    ui.run_javascript(f"""
+                        const a = document.createElement('a');
+                        a.href = 'data:text/csv;base64,{b64}';
+                        a.download = '{fname}';
+                        a.click();
+                    """)
+                except Exception as ex:
+                    notify(f'Export failed: {ex}', type='negative', position='top')
 
-            for account_key in accounts:
-                def _download(ak=account_key):
-                    try:
-                        csv_data = default_manager().export_csv(ak)
-                        b64      = base64.b64encode(csv_data.encode()).decode()
-                        fname    = _export_filename(ak)
-                        ui.run_javascript(f"""
-                            const a = document.createElement('a');
-                            a.href = 'data:text/csv;base64,{b64}';
-                            a.download = '{fname}';
-                            a.click();
-                        """)
-                    except Exception as ex:
-                        notify(f'Export failed: {ex}', type='negative', position='top')
-
-                rule  = rules_by_prefix.get(account_key)
-                label = rule.bank_name if rule else account_key.replace('_', ' ').title()
-                if rule:
-                    bank_slug = _re.sub(r"[^a-z0-9]+", "_", rule.bank_name.strip().lower()).strip("_")
-                    if rule.prefix.startswith(bank_slug + "_"):
-                        acct_alias = rule.prefix[len(bank_slug) + 1:].replace("_", " ").title()
-                        label = f"{rule.bank_name} — {acct_alias}"
-
-                with ui.row().classes('items-center gap-3 w-full px-1'):
-                    ui.icon('description').classes('text-zinc-300 text-base')
-                    ui.label(label).classes('text-sm text-zinc-700 flex-1')
-                    ui.button('Download CSV', icon='download', on_click=_download) \
-                        .props('flat dense no-caps') \
-                        .classes('text-zinc-600')
+            ui.button('Download CSV', icon='download', on_click=_do_raw_download) \
+                .props('unelevated dense no-caps') \
+                .classes('bg-zinc-800 text-white rounded-lg px-3 self-start')

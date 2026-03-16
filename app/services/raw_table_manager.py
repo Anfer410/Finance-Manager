@@ -218,21 +218,28 @@ class RawTableManager:
         names = inspect(self.engine).get_table_names(schema=self.schema)
         return [n[4:] for n in sorted(names) if n.startswith("raw_")]
 
-    def export_csv(self, account_key: str) -> str:
+    def export_csv(self, account_key: str, person_id: int | None = None) -> str:
         """
-        Returns all rows from raw_<account_key> as a CSV string.
+        Returns rows from raw_<account_key> as a CSV string.
         Excludes _id and person columns — these are internal archive metadata.
+        When person_id is given, only rows whose person JSON array contains that ID are returned.
         """
         import csv
         import io as _io
         SKIP_COLS = {"_id", "person"}
         table = f"{self.schema}.raw_{self._sanitize(account_key)}"
+        if person_id is not None:
+            where  = "WHERE person::jsonb @> to_jsonb(:pid::int)"
+            params = {"pid": person_id}
+        else:
+            where  = ""
+            params = {}
         with self.engine.connect() as conn:
-            result = conn.execute(text(f"SELECT * FROM {table} ORDER BY _id"))
+            result = conn.execute(text(f"SELECT * FROM {table} {where} ORDER BY _id"), params)
             all_cols = list(result.keys())
             rows = result.fetchall()
-        export_cols   = [c for c in all_cols if c not in SKIP_COLS]
-        col_indices   = [all_cols.index(c) for c in export_cols]
+        export_cols = [c for c in all_cols if c not in SKIP_COLS]
+        col_indices = [all_cols.index(c) for c in export_cols]
         buf = _io.StringIO()
         writer = csv.writer(buf)
         writer.writerow(export_cols)

@@ -10,7 +10,7 @@ from data.bank_rules import BankRule, load_rules, save_rules
 from services.handle_upload import handle_upload
 from services.notifications import notify
 from data.db import get_engine, get_schema
-from pages.bank_wizard_component import (
+from components.bank_wizard_component import (
     open_add_bank_wizard,
     ACCOUNT_COLORS,
     MATCH_TYPE_OPTIONS,

@@ -125,8 +125,8 @@ class RuleMatcher:
         if rule.match_type == "exact":      return v == p
         return False
 
-    def match(self, filename: str, person: int) -> Optional[tuple[str, str, list[int] | int]]:
-        """Returns (bank_name, output_filename, resolved_person) or None.
+    def match(self, filename: str, person: int) -> Optional[tuple[BankRule, str, list[int] | int]]:
+        """Returns (matched_rule, output_filename, resolved_person) or None.
         resolved_person is list[int] (from person_override) or int (the caller's user ID)."""
         for rule in self._get_rules():
             if self._matches(rule, filename):
@@ -134,7 +134,7 @@ class RuleMatcher:
                 person_seg  = rule.person_override if rule.person_override is not None else person
                 person_part = str(person_seg[0] if isinstance(person_seg, list) else person_seg)
                 parts       = [rule.prefix, date, person_part]
-                return rule.bank_name, "_".join(parts) + ".csv", person_seg
+                return rule, "_".join(parts) + ".csv", person_seg
         return None
 
 

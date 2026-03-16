@@ -97,12 +97,6 @@ def _create_app_tables(conn, schema: str) -> None:
         )
     """))
 
-    # Add monthly_insurance column to existing app_loans tables
-    conn.execute(text(f"""
-        ALTER TABLE {schema}.app_loans
-        ADD COLUMN IF NOT EXISTS monthly_insurance NUMERIC(12,2) NOT NULL DEFAULT 0
-    """))
-
     conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS {schema}.app_loans (
             id                           SERIAL PRIMARY KEY,
@@ -128,6 +122,12 @@ def _create_app_tables(conn, schema: str) -> None:
             created_at                   TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
             updated_at                   TIMESTAMPTZ   NOT NULL DEFAULT NOW()
         )
+    """))
+
+    # Add monthly_insurance column to existing app_loans tables (idempotent)
+    conn.execute(text(f"""
+        ALTER TABLE {schema}.app_loans
+        ADD COLUMN IF NOT EXISTS monthly_insurance NUMERIC(12,2) NOT NULL DEFAULT 0
     """))
 
 

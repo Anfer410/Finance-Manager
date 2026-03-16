@@ -389,9 +389,8 @@ class UploadPipeline:
                     bank_name="unknown", inserted=0, skipped=0, total=0,
                     error=f"No rule matched filename: {filename}",
                 )
-            bank_name, output_name, person = result
-            rules     = {r.bank_name: r for r in load_rules()}
-            bank_rule = rules.get(bank_name)
+            bank_rule, output_name, person = result
+            bank_name = bank_rule.bank_name
         else:
             bank_name = bank_rule.bank_name
             if bank_rule.person_override is not None:

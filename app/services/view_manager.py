@@ -349,5 +349,5 @@ class ViewManager:
 
 
 def default_view_manager(schema: str | None = None) -> ViewManager:
-    from data.db import get_conn_tuple, get_schema
-    return ViewManager(get_conn_tuple(), schema=schema or get_schema())
+    from data.db import get_engine, get_schema
+    return ViewManager(get_engine(), schema=schema or get_schema())

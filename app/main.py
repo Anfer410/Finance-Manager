@@ -109,11 +109,13 @@ def loan_planning():
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+fav_icon = "assets/images/logo.png"
+
 if appEnv == "prod":
     app.on_startup(run_migrations)
-    ui.run(root, host='0.0.0.0', storage_secret="faoieb[ofbaeoidfaadkladfj]", title=appName, port=appPort, favicon='ico.ico', reconnect_timeout=20, reload=False)   # prod
+    ui.run(root, host='0.0.0.0', storage_secret="faoieb[ofbaeoidfaadkladfj]", title=appName, port=appPort, favicon=fav_icon, reconnect_timeout=20, reload=False)   # prod
 else:
-    ui.run(root, storage_secret="myStorageSecret", title=appName, port=appPort, favicon='ico.ico', reconnect_timeout=20)
+    ui.run(root, storage_secret="myStorageSecret", title=appName, port=appPort, favicon=fav_icon, reconnect_timeout=20)
 # ui.run(root, host='0.0.0.0', storage_secret="faoieb[ofbaeoidfaadkladfj]", title=appName, port=appPort, favicon='ico.ico', reconnect_timeout=20, reload=False)   # prod
 #app.on_startup(run_migrations)
 # ui.run(root, storage_secret="myStorageSecret", title=appName, port=appPort, favicon='ico.ico', reload=False, native=True, window_size=(1600, 900))    # native

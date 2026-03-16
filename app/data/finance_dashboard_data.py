@@ -1,11 +1,18 @@
 """
-services/finance_dashboard_data.py
+data/finance_dashboard_data.py
 
 Queries the purpose-built views:
   v_all_spend     — deduplicated spend (credit purchases + debit outflows)
   v_credit_spend  — credit card purchases only
   v_debit_spend   — checking outflows only (transfers/payments excluded)
   v_income        — employer payroll deposits
+
+Person filtering
+────────────────
+All query functions accept `persons: list[int] | None`.
+  None or []  → no filter (show all people)
+  [1, 2]      → show only transactions where any of those user IDs appears
+                in the transaction's person INTEGER[] column.
 """
 
 from __future__ import annotations
@@ -32,7 +39,6 @@ def _q(sql: str, **params):
         with _engine().connect() as conn:
             return conn.execute(text(sql), params).fetchall()
     except Exception as e:
-        # View doesn't exist yet (fresh DB, no data uploaded) — return empty
         msg = str(e)
         if "does not exist" in msg or "UndefinedTable" in msg or "undefined_table" in msg:
             return []
@@ -41,6 +47,18 @@ def _q(sql: str, **params):
 def _kpi(spend: float, income: float) -> dict:
     return {"spend": round(spend, 2), "income": round(income, 2),
             "net": round(income - spend, 2)}
+
+def _persons_filter(persons: list[int] | None) -> tuple[str, dict]:
+    """
+    Returns (sql_clause, params_dict) for filtering transactions by person IDs.
+    Uses PostgreSQL array overlap: transactions where any of the given user IDs
+    is present in the transaction's person INTEGER[] column.
+    persons=None or persons=[] → returns ("", {}) — no filter applied.
+    """
+    if not persons:
+        return "", {}
+    arr = "{" + ",".join(str(int(p)) for p in persons) + "}"
+    return "AND person && :_persons::integer[]", {"_persons": arr}
 
 
 # ── Available years ───────────────────────────────────────────────────────────
@@ -55,51 +73,59 @@ def get_years() -> list[int]:
 
 # ── KPI helpers ───────────────────────────────────────────────────────────────
 
-def _spend_income_kpi(view: str, year: int | None = None) -> dict:
-    where = "WHERE EXTRACT(YEAR FROM transaction_date) = :year" if year else "WHERE 1=1"
-    rows  = _q(f"""
-        SELECT
-            COALESCE(SUM(amount), 0) AS spend
+def _spend_income_kpi(
+    view: str,
+    year: int | None = None,
+    persons: list[int] | None = None,
+) -> dict:
+    person_clause, person_params = _persons_filter(persons)
+    year_clause = "EXTRACT(YEAR FROM transaction_date) = :year" if year else "1=1"
+    year_params = {"year": year} if year else {}
+
+    rows = _q(f"""
+        SELECT COALESCE(SUM(amount), 0) AS spend
         FROM {view}
-        {where}
-    """, **({"year": year} if year else {}))
+        WHERE {year_clause} {person_clause}
+    """, **year_params, **person_params)
     spend = float(rows[0][0]) if rows else 0.0
 
     income_rows = _q(f"""
         SELECT COALESCE(SUM(amount), 0) AS income
         FROM {V_INCOME}
-        {where}
-    """, **({"year": year} if year else {}))
+        WHERE {year_clause} {person_clause}
+    """, **year_params, **person_params)
     income = float(income_rows[0][0]) if income_rows else 0.0
 
     return _kpi(spend, income)
 
 
-def get_alltime_kpi() -> dict:
-    return _spend_income_kpi(V_ALL_SPEND)
+def get_alltime_kpi(persons: list[int] | None = None) -> dict:
+    return _spend_income_kpi(V_ALL_SPEND, persons=persons)
 
-def get_yearly_kpi(year: int) -> dict:
-    return _spend_income_kpi(V_ALL_SPEND, year)
+def get_yearly_kpi(year: int, persons: list[int] | None = None) -> dict:
+    return _spend_income_kpi(V_ALL_SPEND, year, persons=persons)
 
 
 # ── Monthly spend + income series ─────────────────────────────────────────────
 
-def get_monthly_spend_series(year: int) -> dict:
+def get_monthly_spend_series(year: int, persons: list[int] | None = None) -> dict:
+    person_clause, person_params = _persons_filter(persons)
+
     spend_rows = _q(f"""
         SELECT EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS spend
         FROM {V_ALL_SPEND}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause}
         GROUP BY m ORDER BY m
-    """, year=year)
+    """, year=year, **person_params)
 
     income_rows = _q(f"""
         SELECT EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS income
         FROM {V_INCOME}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause}
         GROUP BY m ORDER BY m
-    """, year=year)
+    """, year=year, **person_params)
 
     spend_by_m  = {r[0]: float(r[1]) for r in spend_rows}
     income_by_m = {r[0]: float(r[1]) for r in income_rows}
@@ -108,12 +134,11 @@ def get_monthly_spend_series(year: int) -> dict:
     income_vals = [round(income_by_m.get(m, 0.0), 2) for m in range(1, 13)]
 
     # Rolling budget: each month = leftover from previous + (income - spend)
-    # Stops accumulating once we hit a month with no data (both 0)
     budget: list[float] = []
     rolling = 0.0
     for s, inc in zip(spend_vals, income_vals):
         if s == 0 and inc == 0:
-            budget.append(None)  # no data yet — don't plot
+            budget.append(None)
         else:
             rolling = round(rolling + inc - s, 2)
             budget.append(rolling)
@@ -128,36 +153,34 @@ def get_monthly_spend_series(year: int) -> dict:
 
 # ── Year-over-year 3-year monthly series ─────────────────────────────────────
 
-def get_year_over_year_monthly_spend_series(year_back: int = 2) -> dict:
-    """
-    Monthly spend + income from Jan of (today.year - year_back) through current month,
-    with a rolling surplus that carries forward across months.
-    Returns the same shape as get_monthly_spend_series() so spend_income_chart
-    can consume it directly.
-    """
+def get_year_over_year_monthly_spend_series(
+    year_back: int = 2,
+    persons: list[int] | None = None,
+) -> dict:
     from datetime import date
 
     today = date.today()
     start = date(today.year - year_back, 1, 1)
     end   = today.replace(day=1)
 
+    person_clause, person_params = _persons_filter(persons)
+
     spend_rows = _q(f"""
         SELECT DATE_TRUNC('month', transaction_date)::DATE AS mo,
                COALESCE(SUM(amount), 0)
         FROM {V_ALL_SPEND}
-        WHERE transaction_date >= :start
+        WHERE transaction_date >= :start {person_clause}
         GROUP BY mo ORDER BY mo
-    """, start=start)
+    """, start=start, **person_params)
 
     income_rows = _q(f"""
         SELECT DATE_TRUNC('month', transaction_date)::DATE AS mo,
                COALESCE(SUM(amount), 0)
         FROM {V_INCOME}
-        WHERE transaction_date >= :start
+        WHERE transaction_date >= :start {person_clause}
         GROUP BY mo ORDER BY mo
-    """, start=start)
+    """, start=start, **person_params)
 
-    # Build full month list
     month_dates: list[date] = []
     cur = start
     while cur <= end:
@@ -185,16 +208,18 @@ def get_year_over_year_monthly_spend_series(year_back: int = 2) -> dict:
 
 # ── Spend per bank series ─────────────────────────────────────────────────────
 
-def get_spend_per_bank_series(year: int) -> dict:
+def get_spend_per_bank_series(year: int, persons: list[int] | None = None) -> dict:
+    person_clause, person_params = _persons_filter(persons)
+
     rows = _q(f"""
         SELECT bank,
                EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS spend
         FROM {V_ALL_SPEND}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause}
         GROUP BY bank, m
         ORDER BY bank, m
-    """, year=year)
+    """, year=year, **person_params)
 
     banks: dict[str, list[float]] = {}
     for bank, m, spend in rows:
@@ -207,15 +232,11 @@ def get_spend_per_bank_series(year: int) -> dict:
 
 # ── Employer income series ────────────────────────────────────────────────────
 
-def get_employer_income_series(year: int) -> dict:
-    """
-    Returns monthly payroll and other income series.
-    - payroll: rows matching employer patterns (empty list if none configured)
-    - other:   all remaining income rows
-    Both sum to total income for the year.
-    """
+def get_employer_income_series(year: int, persons: list[int] | None = None) -> dict:
     from services.transaction_config import load_config
     cfg = load_config()
+
+    person_clause, person_params = _persons_filter(persons)
 
     if cfg.employer_patterns:
         employer_clause = "(" + " OR ".join(
@@ -228,8 +249,9 @@ def get_employer_income_series(year: int) -> dict:
             FROM {V_INCOME}
             WHERE EXTRACT(YEAR FROM transaction_date) = :year
               AND {employer_clause}
+              {person_clause}
             GROUP BY m ORDER BY m
-        """, year=year)
+        """, year=year, **person_params)
 
         other_rows = _q(f"""
             SELECT EXTRACT(MONTH FROM transaction_date)::INT AS m,
@@ -237,42 +259,43 @@ def get_employer_income_series(year: int) -> dict:
             FROM {V_INCOME}
             WHERE EXTRACT(YEAR FROM transaction_date) = :year
               AND NOT {employer_clause}
+              {person_clause}
             GROUP BY m ORDER BY m
-        """, year=year)
+        """, year=year, **person_params)
     else:
         payroll_rows = []
         other_rows   = _q(f"""
             SELECT EXTRACT(MONTH FROM transaction_date)::INT AS m,
                    COALESCE(SUM(amount), 0) AS income
             FROM {V_INCOME}
-            WHERE EXTRACT(YEAR FROM transaction_date) = :year
+            WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause}
             GROUP BY m ORDER BY m
-        """, year=year)
+        """, year=year, **person_params)
 
     payroll_by_m = {r[0]: float(r[1]) for r in payroll_rows}
     other_by_m   = {r[0]: float(r[1]) for r in other_rows}
 
     return {
-        "months":            MONTH_LABELS,
-        "payroll":           [round(payroll_by_m.get(m, 0.0), 2) for m in range(1, 13)],
-        "other":             [round(other_by_m.get(m, 0.0),   2) for m in range(1, 13)],
+        "months":                MONTH_LABELS,
+        "payroll":               [round(payroll_by_m.get(m, 0.0), 2) for m in range(1, 13)],
+        "other":                 [round(other_by_m.get(m, 0.0),   2) for m in range(1, 13)],
         "has_employer_patterns": bool(cfg.employer_patterns),
     }
 
 
 # ── Category queries ──────────────────────────────────────────────────────────
 
-def get_spend_by_category(year: int, person: int | None = None) -> dict:
+def get_spend_by_category(year: int, persons: list[int] | None = None) -> dict:
     """Total spend per category for the year, sorted descending."""
-    person_filter = "AND :person_id = ANY(person)" if person else ""
+    person_clause, person_params = _persons_filter(persons)
+
     rows = _q(f"""
         SELECT category, cost_type, COALESCE(SUM(amount), 0) AS total
         FROM {V_ALL_SPEND}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year
-        {person_filter}
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause}
         GROUP BY category, cost_type
         ORDER BY total DESC
-    """, year=year, **({"person_id": person} if person else {}))
+    """, year=year, **person_params)
 
     from data.category_rules import load_category_config
     cfg_cat   = load_category_config()
@@ -286,18 +309,18 @@ def get_spend_by_category(year: int, person: int | None = None) -> dict:
     }
 
 
-def get_category_trend(year: int, person: int | None = None) -> dict:
+def get_category_trend(year: int, persons: list[int] | None = None) -> dict:
     """Monthly spend per category — for stacked bar trend chart."""
-    person_filter = "AND :person_id = ANY(person)" if person else ""
+    person_clause, person_params = _persons_filter(persons)
+
     rows = _q(f"""
         SELECT category, EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS total
         FROM {V_ALL_SPEND}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year
-        {person_filter}
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause}
         GROUP BY category, m
         ORDER BY category, m
-    """, year=year, **({"person_id": person} if person else {}))
+    """, year=year, **person_params)
 
     from data.category_rules import load_category_config
     cfg_cat   = load_category_config()
@@ -318,18 +341,18 @@ def get_category_trend(year: int, person: int | None = None) -> dict:
     }
 
 
-def get_fixed_vs_variable(year: int, person: int | None = None) -> dict:
+def get_fixed_vs_variable(year: int, persons: list[int] | None = None) -> dict:
     """Monthly fixed vs variable spend split."""
-    person_filter = "AND :person_id = ANY(person)" if person else ""
+    person_clause, person_params = _persons_filter(persons)
+
     rows = _q(f"""
         SELECT cost_type, EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS total
         FROM {V_ALL_SPEND}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year
-        {person_filter}
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause}
         GROUP BY cost_type, m
         ORDER BY cost_type, m
-    """, year=year, **({"person_id": person} if person else {}))
+    """, year=year, **person_params)
 
     fixed    = [0.0] * 12
     variable = [0.0] * 12
@@ -393,7 +416,11 @@ def get_filter_options(year: int) -> dict:
     }
 
 
-def get_weekly_transactions(year: int, person: int | None = None, category: str | None = None) -> dict:
+def get_weekly_transactions(
+    year: int,
+    persons: list[int] | None = None,
+    category: str | None = None,
+) -> dict:
     """
     Returns all individual transactions for a full year grouped by ISO week.
     Produces ~52 buckets labelled by the week's Monday date (e.g. "Jan 6").
@@ -401,8 +428,9 @@ def get_weekly_transactions(year: int, person: int | None = None, category: str 
     from collections import defaultdict
     import datetime as dt
 
-    person_filter   = "AND :person_id = ANY(person)" if person   else ""
-    category_filter = "AND category = :category"    if category else ""
+    person_clause, person_params = _persons_filter(persons)
+    category_filter = "AND category = :category" if category else ""
+
     rows = _q(f"""
         SELECT
             transaction_date,
@@ -411,20 +439,17 @@ def get_weekly_transactions(year: int, person: int | None = None, category: str 
             amount
         FROM {V_ALL_SPEND}
         WHERE EXTRACT(YEAR FROM transaction_date) = :year
-          {person_filter}
+          {person_clause}
           {category_filter}
         ORDER BY transaction_date, category, amount DESC
-    """, year=year,
-       **( {"person_id": person}   if person   else {}),
-       **( {"category":  category} if category else {}))
+    """, year=year, **person_params,
+       **( {"category": category} if category else {}))
 
-    # Key = Monday of the ISO week, formatted as "Jan 6"
     by_week: dict[str, list[dict]] = defaultdict(list)
     week_order: list[str] = []
 
-    for txn_date, category, description, amount in rows:
+    for txn_date, txn_cat, description, amount in rows:
         if hasattr(txn_date, 'isocalendar'):
-            # Monday of that week
             monday = txn_date - dt.timedelta(days=txn_date.weekday())
             label  = monday.strftime("%b %-d")
         else:
@@ -433,7 +458,7 @@ def get_weekly_transactions(year: int, person: int | None = None, category: str 
         if label not in week_order:
             week_order.append(label)
         by_week[label].append({
-            "category":    category or "Other",
+            "category":    txn_cat or "Other",
             "description": description or "",
             "amount":      round(float(amount), 2),
         })
@@ -442,7 +467,6 @@ def get_weekly_transactions(year: int, person: int | None = None, category: str 
         "weeks":   week_order,
         "by_week": dict(by_week),
     }
-
 
 
 def _parse_search(search: str):
@@ -499,24 +523,23 @@ def _parse_search(search: str):
 
 def gettransactions_table(
     year: int,
-    person: int | None = None,
+    persons: list[int] | None = None,
     search: str = "",
     category: str | None = None,
-    filters: dict | None = None,   # explicit filters from simple mode — bypasses _parse_search
+    filters: dict | None = None,
 ) -> list[dict]:
     """
     Returns all spend transactions for the year as a list of row dicts.
-    `filters` dict (from simple mode): keys = cost_type, bank, from_date, to_date
-    `search` string (from advanced mode): supports category=x  type=x  from=  to=  free text
+    `filters` dict (simple mode): keys = cost_type, bank, from_date, to_date, category
+    `search` string (advanced mode): supports category=x  type=x  from=  to=  free text
     """
-    person_filter   = "AND :person_id = ANY(person)" if person   else ""
-    category_filter = "AND category = :category"     if category else ""
+    person_clause, person_params = _persons_filter(persons)
+    category_filter = "AND category = :category" if category else ""
 
     extra_clauses: list[str] = []
     extra_params:  dict      = {}
 
     if filters:
-        # Simple mode — direct param binding, safe for values with spaces
         if filters.get('category'):
             extra_clauses.append("category ILIKE :f_category")
             extra_params['f_category'] = f"%{filters['category']}%"
@@ -533,11 +556,8 @@ def gettransactions_table(
             extra_clauses.append("transaction_date <= :f_to")
             extra_params['f_to'] = filters['to_date']
     else:
-        # Advanced / search string mode
         col_filters, free_text, date_from, date_to = _parse_search(search)
 
-        # Group filters by column so same-column entries become OR, cross-column is AND
-        # e.g. category=groceries category=gas → (category ILIKE %groceries% OR category ILIKE %gas%)
         from collections import defaultdict
         grouped: dict[str, list[str]] = defaultdict(list)
         for col, val in col_filters:
@@ -554,7 +574,6 @@ def gettransactions_table(
                 else:
                     or_parts.append(f"{col} ILIKE :{key}")
                 extra_params[key] = f"%{val}%"
-            # Wrap in parens if multiple values for this column
             clause = " OR ".join(or_parts)
             extra_clauses.append(f"({clause})" if len(or_parts) > 1 else clause)
 
@@ -585,13 +604,12 @@ def gettransactions_table(
             ) AS person_names
         FROM {V_ALL_SPEND} s
         WHERE EXTRACT(YEAR FROM transaction_date) = :year
-          {person_filter}
+          {person_clause}
           {category_filter}
           {extra_filter}
         ORDER BY transaction_date DESC
-    """, year=year,
-       **( {"person_id": person}   if person   else {}),
-       **( {"category":  category} if category else {}),
+    """, year=year, **person_params,
+       **( {"category": category} if category else {}),
        **extra_params)
 
     return [

@@ -8,22 +8,21 @@ from datetime import datetime
 from nicegui import ui
 from services.notifications import notify
 
+from services.auth import current_user_id, current_selected_persons
 from services.transaction_config import load_config, save_config
 from services.view_manager import ViewManager
+from services.dashboard_config import (
+    get_or_create_default, list_dashboards, create_dashboard,
+    delete_dashboard, rename_dashboard,
+    get_widgets, save_widget_layout, add_widget, remove_widget, update_widget_layout,
+)
+from components.dashboard_registry import REGISTRY, REGISTRY_BY_ID
 from data.db import get_conn_tuple, get_schema
 
 import data.finance_dashboard_data as data
+
 _DB_CONN = get_conn_tuple()
 _SCHEMA  = get_schema()
-
-
-# ── Charts components ────────────────────────────────────────────────
-
-from components.finance_charts import (
-    kpi_card, spend_income_chart, per_bank_chart, employer_income_chart,
-    category_donut, fixed_vs_variable_chart, category_trend_chart,
-    weekly_transactions_chart, transactions_table,
-)
 
 
 # ── Transaction settings dialog ───────────────────────────────────────────────
@@ -47,7 +46,6 @@ def _open_settings_dialog(on_save_callback) -> None:
     with ui.dialog() as dlg, \
          ui.card().classes('w-[600px] rounded-2xl p-0 gap-0 overflow-hidden'):
 
-        # ── Dialog header ──────────────────────────────────────────────────────
         with ui.row().classes('items-center justify-between px-6 py-4 border-b border-zinc-100'):
             with ui.row().classes('items-center gap-2'):
                 ui.icon('settings').classes('text-zinc-400 text-xl')
@@ -55,15 +53,11 @@ def _open_settings_dialog(on_save_callback) -> None:
             ui.button(icon='close', on_click=dlg.close) \
                 .props('flat round dense').classes('text-zinc-400')
 
-        # ── Scrollable body ────────────────────────────────────────────────────
         with ui.scroll_area().style('height: 60vh'):
             with ui.column().classes('w-full gap-4 px-6 py-5'):
-
                 cfg = load_config()
 
-                # Transfer exclusions
-                ui.label('Transfer exclusion patterns') \
-                    .classes('text-sm font-semibold text-gray-700')
+                ui.label('Transfer exclusion patterns').classes('text-sm font-semibold text-gray-700')
                 ui.label(
                     'Transactions whose description contains any of these strings are '
                     'excluded from spend and income totals (e.g. credit card payments, Zelle).'
@@ -71,8 +65,7 @@ def _open_settings_dialog(on_save_callback) -> None:
 
                 @ui.refreshable
                 def render_transfer_chips() -> None:
-                    _chip_list(cfg.transfer_patterns,
-                               on_remove=lambda p: _remove_transfer(p))
+                    _chip_list(cfg.transfer_patterns, on_remove=lambda p: _remove_transfer(p))
 
                 def _remove_transfer(pattern: str) -> None:
                     cfg.transfer_patterns = [p for p in cfg.transfer_patterns if p != pattern]
@@ -96,9 +89,7 @@ def _open_settings_dialog(on_save_callback) -> None:
 
                 ui.separator()
 
-                # Employer patterns
-                ui.label('Employer / payroll patterns') \
-                    .classes('text-sm font-semibold text-gray-700')
+                ui.label('Employer / payroll patterns').classes('text-sm font-semibold text-gray-700')
                 ui.label(
                     'Incoming transactions matching these strings are counted as income '
                     '(e.g. your employer name, "DIRECT DEP", "PAYROLL").'
@@ -106,8 +97,7 @@ def _open_settings_dialog(on_save_callback) -> None:
 
                 @ui.refreshable
                 def render_employer_chips() -> None:
-                    _chip_list(cfg.employer_patterns,
-                               on_remove=lambda p: _remove_employer(p))
+                    _chip_list(cfg.employer_patterns, on_remove=lambda p: _remove_employer(p))
 
                 def _remove_employer(pattern: str) -> None:
                     cfg.employer_patterns = [p for p in cfg.employer_patterns if p != pattern]
@@ -129,8 +119,6 @@ def _open_settings_dialog(on_save_callback) -> None:
                     ui.button('Add', icon='add', on_click=_add_employer) \
                         .props('unelevated dense').classes('bg-gray-700 text-white')
 
-
-        # ── Dialog footer ──────────────────────────────────────────────────────
         with ui.row().classes('items-center justify-between px-6 py-4 border-t border-zinc-100'):
             def _refresh_views() -> None:
                 try:
@@ -158,42 +146,89 @@ def _open_settings_dialog(on_save_callback) -> None:
     dlg.open()
 
 
-
 # ── Main content ──────────────────────────────────────────────────────────────
 
 def content() -> None:
-    now   = datetime.now()
-    years = data.get_years()
-    state = {'year': years[0] if years else now.year, 'person': None, 'category': None}
+    user_id = current_user_id()
+    now     = datetime.now()
+    years   = data.get_years()
 
-    # ── Header ────────────────────────────────────────────────────────────────
+    state = {
+        'year':                years[0] if years else now.year,
+        'category':            None,
+        'edit_mode':           False,
+        'active_dashboard_id': get_or_create_default(user_id),
+    }
+
+    def _persons() -> list[int] | None:
+        """Resolve session-level person filter. Empty list → None (all people)."""
+        sp = current_selected_persons()
+        return sp if sp else None
+
+    # ── Page header ───────────────────────────────────────────────────────────
     with ui.row().classes('w-full items-center justify-between mb-2'):
         with ui.column().classes('gap-0'):
             ui.label('Finance').classes('page-title')
             ui.label('Spend & income across all accounts.').classes('text-sm text-muted')
 
         with ui.row().classes('items-center gap-2'):
-            year_sel = ui.select(
+            ui.select(
                 options=years, value=state['year'], label='Year',
-                on_change=lambda e: (state.update({'year': e.value}), dashboard.refresh(e.value), txn_table.refresh()),
+                on_change=lambda e: (
+                    state.update({'year': e.value}),
+                    _refresh_all(),
+                ),
             ).props('outlined dense').classes('w-28')
 
-
-            ui.button('Refresh', icon='refresh', on_click=lambda: dashboard.refresh(state['year'])) \
+            ui.button('Refresh', icon='refresh', on_click=lambda: _refresh_all()) \
                 .props('flat no-caps').classes('button button-outline')
 
             ui.button(icon='settings', on_click=lambda: _open_settings_dialog(
-                on_save_callback=lambda: (dashboard.refresh(state['year']), txn_table.refresh())
+                on_save_callback=_refresh_all,
             )).props('flat round').classes('text-zinc-400').tooltip('Transaction settings')
 
-    ui.element('div').classes('divider mb-4')
+            edit_btn = ui.button('Edit Dashboard', icon='edit', on_click=lambda: _toggle_edit()) \
+                .props('flat no-caps').classes('text-zinc-500')
 
-    # ── Refreshable — inside content() so each session is isolated.
-    #    Reads year from state dict; caller must update state BEFORE calling refresh().
+    ui.element('div').classes('divider mb-2')
+
+    # ── Dashboard tab bar ─────────────────────────────────────────────────────
     @ui.refreshable
-    def dashboard(y) -> None:
+    def dashboard_tabs() -> None:
+        dbs = list_dashboards(user_id)
+        with ui.row().classes('items-center gap-1 mb-4 flex-wrap'):
+            for db in dbs:
+                is_active = db['id'] == state['active_dashboard_id']
 
-        # ── Active category filter chip ───────────────────────────────────────
+                with ui.row().classes('items-center gap-0'):
+                    ui.button(
+                        db['name'],
+                        on_click=lambda _, did=db['id']: _switch_dashboard(did),
+                    ).props('no-caps dense').classes(
+                        'text-sm px-3 py-1 rounded-lg ' +
+                        ('bg-zinc-800 text-white' if is_active else 'text-zinc-500')
+                    )
+
+                    # Rename/delete controls in edit mode for non-default dashboards
+                    if state['edit_mode'] and not db['is_default']:
+                        ui.button(
+                            icon='edit',
+                            on_click=lambda _, db=db: _rename_dashboard_dialog(db),
+                        ).props('flat round dense size=xs').classes('text-zinc-400') \
+                         .tooltip('Rename')
+                        ui.button(
+                            icon='delete_outline',
+                            on_click=lambda _, did=db['id']: _delete_dashboard(did),
+                        ).props('flat round dense size=xs').classes('text-red-300') \
+                         .tooltip('Delete dashboard')
+
+            ui.button(icon='add', on_click=lambda: _new_dashboard_dialog()) \
+                .props('flat round dense size=sm').classes('text-gray-400') \
+                .tooltip('New dashboard')
+
+    # ── Active category filter chip ───────────────────────────────────────────
+    @ui.refreshable
+    def category_chip() -> None:
         if state.get('category'):
             with ui.row().classes('items-center gap-2 mb-3'):
                 ui.icon('filter_alt').classes('text-indigo-500').style('font-size:1rem')
@@ -202,96 +237,277 @@ def content() -> None:
                     .props('flat round dense size=xs').classes('text-indigo-400') \
                     .tooltip('Clear category filter')
 
-        with ui.row().classes('w-full gap-4 flex-wrap mb-4'):
-            kpi_card('All Time',   'all_inclusive',  data.get_alltime_kpi())
-            kpi_card(f'{y} Total', 'calendar_today', data.get_yearly_kpi(y))
+    # ── Dashboard grid ────────────────────────────────────────────────────────
+    @ui.refreshable
+    def dashboard_grid(y) -> None:
+        persons      = _persons()
+        dashboard_id = state['active_dashboard_id']
+        widgets      = get_widgets(dashboard_id)
+        edit         = state['edit_mode']
 
-        with ui.row().classes('w-full gap-4 flex-wrap mb-4'):
-            with ui.element('div').classes('card flex-1').style('min-width:320px'):
-                with ui.row().classes('items-center justify-between mb-3'):
-                    ui.label('Monthly Spend vs Income').classes('section-title')
-                    ui.label(str(y)).classes('text-xs text-muted')
-                spend_income_chart(data.get_monthly_spend_series(y))
+        # shared_state is passed to every render() call so charts can trigger
+        # cross-widget actions (category filter, refreshes)
+        shared_state = {
+            'category':            state.get('category'),
+            '_on_category_click':  lambda cat: _on_cat_change(cat),
+            '_refresh_dashboard':  lambda: dashboard_grid.refresh(state['year']),
+            '_refresh_txn_table':  lambda: txn_table.refresh(),
+        }
 
-        person = state.get('person') or None
+        with ui.element('div').style(
+            'display:grid;grid-template-columns:repeat(4,1fr);'
+            'gap:1rem;align-items:start'
+        ):
+            for w in widgets:
+                chart_def = REGISTRY_BY_ID.get(w['chart_id'])
+                if not chart_def:
+                    continue
 
-        with ui.row().classes('w-full gap-4 flex-wrap mb-4'):
-            with ui.element('div').classes('card flex-1').style('min-width:280px'):
-                with ui.row().classes('items-center justify-between mb-3'):
-                    ui.label('Spend per Account').classes('section-title')
-                    ui.label(str(y)).classes('text-xs text-muted')
-                per_bank_chart(data.get_spend_per_bank_series(y))
+                col_span = w['col_span']
+                row_span = w['row_span']
 
-            with ui.element('div').classes('card flex-1').style('min-width:280px'):
-                with ui.row().classes('items-center justify-between mb-3'):
-                    ui.label('Monthly Payroll Income').classes('section-title')
-                    ui.label(str(y)).classes('text-xs text-muted')
-                employer_income_chart(data.get_employer_income_series(y))
+                # Widget-level person override trumps the page-level filter
+                widget_persons = w['config'].get('persons') or persons
 
-        # Category spend donut + fixed vs variable
-        with ui.row().classes('w-full gap-4 flex-wrap mb-4'):
-            with ui.element('div').classes('card flex-1').style('min-width:280px'):
-                donut_state = {'inverted': False}
+                with ui.element('div').classes('card').style(
+                    f'grid-column:span {col_span};'
+                    + (f'grid-row:span {row_span};' if row_span > 1 else '')
+                ):
+                    # ── Edit-mode control bar ─────────────────────────────────
+                    if edit:
+                        with ui.row().classes(
+                            'items-center justify-between mb-2 pb-2 '
+                            'border-b border-zinc-100'
+                        ):
+                            # Col-span selector
+                            with ui.row().classes('items-center gap-1'):
+                                for cs in [1, 2, 3, 4]:
+                                    ui.button(
+                                        str(cs),
+                                        on_click=lambda _, wid=w['id'], c=cs: _set_col_span(wid, c),
+                                    ).props('dense unelevated size=xs').classes(
+                                        'min-w-0 w-6 h-6 text-xs ' +
+                                        ('bg-zinc-800 text-white' if cs == col_span
+                                         else 'bg-zinc-100 text-zinc-500')
+                                    )
+                                ui.label('cols').classes('text-xs text-zinc-400 ml-1')
 
-                @ui.refreshable
-                def _donut_view() -> None:
-                    category_donut(data.get_spend_by_category(y, person), inverted=donut_state['inverted'])
+                            # Move / remove
+                            with ui.row().classes('items-center gap-0'):
+                                ui.button(
+                                    icon='keyboard_arrow_up',
+                                    on_click=lambda _, wid=w['id']: _move_widget(wid, -1),
+                                ).props('flat round dense size=xs').classes('text-zinc-400') \
+                                 .tooltip('Move left / up')
+                                ui.button(
+                                    icon='keyboard_arrow_down',
+                                    on_click=lambda _, wid=w['id']: _move_widget(wid, 1),
+                                ).props('flat round dense size=xs').classes('text-zinc-400') \
+                                 .tooltip('Move right / down')
+                                ui.button(
+                                    icon='close',
+                                    on_click=lambda _, wid=w['id']: _remove_widget(wid),
+                                ).props('flat round dense size=xs').classes('text-red-400') \
+                                 .tooltip('Remove widget')
 
-                def _toggle_invert() -> None:
-                    donut_state['inverted'] = not donut_state['inverted']
-                    _donut_view.refresh()
+                    # ── Standard header (for charts without their own) ────────
+                    if not chart_def.has_own_header:
+                        with ui.row().classes('items-center justify-between mb-3'):
+                            ui.label(chart_def.title).classes('section-title')
+                            ui.label(str(y)).classes('text-xs text-muted')
 
-                with ui.row().classes('items-center justify-between mb-3'):
-                    ui.label('Spend by Category').classes('section-title')
-                    with ui.row().classes('items-center gap-2'):
-                        ui.label(str(y)).classes('text-xs text-muted')
-                        ui.button(icon='swap_vert', on_click=_toggle_invert) \
-                            .props('flat round dense') \
-                            .classes('text-gray-400') \
-                            .tooltip('Invert: show % of total instead of amount')
-                _donut_view()
+                    # ── Chart content ─────────────────────────────────────────
+                    chart_def.render(y, widget_persons, w['config'], shared_state)
 
-            with ui.element('div').classes('card flex-1').style('min-width:280px'):
-                with ui.row().classes('items-center justify-between mb-3'):
-                    ui.label('Fixed vs Variable').classes('section-title')
-                    ui.label(str(y)).classes('text-xs text-muted')
-                fixed_vs_variable_chart(data.get_fixed_vs_variable(y, person))
+        # Add-widget button shown below grid in edit mode
+        if edit:
+            with ui.row().classes('mt-4 justify-center'):
+                ui.button(
+                    'Add Widget', icon='add_circle_outline',
+                    on_click=lambda: _add_widget_dialog(),
+                ).props('unelevated no-caps').classes('bg-zinc-800 text-white px-4 rounded-lg')
 
-        # Category trend stacked bar
-        with ui.element('div').classes('card w-full mb-4'):
-            with ui.row().classes('items-center justify-between mb-3'):
-                ui.label('Spend Trend by Category').classes('section-title')
-                ui.label(str(y)).classes('text-xs text-muted')
-            def _on_cat_click(cat: str) -> None:
-                state['category'] = None if cat == state.get('category') else cat
-                dashboard.refresh(y)
-                txn_table.refresh()
+    # ── Callbacks ─────────────────────────────────────────────────────────────
 
-            category_trend_chart(
-                data.get_category_trend(y, person),
-                on_category_click=_on_cat_click,
-                active_category=state.get('category'),
-            )
-
-        # Weekly transaction drill-down
-        with ui.element('div').classes('card w-full mb-4'):
-            with ui.row().classes('items-center justify-between mb-3'):
-                ui.label('Weekly Transactions').classes('section-title')
-                ui.label(str(y)).classes('text-xs text-muted')
-            weekly_transactions_chart(
-                data.get_weekly_transactions(y, person, state.get('category')),
-                on_category_click=_on_cat_click,
-                active_category=state.get('category'),
-            )
+    def _refresh_all() -> None:
+        category_chip.refresh()
+        dashboard_grid.refresh(state['year'])
+        txn_table.refresh()
 
     def _clear_category() -> None:
         state['category'] = None
-        dashboard.refresh(state['year'])
+        category_chip.refresh()
+        dashboard_grid.refresh(state['year'])
         txn_table.refresh()
 
-    dashboard(state['year'])
+    def _on_cat_change(cat: str) -> None:
+        state['category'] = None if cat == state.get('category') else cat
+        category_chip.refresh()
+        dashboard_grid.refresh(state['year'])
+        txn_table.refresh()
 
-    # ── Transactions table — outside dashboard() so filters survive refreshes ──
+    def _toggle_edit() -> None:
+        state['edit_mode'] = not state['edit_mode']
+        if state['edit_mode']:
+            edit_btn.set_text('Done')
+            edit_btn.props('icon=check_circle')
+        else:
+            edit_btn.set_text('Edit Dashboard')
+            edit_btn.props('icon=edit')
+        dashboard_tabs.refresh()
+        dashboard_grid.refresh(state['year'])
+
+    def _switch_dashboard(dashboard_id: int) -> None:
+        state['active_dashboard_id'] = dashboard_id
+        state['category'] = None
+        category_chip.refresh()
+        dashboard_tabs.refresh()
+        dashboard_grid.refresh(state['year'])
+        txn_table.refresh()
+
+    # ── Dashboard management ──────────────────────────────────────────────────
+
+    def _new_dashboard_dialog() -> None:
+        with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
+            ui.label('New Dashboard').classes('text-base font-semibold')
+            name_input = ui.input(placeholder='e.g. Personal, Savings') \
+                .props('outlined dense').classes('w-full')
+
+            with ui.row().classes('justify-end gap-2 mt-1'):
+                ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+
+                def _create() -> None:
+                    name = name_input.value.strip()
+                    if not name:
+                        return
+                    new_id = create_dashboard(user_id, name)
+                    state['active_dashboard_id'] = new_id
+                    dlg.close()
+                    dashboard_tabs.refresh()
+                    dashboard_grid.refresh(state['year'])
+
+                ui.button('Create', on_click=_create) \
+                    .props('unelevated no-caps').classes('bg-zinc-800 text-white')
+
+        dlg.open()
+
+    def _rename_dashboard_dialog(db: dict) -> None:
+        with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
+            ui.label('Rename Dashboard').classes('text-base font-semibold')
+            name_input = ui.input(value=db['name']).props('outlined dense').classes('w-full')
+
+            with ui.row().classes('justify-end gap-2 mt-1'):
+                ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+
+                def _save() -> None:
+                    name = name_input.value.strip()
+                    if not name:
+                        return
+                    rename_dashboard(db['id'], name)
+                    dlg.close()
+                    dashboard_tabs.refresh()
+
+                ui.button('Save', on_click=_save) \
+                    .props('unelevated no-caps').classes('bg-zinc-800 text-white')
+
+        dlg.open()
+
+    def _delete_dashboard(dashboard_id: int) -> None:
+        try:
+            delete_dashboard(dashboard_id, user_id)
+        except ValueError as e:
+            notify(str(e), type='negative', position='top')
+            return
+        if state['active_dashboard_id'] == dashboard_id:
+            state['active_dashboard_id'] = get_or_create_default(user_id)
+            dashboard_grid.refresh(state['year'])
+        dashboard_tabs.refresh()
+
+    # ── Widget management ─────────────────────────────────────────────────────
+
+    def _set_col_span(widget_id: int, col_span: int) -> None:
+        update_widget_layout(widget_id, col_span=col_span)
+        dashboard_grid.refresh(state['year'])
+
+    def _move_widget(widget_id: int, direction: int) -> None:
+        """Shift a widget one position earlier (−1) or later (+1) in the list."""
+        dashboard_id = state['active_dashboard_id']
+        widgets = get_widgets(dashboard_id)
+        ids = [w['id'] for w in widgets]
+        if widget_id not in ids:
+            return
+        idx = ids.index(widget_id)
+        new_idx = idx + direction
+        if new_idx < 0 or new_idx >= len(ids):
+            return
+        ids[idx], ids[new_idx] = ids[new_idx], ids[idx]
+        widget_map = {w['id']: w for w in widgets}
+        save_widget_layout(dashboard_id, [widget_map[wid] for wid in ids])
+        dashboard_grid.refresh(state['year'])
+
+    def _remove_widget(widget_id: int) -> None:
+        remove_widget(widget_id)
+        dashboard_grid.refresh(state['year'])
+
+    def _add_widget_dialog() -> None:
+        dashboard_id = state['active_dashboard_id']
+        existing     = {w['chart_id'] for w in get_widgets(dashboard_id)}
+        available    = [c for c in REGISTRY if c.id not in existing]
+
+        with ui.dialog() as dlg, \
+             ui.card().classes('w-[520px] rounded-2xl p-0 gap-0 overflow-hidden'):
+
+            with ui.row().classes('items-center justify-between px-6 py-4 border-b border-zinc-100'):
+                ui.label('Add Widget').classes('text-base font-semibold text-zinc-800')
+                ui.button(icon='close', on_click=dlg.close).props('flat round dense').classes('text-zinc-400')
+
+            with ui.scroll_area().style('height:420px'):
+                with ui.column().classes('w-full px-4 py-3 gap-1'):
+                    if not available:
+                        ui.label('All available widgets are already on this dashboard.') \
+                            .classes('text-sm text-muted py-6 text-center w-full')
+                    else:
+                        # Group by category
+                        from itertools import groupby
+                        for category, charts in groupby(available, key=lambda c: c.category):
+                            ui.label(category.title()) \
+                                .classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide mt-3 mb-1')
+                            for chart_def in charts:
+                                with ui.row().classes(
+                                    'items-center justify-between py-2 px-3 rounded-lg '
+                                    'hover:bg-zinc-50 w-full'
+                                ):
+                                    with ui.row().classes('items-center gap-3'):
+                                        ui.icon(chart_def.icon) \
+                                            .classes('text-zinc-400').style('font-size:1.3rem')
+                                        with ui.column().classes('gap-0'):
+                                            ui.label(chart_def.title).classes('text-sm font-medium')
+                                            ui.label(chart_def.description).classes('text-xs text-muted')
+                                    ui.button(
+                                        'Add',
+                                        on_click=lambda _, cd=chart_def: _do_add_widget(cd, dlg),
+                                    ).props('unelevated dense no-caps size=sm') \
+                                     .classes('bg-zinc-800 text-white px-3')
+
+        dlg.open()
+
+    def _do_add_widget(chart_def, dlg) -> None:
+        add_widget(
+            state['active_dashboard_id'],
+            chart_def.id,
+            col_span=chart_def.default_col_span,
+            row_span=chart_def.default_row_span,
+        )
+        dashboard_grid.refresh(state['year'])
+        dlg.close()
+
+    # ── Initial render ────────────────────────────────────────────────────────
+    dashboard_tabs()
+    category_chip()
+    dashboard_grid(state['year'])
+
+    # ── Transactions table ────────────────────────────────────────────────────
+    # Kept outside the grid so filters survive dashboard refreshes.
     with ui.element('div').classes('card w-full mb-4'):
 
         filter_state = {
@@ -317,14 +533,12 @@ def content() -> None:
             adv_btn.props('icon=tune' if filter_state['mode'] == 'simple' else 'icon=arrow_back')
             filter_area.refresh()
 
-        # ── Header ────────────────────────────────────────────────────────────
         with ui.row().classes('items-center justify-between mb-3'):
             ui.label('All Transactions').classes('section-title')
             adv_btn = ui.button('Advanced Search', icon='tune') \
                 .props('flat dense no-caps size=sm').classes('text-gray-400 text-xs')
             adv_btn.on('click', lambda: _toggle_mode())
 
-        # ── Filter area ───────────────────────────────────────────────────────
         @ui.refreshable
         def filter_area() -> None:
             opts = data.get_filter_options(state['year'])
@@ -336,24 +550,32 @@ def content() -> None:
                         options=['All categories'] + opts['categories'],
                         value=filter_state['category'] or 'All categories',
                         label='Category',
-                        on_change=lambda e: (_fset('category', None if e.value == 'All categories' else e.value), txn_table.refresh()),
+                        on_change=lambda e: (
+                            _fset('category', None if e.value == 'All categories' else e.value),
+                            txn_table.refresh(),
+                        ),
                     ).props('outlined dense').classes('w-44')
 
                     ui.select(
                         options=['Any type'] + opts['cost_types'],
                         value=filter_state['cost_type'] or 'Any type',
                         label='Type',
-                        on_change=lambda e: (_fset('cost_type', None if e.value == 'Any type' else e.value), txn_table.refresh()),
+                        on_change=lambda e: (
+                            _fset('cost_type', None if e.value == 'Any type' else e.value),
+                            txn_table.refresh(),
+                        ),
                     ).props('outlined dense').classes('w-32')
 
                     ui.select(
                         options=['Any account'] + opts['banks'],
                         value=filter_state['bank'] or 'Any account',
                         label='Account',
-                        on_change=lambda e: (_fset('bank', None if e.value == 'Any account' else e.value), txn_table.refresh()),
+                        on_change=lambda e: (
+                            _fset('bank', None if e.value == 'Any account' else e.value),
+                            txn_table.refresh(),
+                        ),
                     ).props('outlined dense').classes('w-44')
 
-                    # ── Date range picker ──────────────────────────────────
                     def _date_label() -> str:
                         f, t = filter_state['from_date'], filter_state['to_date']
                         if f and t:   return f'{f}  →  {t}'
@@ -388,7 +610,6 @@ def content() -> None:
                                 date_menu.close(), txn_table.refresh(),
                             )).props('flat dense no-caps size=sm').classes('text-blue-500 font-semibold')
 
-                    # Active filter chips
                     active = {k: v for k, v in {
                         'category':  filter_state['category'],
                         'type':      filter_state['cost_type'],
@@ -413,11 +634,11 @@ def content() -> None:
                                     )
                                 )
 
-                        ui.button('Clear all', on_click=lambda: (_clear_filters(), filter_area.refresh(), txn_table.refresh())) \
-                            .props('flat dense no-caps size=sm').classes('text-gray-400 text-xs ml-1')
+                        ui.button('Clear all', on_click=lambda: (
+                            _clear_filters(), filter_area.refresh(), txn_table.refresh()
+                        )).props('flat dense no-caps size=sm').classes('text-gray-400 text-xs ml-1')
 
             else:
-                # ── Advanced search ───────────────────────────────────────────
                 with ui.column().classes('w-full gap-1 pb-3 border-b border-gray-100 mb-3'):
                     def _on_search_keydown(e) -> None:
                         key = (e.args.get('key') if isinstance(e.args, dict) else
@@ -440,12 +661,15 @@ def content() -> None:
 
         filter_area()
 
-        # ── Table ─────────────────────────────────────────────────────────────
         @ui.refreshable
         def txn_table() -> None:
+            from components.finance_charts import transactions_table
+
+            persons = _persons()
+
             if filter_state['mode'] == 'simple':
                 transactions_table(data.gettransactions_table(
-                    state['year'], state.get('person'),
+                    state['year'], persons,
                     category=state.get('category'),
                     filters={
                         'cost_type': filter_state['cost_type'],
@@ -457,7 +681,7 @@ def content() -> None:
                 ))
             else:
                 transactions_table(data.gettransactions_table(
-                    state['year'], state.get('person'),
+                    state['year'], persons,
                     search=filter_state['search'],
                     category=state.get('category'),
                 ))

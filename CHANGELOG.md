@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.2.1 (2026-03-16)
+
+### Bug Fixes
+
+- Bug in bank rule matcher
+  ([`55a6a54`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/55a6a54eecf08a380666ca3dbef5b35d2f03d1d6))
+
+
 ## v1.2.0 (2026-03-16)
 
 ### Features

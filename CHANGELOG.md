@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.3.0 (2026-03-16)
+
+### Features
+
+- Export per person
+  ([`fc93c28`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/fc93c28f1bd4d242db3af406ef002efe4f68e3b7))
+
+- Move wizard_component to components
+  ([`926c86d`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/926c86dc2c79f91170102a60310d690ae8fe1624))
+
+- Update settings icon
+  ([`b6f5e60`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/b6f5e603a812aece5b01253f74c53028294a4f1f))
+
+- Use consolidated tables instead of raw
+  ([`49cb893`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/49cb8939e51b1df118a96a95dc1f62994f1580dd))
+
+
 ## v1.2.1 (2026-03-16)
 
 ### Bug Fixes

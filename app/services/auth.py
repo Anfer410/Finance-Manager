@@ -13,7 +13,7 @@ Session keys stored in app.storage.user:
   auth_display_name  str
   auth_person_name   str
   auth_role          'admin' | 'user'
-  auth_selected_persons  list[str]   (admin only — [] means all)
+  auth_selected_persons  list[int]   (admin only — [] means all, stores user IDs)
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ class AuthUser:
     person_name:      str
     role:             str          # 'admin' | 'user'
     is_active:        bool
-    selected_persons: list[str]    # [] = all (admin); ignored for users
+    selected_persons: list[int]    # [] = all (admin); ignored for users — stores user IDs
 
 
 # ── DB lookups ────────────────────────────────────────────────────────────────
@@ -162,7 +162,7 @@ def update_user(user_id: int, *, display_name: str | None = None,
         ), params)
 
 
-def save_selected_persons(user_id: int, persons: list[str]) -> None:
+def save_selected_persons(user_id: int, persons: list[int]) -> None:
     import json as _json
     with _ENGINE.begin() as conn:
         conn.execute(text(f"""
@@ -217,15 +217,15 @@ def current_display_name() -> str | None:
     return app.storage.user.get("auth_display_name")
 
 
-def current_selected_persons() -> list[str]:
-    """Admin: returns saved preference ([] = all). User: returns [own person]."""
+def current_selected_persons() -> list[int]:
+    """Admin: returns saved preference ([] = all). User: returns [own user id]."""
     if is_admin():
         return app.storage.user.get("auth_selected_persons", [])
-    pn = current_person_name()
-    return [pn] if pn else []
+    uid = current_user_id()
+    return [uid] if uid else []
 
 
-def update_session_selected_persons(persons: list[str]) -> None:
+def update_session_selected_persons(persons: list[int]) -> None:
     """Update in-session preference and persist to DB."""
     app.storage.user["auth_selected_persons"] = persons
     uid = current_user_id()

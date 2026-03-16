@@ -18,12 +18,8 @@ async def handle_upload(
     raw    = await e.file.read()
     name   = e.file.name
     person = person_ref["value"]
-    if isinstance(person, str):
-        person = person.lower()
-    else:
-        person = str(person)
 
-    if not person or person in ("none", ""):
+    if not person:
         notify("No person selected!", type="negative", position="top")
         return
 

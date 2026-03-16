@@ -153,7 +153,7 @@ def _create_transaction_tables(conn, schema: str) -> None:
             transaction_date DATE          NOT NULL,
             description      TEXT          NOT NULL DEFAULT '',
             amount           NUMERIC(14,2) NOT NULL DEFAULT 0,
-            person           TEXT          NOT NULL DEFAULT '',
+            person           INTEGER[]     NOT NULL DEFAULT ARRAY[]::INTEGER[],
             source_file      TEXT          NOT NULL DEFAULT '',
             inserted_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
         ) PARTITION BY RANGE (transaction_date)
@@ -167,7 +167,7 @@ def _create_transaction_tables(conn, schema: str) -> None:
             description      TEXT          NOT NULL DEFAULT '',
             debit            NUMERIC(14,2) NOT NULL DEFAULT 0,
             credit           NUMERIC(14,2) NOT NULL DEFAULT 0,
-            person           TEXT          NOT NULL DEFAULT '',
+            person           INTEGER[]     NOT NULL DEFAULT ARRAY[]::INTEGER[],
             source_file      TEXT          NOT NULL DEFAULT '',
             inserted_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
         ) PARTITION BY RANGE (transaction_date)
@@ -185,7 +185,7 @@ def _create_transaction_tables(conn, schema: str) -> None:
         """))
         conn.execute(text(f"""
             CREATE INDEX IF NOT EXISTS idx_{tbl}_person
-            ON {schema}.{tbl} (person)
+            ON {schema}.{tbl} USING GIN (person)
         """))
 
 

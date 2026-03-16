@@ -83,13 +83,18 @@ def _create_staging_table(state: dict) -> bool:
     is_credit    = account_type == "credit"
 
     # ── Parse CSV ──────────────────────────────────────────────────────────────
+    sniff_result: SniffResult | None = state.get("sniff")
     try:
         text_data = raw.decode("utf-8", errors="replace")
         try:
             sep = pd.io.parsers.readers.csv.Sniffer().sniff(text_data[:4096]).delimiter
         except Exception:
             sep = ","
-        df = pd.read_csv(io.BytesIO(raw), sep=sep, dtype=str)
+        if sniff_result and not sniff_result.has_header:
+            df = pd.read_csv(io.BytesIO(raw), sep=sep, header=None, dtype=str)
+            df.columns = [f"col_{i}" for i in range(len(df.columns))]
+        else:
+            df = pd.read_csv(io.BytesIO(raw), sep=sep, dtype=str)
     except Exception as ex:
         print(f"[WizardStage] CSV parse failed: {ex}")
         return False
@@ -298,8 +303,7 @@ def open_add_bank_wizard(on_done) -> None:
     def _step2():
         sniff_res: SniffResult = state["sniff"]
         norm_cols = sniff_res.norm_columns
-        col_opts  = {None: "— not mapped —", **{c: c for c in norm_cols}}
-        selects: dict[str, ui.select] = {}
+        dragging: dict = {"col": None}
 
         with ui.column().classes("px-6 py-5 gap-4 w-full"):
             with ui.row().classes("items-center gap-3"):
@@ -312,36 +316,99 @@ def open_add_bank_wizard(on_done) -> None:
             ui.separator()
 
             @ui.refreshable
-            def mapping_rows():
-                selects.clear()
-                acct     = acct_sel.value
+            def mapping_ui():
+                acct     = state["account_type"]
+                m        = state["mapping"]
+                assigned = {v for v in m.to_dict().values() if v}
                 required = set(REQUIRED_ROLES[acct])
-                for role, label in ROLE_LABELS.items():
-                    if role == "amount" and acct != "checking":
-                        continue
-                    if role in ("debit", "credit") and acct != "credit":
-                        continue
-                    current = getattr(state["mapping"], role, None)
-                    is_req  = role in required
-                    with ui.row().classes("w-full items-center gap-3"):
-                        ui.label("●" if is_req else "○").classes(
-                            "text-xs w-3 " +
-                            ("text-red-400" if is_req else "text-zinc-300")
-                        )
-                        ui.label(label).classes(
-                            "text-sm w-48 shrink-0 " +
-                            ("font-medium text-zinc-700" if is_req else "text-zinc-400")
-                        )
-                        sel = ui.select(col_opts, value=current) \
-                            .classes("flex-1").props("outlined dense")
-                        selects[role] = sel
 
-            mapping_rows()
+                with ui.row().classes("w-full gap-5 items-start"):
+
+                    # ── Column palette ──────────────────────────────────────────
+                    with ui.column().classes("gap-1.5 w-40 shrink-0"):
+                        ui.label("CSV columns").classes(
+                            "text-xs font-semibold text-zinc-400 uppercase tracking-wide"
+                        )
+                        for col in norm_cols:
+                            used = col in assigned
+                            chip = ui.element("div").classes(
+                                "px-2.5 py-1.5 rounded-lg border text-xs font-mono "
+                                "select-none transition-colors "
+                                + ("bg-zinc-50 border-zinc-100 text-zinc-300"
+                                   if used else
+                                   "bg-white border-zinc-300 text-zinc-700 "
+                                   "cursor-grab hover:border-blue-300 hover:bg-blue-50")
+                            ).props(f'draggable={"true" if not used else "false"}')
+                            with chip:
+                                ui.label(col)
+                            if not used:
+                                chip.on("dragstart",
+                                        lambda e, c=col: dragging.update({"col": c}))
+
+                    # ── Role drop zones ─────────────────────────────────────────
+                    with ui.column().classes("flex-1 gap-1.5"):
+                        ui.label("Field mapping").classes(
+                            "text-xs font-semibold text-zinc-400 uppercase tracking-wide"
+                        )
+                        for role, label in ROLE_LABELS.items():
+                            if role == "amount" and acct != "checking":
+                                continue
+                            if role in ("debit", "credit") and acct != "credit":
+                                continue
+                            current = getattr(m, role, None)
+                            is_req  = role in required
+
+                            with ui.row().classes("w-full items-center gap-2"):
+                                ui.label("●" if is_req else "○").classes(
+                                    "text-xs w-3 shrink-0 "
+                                    + ("text-red-400" if is_req else "text-zinc-300")
+                                )
+                                ui.label(label).classes(
+                                    "text-sm w-44 shrink-0 "
+                                    + ("font-medium text-zinc-700" if is_req
+                                       else "text-zinc-400")
+                                )
+                                zone = ui.element("div").classes(
+                                    "flex-1 min-h-[34px] rounded-lg border-2 border-dashed "
+                                    "px-3 py-1 flex items-center justify-between gap-2 "
+                                    + ("border-blue-200 bg-blue-50"
+                                       if current else
+                                       "border-zinc-200 bg-zinc-50 hover:border-zinc-300")
+                                ).props(
+                                    'ondragover="event.preventDefault()" '
+                                    'ondragenter="event.preventDefault()"'
+                                )
+                                with zone:
+                                    if current:
+                                        ui.label(current).classes(
+                                            "text-xs font-mono text-blue-700 flex-1 truncate"
+                                        )
+                                        def _clear(r=role):
+                                            setattr(state["mapping"], r, None)
+                                            mapping_ui.refresh()
+                                        ui.button(icon="close", on_click=_clear) \
+                                            .props("flat round dense size=xs") \
+                                            .classes("text-zinc-400 shrink-0")
+                                    else:
+                                        ui.label("drop here").classes(
+                                            "text-xs text-zinc-300 pointer-events-none"
+                                        )
+
+                                def _drop(e, r=role):
+                                    col = dragging.get("col")
+                                    if col:
+                                        setattr(state["mapping"], r, col)
+                                        dragging["col"] = None
+                                        mapping_ui.refresh()
+
+                                zone.on("drop", _drop)
+
+            mapping_ui()
 
             def on_acct_change(_=None):
                 state["account_type"] = acct_sel.value
                 state["mapping"] = suggest_mapping(sniff_res, acct_sel.value)
-                mapping_rows.refresh()
+                mapping_ui.refresh()
 
             acct_sel.on("update:model-value", on_acct_change)
 
@@ -371,8 +438,6 @@ def open_add_bank_wizard(on_done) -> None:
             acct = acct_sel.value
             state["account_type"] = acct
             m = state["mapping"]
-            for role, sel in selects.items():
-                setattr(m, role, sel.value)
             missing = m.missing_required(acct)
             if missing:
                 notify(
@@ -568,19 +633,27 @@ def open_add_bank_wizard(on_done) -> None:
                 ui.label("Person override (optional)") \
                     .classes("text-sm font-medium text-zinc-700")
                 ui.label(
-                    "Force every row from this bank to be assigned to one person. "
-                    "Useful for joint or shared accounts where the file never contains per-person data."
+                    "Pin every row from this bank to specific people. "
+                    "Select multiple for a shared/mutual account."
                 ).classes("text-xs text-zinc-400")
-            with ui.row().classes("w-full gap-3 items-center"):
-                override_sw = ui.switch("Enable person override") \
-                    .classes("text-sm shrink-0")
-                person_override_in = ui.input(placeholder="e.g. mutual") \
-                    .classes("flex-1").props("outlined dense")
-                person_override_in.set_visibility(False)
-                override_sw.on(
-                    "update:model-value",
-                    lambda e: person_override_in.set_visibility(e.args)
-                )
+
+            override_ids: set[int] = set()
+            override_sw = ui.switch("Enable person override").classes("text-sm")
+            override_container = ui.column().classes("w-full gap-1 pl-1")
+            override_container.set_visibility(False)
+            override_sw.on(
+                "update:model-value",
+                lambda e: override_container.set_visibility(e.args)
+            )
+            with override_container:
+                for u in active_users:
+                    chk = ui.checkbox(f"{u.person_name}  ({u.display_name})", value=False)
+                    chk.on(
+                        "update:model-value",
+                        lambda e, uid=u.id: (
+                            override_ids.add(uid) if e.args else override_ids.discard(uid)
+                        ),
+                    )
 
         def advance_step3():
             bname = bank_name_in.value.strip()
@@ -609,7 +682,7 @@ def open_add_bank_wizard(on_done) -> None:
                 account_type             = state["account_type"],
                 member_name_column       = member_col,
                 member_aliases           = {a["raw_value"]: a["user_id"] for a in alias_rows},
-                person_override          = person_override_in.value.strip() if override_sw.value else None,
+                person_override          = sorted(override_ids) if override_sw.value and override_ids else None,
             )
             _advance(4)
 

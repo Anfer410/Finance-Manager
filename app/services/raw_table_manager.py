@@ -1,10 +1,12 @@
 """
 raw_table_manager.py
 
-Manages dynamic raw_<bank> tables in Postgres.
+Manages dynamic raw_<account_key> archive tables in Postgres.
+- One table per account (keyed by rule.prefix, e.g. raw_wf_checking)
 - Auto-creates table from DataFrame schema on first upload
 - Deduplicates via UNIQUE constraint + INSERT ON CONFLICT DO NOTHING
-- No Alembic involvement (these are data tables, not schema tables)
+- person column is stored for per-person filtering but excluded from CSV export
+- No Alembic involvement (these are archive tables, not schema tables)
 """
 
 import json
@@ -183,12 +185,13 @@ class RawTableManager:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def upsert(self, df: pd.DataFrame, bank_name: str, dedup_columns: list[str], person: str = "") -> int:
+    def upsert(self, df: pd.DataFrame, account_key: str, dedup_columns: list[str], person: str = "") -> int:
         """
-        Ensure the raw table exists, then insert only rows not already present.
+        Ensure the raw archive table exists, then insert only rows not already present.
+        Table is named raw_<account_key> (e.g. raw_wf_checking).
         Returns the number of newly inserted rows.
         """
-        table_name = f"raw_{self._sanitize(bank_name)}"
+        table_name = f"raw_{self._sanitize(account_key)}"
         df = self._coerce_types(df)
 
         # Final safety net: re-normalize columns to guarantee no empty names
@@ -207,27 +210,33 @@ class RawTableManager:
 
         return self._insert_unique(df, table_name, dedup_columns)
 
-    def table_exists(self, bank_name: str) -> bool:
-        return self._table_exists(f"raw_{self._sanitize(bank_name)}")
+    def table_exists(self, account_key: str) -> bool:
+        return self._table_exists(f"raw_{self._sanitize(account_key)}")
 
-    def list_banks(self) -> list[str]:
-        """Returns bank names (raw_ prefix stripped) for all raw_* tables in the schema."""
+    def list_accounts(self) -> list[str]:
+        """Returns account keys (raw_ prefix stripped) for all raw_* tables in the schema."""
         names = inspect(self.engine).get_table_names(schema=self.schema)
         return [n[4:] for n in sorted(names) if n.startswith("raw_")]
 
-    def export_csv(self, bank_name: str) -> str:
-        """Returns all rows from raw_<bank_name> as a CSV string."""
+    def export_csv(self, account_key: str) -> str:
+        """
+        Returns all rows from raw_<account_key> as a CSV string.
+        Excludes _id and person columns — these are internal archive metadata.
+        """
         import csv
         import io as _io
-        table = f"{self.schema}.raw_{self._sanitize(bank_name)}"
+        SKIP_COLS = {"_id", "person"}
+        table = f"{self.schema}.raw_{self._sanitize(account_key)}"
         with self.engine.connect() as conn:
             result = conn.execute(text(f"SELECT * FROM {table} ORDER BY _id"))
+            all_cols = list(result.keys())
             rows = result.fetchall()
-            cols = list(result.keys())
+        export_cols   = [c for c in all_cols if c not in SKIP_COLS]
+        col_indices   = [all_cols.index(c) for c in export_cols]
         buf = _io.StringIO()
         writer = csv.writer(buf)
-        writer.writerow(cols)
-        writer.writerows(rows)
+        writer.writerow(export_cols)
+        writer.writerows([row[i] for i in col_indices] for row in rows)
         return buf.getvalue()
 
     # ── Internals ─────────────────────────────────────────────────────────────

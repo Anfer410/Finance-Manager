@@ -777,9 +777,28 @@ def _finance_data_import_section() -> None:
                     def do_import():
                         from sqlalchemy import text as _text
                         from data.db import get_engine, get_schema
+                        import re as _re
                         schema  = get_schema()
                         engine  = get_engine()
                         inserted = skipped = 0
+
+                        def _parse_person(val) -> list:
+                            """Convert any person serialization back to list[int] for INTEGER[]."""
+                            if isinstance(val, list):
+                                return [int(v) for v in val if str(v).strip().lstrip('-').isdigit()]
+                            s = str(val).strip()
+                            if not s:
+                                return []
+                            # Strip PostgreSQL array braces {1,2} or JSON array brackets [1,2]
+                            s = s.strip('{}[]')
+                            parts = [p.strip() for p in s.split(',') if p.strip()]
+                            result = []
+                            for p in parts:
+                                try:
+                                    result.append(int(p))
+                                except ValueError:
+                                    pass
+                            return result
 
                         with engine.connect() as conn:
                             for row in rows:
@@ -798,7 +817,7 @@ def _finance_data_import_section() -> None:
                                                 'td':     row['transaction_date'],
                                                 'desc':   row['description'],
                                                 'amt':    float(row['amount'] or 0),
-                                                'person': row.get('person', ''),
+                                                'person': _parse_person(row.get('person', '')),
                                                 'src':    row.get('source_file', ''),
                                                 'ins':    row.get('inserted_at', ''),
                                             })
@@ -816,7 +835,7 @@ def _finance_data_import_section() -> None:
                                                 'desc':   row['description'],
                                                 'deb':    float(row.get('debit')  or 0),
                                                 'cred':   float(row.get('credit') or 0),
-                                                'person': row.get('person', ''),
+                                                'person': _parse_person(row.get('person', '')),
                                                 'src':    row.get('source_file', ''),
                                                 'ins':    row.get('inserted_at', ''),
                                             })
@@ -884,23 +903,65 @@ def _raw_export_section() -> None:
             ).classes('text-xs text-zinc-400')
 
             try:
-                mgr   = default_manager()
-                banks = mgr.list_banks()
+                mgr      = default_manager()
+                accounts = mgr.list_accounts()
             except Exception as ex:
                 ui.label(f'Could not load tables: {ex}').classes('text-sm text-red-500')
                 return
 
-            if not banks:
+            if not accounts:
                 ui.label('No raw data tables found yet — upload some transactions first.') \
                     .classes('text-sm text-zinc-400')
                 return
 
-            for bank in banks:
-                def _download(b=bank):
+            # Build prefix → rule map and user_id → person_name map for filename construction
+            rules_by_prefix = {r.prefix: r for r in (load_rules() or [])}
+
+            from data.db import get_engine, get_schema
+            from sqlalchemy import text as _text
+            try:
+                with get_engine().connect() as _conn:
+                    _rows = _conn.execute(_text(
+                        f"SELECT id, person_name FROM {get_schema()}.app_users"
+                    )).fetchall()
+                person_name_by_id = {r[0]: r[1] for r in _rows}
+            except Exception:
+                person_name_by_id = {}
+
+            import re as _re
+
+            def _export_filename(account_key: str) -> str:
+                rule = rules_by_prefix.get(account_key)
+                if rule:
+                    bank_slug  = _re.sub(r"[^a-z0-9]+", "_", rule.bank_name.strip().lower()).strip("_")
+                    # Derive account alias: the part of prefix after the bank slug, or the full prefix
+                    if rule.prefix.startswith(bank_slug + "_"):
+                        acct_part = rule.prefix[len(bank_slug) + 1:]
+                    else:
+                        acct_part = rule.prefix
+                    full_alias = f"{bank_slug}_{acct_part}"
+                    # Resolve person segment
+                    override = rule.person_override or []
+                    if len(override) == 1:
+                        person_part = _re.sub(
+                            r"[^a-z0-9]+", "_",
+                            person_name_by_id.get(override[0], str(override[0])).lower()
+                        ).strip("_")
+                    elif len(override) > 1:
+                        person_part = f"user_{auth.current_user_id() or 0}"
+                    else:
+                        person_part = f"user_{auth.current_user_id() or 0}"
+                else:
+                    full_alias  = account_key
+                    person_part = f"user_{auth.current_user_id() or 0}"
+                return f"raw_{full_alias}_{person_part}.csv"
+
+            for account_key in accounts:
+                def _download(ak=account_key):
                     try:
-                        csv_data = default_manager().export_csv(b)
+                        csv_data = default_manager().export_csv(ak)
                         b64      = base64.b64encode(csv_data.encode()).decode()
-                        fname    = f"raw_{b}_{datetime.now().strftime('%Y%m%d')}.csv"
+                        fname    = _export_filename(ak)
                         ui.run_javascript(f"""
                             const a = document.createElement('a');
                             a.href = 'data:text/csv;base64,{b64}';
@@ -910,7 +971,14 @@ def _raw_export_section() -> None:
                     except Exception as ex:
                         notify(f'Export failed: {ex}', type='negative', position='top')
 
-                label = bank.replace('_', ' ').title()
+                rule  = rules_by_prefix.get(account_key)
+                label = rule.bank_name if rule else account_key.replace('_', ' ').title()
+                if rule:
+                    bank_slug = _re.sub(r"[^a-z0-9]+", "_", rule.bank_name.strip().lower()).strip("_")
+                    if rule.prefix.startswith(bank_slug + "_"):
+                        acct_alias = rule.prefix[len(bank_slug) + 1:].replace("_", " ").title()
+                        label = f"{rule.bank_name} — {acct_alias}"
+
                 with ui.row().classes('items-center gap-3 w-full px-1'):
                     ui.icon('description').classes('text-zinc-300 text-base')
                     ui.label(label).classes('text-sm text-zinc-700 flex-1')

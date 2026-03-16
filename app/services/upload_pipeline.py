@@ -330,39 +330,54 @@ def write_to_consolidated(
         print(f"[write_to_consolidated] no valid rows to insert — check date_col '{date_col}' exists in df")
         return 0
 
-    with engine.begin() as conn:
-        # Auto-create any missing year partitions
-        for year in rows_by_year:
-            ensure_partition_for_year(conn, schema, year)
+    total_rows_to_insert = sum(len(b) for b in rows_by_year.values())
+    print(f"[write_to_consolidated] years={list(rows_by_year.keys())} total_rows_to_insert={total_rows_to_insert}")
+    # Sample first row to verify types going into DB
+    for year, batch in rows_by_year.items():
+        if batch:
+            print(f"[write_to_consolidated] sample row year={year}: {batch[0]}")
+            break
 
-        for year, batch in rows_by_year.items():
-            if not batch:
-                continue
+    try:
+        with engine.begin() as conn:
+            # Auto-create any missing year partitions
+            for year in rows_by_year:
+                ensure_partition_for_year(conn, schema, year)
 
-            if is_credit:
-                sql = text(f"""
-                    INSERT INTO {tbl}
-                        (account_key, transaction_date, description,
-                         debit, credit, person, source_file)
-                    VALUES
-                        (:account_key, :transaction_date, :description,
-                         :debit, :credit, :person, :source_file)
-                    ON CONFLICT DO NOTHING
-                """)
-            else:
-                sql = text(f"""
-                    INSERT INTO {tbl}
-                        (account_key, transaction_date, description,
-                         amount, person, source_file)
-                    VALUES
-                        (:account_key, :transaction_date, :description,
-                         :amount, :person, :source_file)
-                    ON CONFLICT DO NOTHING
-                """)
+            for year, batch in rows_by_year.items():
+                if not batch:
+                    continue
 
-            result = conn.execute(sql, batch)
-            inserted += result.rowcount
+                if is_credit:
+                    sql = text(f"""
+                        INSERT INTO {tbl}
+                            (account_key, transaction_date, description,
+                             debit, credit, person, source_file)
+                        VALUES
+                            (:account_key, :transaction_date, :description,
+                             :debit, :credit, :person, :source_file)
+                        ON CONFLICT DO NOTHING
+                    """)
+                else:
+                    sql = text(f"""
+                        INSERT INTO {tbl}
+                            (account_key, transaction_date, description,
+                             amount, person, source_file)
+                        VALUES
+                            (:account_key, :transaction_date, :description,
+                             :amount, :person, :source_file)
+                        ON CONFLICT DO NOTHING
+                    """)
 
+                result = conn.execute(sql, batch)
+                row_count = result.rowcount
+                print(f"[write_to_consolidated] year={year} batch_size={len(batch)} rowcount={row_count}")
+                inserted += row_count
+    except Exception as db_ex:
+        print(f"[write_to_consolidated] DB ERROR during insert: {type(db_ex).__name__}: {db_ex}")
+        raise
+
+    print(f"[write_to_consolidated] final inserted={inserted}")
     return inserted
 
 
@@ -421,6 +436,10 @@ class UploadPipeline:
             )
 
         total = len(df)
+
+        # Snapshot the original parsed df (pre-rename) for raw archiving.
+        # This preserves the original CSV column names in the archive.
+        df_raw_archive = df.copy()
 
         # ── 3. Resolve column mapping ─────────────────────────────────────────
         # Priority: explicit col_mapping arg > bank_rule.column_map > suggest from df
@@ -481,27 +500,34 @@ class UploadPipeline:
             print(f"[UploadPipeline] consolidated write failed: {ex}")
             # Fall through — still write raw table
 
-        # ── 5. Upsert raw table (archive) ─────────────────────────────────────
+        # ── 5. Upsert raw archive table ────────────────────────────────────────
+        # Archive uses the pre-rename df (original CSV column names).
+        # Table is named raw_<prefix> (e.g. raw_wf_checking).
+        # Dedup columns are resolved against the original column names.
         if mapping is not None:
-            dedup_cols = mapping_for_write.dedup_columns(account_type)
+            # mapping.to_dict() maps role → original col name — use the original col names
+            orig_dedup_cols = [
+                v for role in DEDUP_ROLES.get(account_type, ["date", "description", "amount"])
+                for v in [mapping.to_dict().get(role)]
+                if v and v in df_raw_archive.columns
+            ] or ["description"]
         elif bank_rule and getattr(bank_rule, "dedup_columns", None):
-            dedup_cols = bank_rule.dedup_columns
+            orig_dedup_cols = bank_rule.dedup_columns
         else:
-            dedup_cols = [
+            orig_dedup_cols = [
                 c for c in ["transaction_date", "date", "amount", "debit", "credit", "description"]
-                if c in df.columns
+                if c in df_raw_archive.columns
             ][:3] or ["description"]
 
-        raw_inserted = 0
         try:
             mgr = default_manager()
-            raw_inserted = mgr.upsert(
-                df, bank_name=bank_name, dedup_columns=dedup_cols, person=person
+            mgr.upsert(
+                df_raw_archive, account_key=prefix, dedup_columns=orig_dedup_cols, person=person
             )
         except Exception as ex:
-            print(f"[UploadPipeline] raw table upsert failed: {ex}")
+            print(f"[UploadPipeline] raw archive upsert failed: {ex}")
 
-        inserted = consolidated_inserted or raw_inserted
+        inserted = consolidated_inserted
 
         # ── 6. Refresh views ──────────────────────────────────────────────────
         try:

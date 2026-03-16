@@ -36,23 +36,30 @@ def _bank_alias(rule: BankRule) -> str:
 
 def _open_transaction_search_dialog(
     prefix: str,
+    account_type: str = "credit",
     *,
     payment_cat_ref:  dict | None = None,
     payment_desc_ref: dict | None = None,
     checking_pat_ref: dict | None = None,
 ):
     """
-    Browse raw_{prefix} rows.  For credit accounts, each row has a
-    copy-to button that writes into the provided input refs.
+    Browse transactions_debit or transactions_credit rows for a given account_key (prefix).
+    For credit accounts, each row has a copy-to button that writes into the provided input refs.
 
     Refs are dicts with a "widget" key holding the ui.input instance,
     e.g. {"widget": payment_desc_in}.  Pass None to hide that target.
     """
     from sqlalchemy import text
 
-    table_name = "raw_" + prefix
     schema     = get_schema()
     engine     = get_engine()
+    tbl        = f"{schema}.transactions_{'credit' if account_type == 'credit' else 'debit'}"
+
+    # Columns to display — exclude internal fields (id, person, source_file, inserted_at)
+    if account_type == "credit":
+        DISPLAY_COLS = ["transaction_date", "description", "debit", "credit"]
+    else:
+        DISPLAY_COLS = ["transaction_date", "description", "amount"]
 
     COPY_TARGETS = {}
     if payment_cat_ref:
@@ -62,14 +69,13 @@ def _open_transaction_search_dialog(
     if checking_pat_ref:
         COPY_TARGETS["Checking pattern"] = checking_pat_ref
 
-    # ── Check table exists ────────────────────────────────────────────────────
-    def _table_exists() -> bool:
+    # ── Check data exists ─────────────────────────────────────────────────────
+    def _has_data() -> bool:
         try:
             with engine.connect() as conn:
                 result = conn.execute(text(
-                    "SELECT 1 FROM information_schema.tables "
-                    "WHERE table_schema = :s AND table_name = :t"
-                ), {"s": schema, "t": table_name}).fetchone()
+                    f"SELECT 1 FROM {tbl} WHERE account_key = :k LIMIT 1"
+                ), {"k": prefix}).fetchone()
                 return result is not None
         except Exception:
             return False
@@ -78,52 +84,35 @@ def _open_transaction_search_dialog(
     def _query(search: str, date_from: str, date_to: str, page: int, page_size: int = 50):
         try:
             with engine.connect() as conn:
-                cols_result = conn.execute(text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_schema = :s AND table_name = :t ORDER BY ordinal_position"
-                ), {"s": schema, "t": table_name}).fetchall()
-                cols = [r[0] for r in cols_result]
-
-                where_parts = []
-                params: dict = {"schema": schema, "offset": (page - 1) * page_size, "limit": page_size}
+                where_parts = ["account_key = :key"]
+                params: dict = {"key": prefix, "offset": (page - 1) * page_size, "limit": page_size}
 
                 if search:
-                    text_cols = [c for c in cols if c not in ("id",)]
-                    if text_cols:
-                        like_parts = " OR ".join(
-                            f"CAST({chr(34)}{c}{chr(34)} AS TEXT) ILIKE :search"
-                            for c in text_cols[:8]
-                        )
-                        where_parts.append("(" + like_parts + ")")
-                        params["search"] = "%" + search + "%"
+                    where_parts.append("description ILIKE :search")
+                    params["search"] = "%" + search + "%"
 
                 if date_from:
-                    date_col = next((c for c in cols if "date" in c.lower()), None)
-                    if date_col:
-                        where_parts.append(f'"{date_col}" >= :date_from')
-                        params["date_from"] = date_from
+                    where_parts.append("transaction_date >= :date_from")
+                    params["date_from"] = date_from
 
                 if date_to:
-                    date_col = next((c for c in cols if "date" in c.lower()), None)
-                    if date_col:
-                        where_parts.append(f'"{date_col}" <= :date_to')
-                        params["date_to"] = date_to
+                    where_parts.append("transaction_date <= :date_to")
+                    params["date_to"] = date_to
 
-                where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
-                date_col     = next((c for c in cols if "date" in c.lower()), None)
-                order_clause = f'ORDER BY "{date_col}" DESC' if date_col else ""
+                col_list     = ", ".join(DISPLAY_COLS)
+                where_clause = "WHERE " + " AND ".join(where_parts)
 
                 rows = conn.execute(text(
-                    f'SELECT * FROM "{schema}"."{table_name}" '
-                    f"{where_clause} {order_clause} "
+                    f"SELECT {col_list} FROM {tbl} "
+                    f"{where_clause} ORDER BY transaction_date DESC "
                     f"LIMIT :limit OFFSET :offset"
                 ), params).fetchall()
 
                 count = conn.execute(text(
-                    f'SELECT COUNT(*) FROM "{schema}"."{table_name}" {where_clause}'
+                    f"SELECT COUNT(*) FROM {tbl} {where_clause}"
                 ), {k: v for k, v in params.items() if k not in ("offset", "limit")}).fetchone()[0]
 
-                return cols, [list(r) for r in rows], count
+                return DISPLAY_COLS, [list(r) for r in rows], count
         except Exception:
             return [], [], 0
 
@@ -136,11 +125,11 @@ def _open_transaction_search_dialog(
                 ui.icon("manage_search").classes("text-zinc-400 text-xl")
                 with ui.column().classes("gap-0"):
                     ui.label("Transaction browser").classes("text-base font-semibold text-zinc-800")
-                    ui.label("Table: " + table_name).classes("text-xs text-zinc-400 font-mono")
+                    ui.label(f"Account: {prefix}").classes("text-xs text-zinc-400 font-mono")
             ui.button(icon="close", on_click=dlg.close) \
                 .props("flat round dense").classes("text-zinc-400")
 
-        if not _table_exists():
+        if not _has_data():
             with ui.column().classes("flex-1 items-center justify-center gap-3 py-20"):
                 ui.icon("table_view").classes("text-zinc-200 text-6xl")
                 ui.label("No data yet").classes("text-lg font-semibold text-zinc-400")
@@ -380,8 +369,9 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
                         .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
                     ui.button(
                         icon="manage_search",
-                        on_click=lambda: _open_transaction_search_dialog(
-                            rule.prefix,
+                        on_click=lambda r=rule: _open_transaction_search_dialog(
+                            r.prefix,
+                            r.account_type,
                             payment_cat_ref={"widget": payment_cat_in},
                             payment_desc_ref={"widget": payment_desc_in},
                             checking_pat_ref={"widget": checking_pat_in},

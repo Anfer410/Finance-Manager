@@ -15,9 +15,10 @@ from services.dashboard_config import (
     get_or_create_default, list_dashboards, create_dashboard,
     delete_dashboard, rename_dashboard,
     get_widgets, save_widget_layout, add_widget, remove_widget, update_widget_layout,
-    update_widget_config,
+    update_widget_config, update_widget_label,
 )
-from components.dashboard_registry import REGISTRY, REGISTRY_BY_ID
+from components.widgets import REGISTRY, REGISTRY_BY_ID, RenderContext
+from components.widgets.settings_ui import open_widget_settings_dialog
 from data.db import get_conn_tuple, get_schema
 
 import data.finance_dashboard_data as data
@@ -435,7 +436,8 @@ def content() -> None:
                 col_start = w['col_start']
                 row_start = w['row_start']
 
-                widget_persons = w['config'].get('persons') or persons
+                # Build fully-resolved context (handles time_mode, person override, loan)
+                ctx = RenderContext.build(y, persons, w['config'], shared_state)
 
                 # Card fills its grid area exactly; overflow hidden clips any excess.
                 # position:relative lets the edit-bar overlay sit inside it.
@@ -467,13 +469,12 @@ def content() -> None:
 
                             ui.element('div').style('flex:1')  # spacer
 
-                            # Settings button (only for widgets with config_fields)
-                            if chart_def.config_fields:
-                                ui.button(
-                                    icon='tune',
-                                    on_click=lambda _, wid=w['id'], cd=chart_def, cfg=dict(w['config']): _widget_settings_dialog(wid, cd, cfg),
-                                ).props('flat round dense size=xs').classes('text-zinc-400') \
-                                 .tooltip('Widget settings')
+                            # Settings button — every widget supports settings now
+                            ui.button(
+                                icon='tune',
+                                on_click=lambda _, wid=w['id'], cd=chart_def, cfg=dict(w['config']): _widget_settings_dialog(wid, cd, cfg),
+                            ).props('flat round dense size=xs').classes('text-zinc-400') \
+                             .tooltip('Widget settings')
 
                             # Remove button
                             ui.button(
@@ -507,12 +508,34 @@ def content() -> None:
 
                     # ── Standard header ───────────────────────────────────────
                     if not chart_def.has_own_header:
+                        # instance_label overrides the default title for duplicate widgets
+                        _header_label = w.get('instance_label') or chart_def.title
+                        # Show a time-context hint appropriate to the widget's time mode
+                        _tm = w['config'].get('time_mode', 'page_year')
+                        if _tm == 'trailing':
+                            _time_hint = f'{w["config"].get("trailing_months", 12)}mo'
+                        elif _tm == 'all_time':
+                            _time_hint = 'All Time'
+                        elif _tm == 'year':
+                            _time_hint = str(w['config'].get('year', y))
+                        else:
+                            _time_hint = str(y)
                         with ui.row().classes('items-center justify-between mb-3'):
-                            ui.label(chart_def.title).classes('label-text')
-                            ui.label(str(y)).classes('text-xs text-muted')
+                            ui.label(_header_label).classes('label-text')
+                            ui.label(_time_hint).classes('text-xs text-muted')
 
                     # ── Chart content ─────────────────────────────────────────
-                    chart_def.render(y, widget_persons, w['config'], shared_state)
+                    try:
+                        chart_def.render(ctx)
+                    except Exception as _render_err:
+                        import traceback, logging
+                        logging.getLogger(__name__).error(
+                            "Widget %s render failed: %s\n%s",
+                            chart_def.id, _render_err,
+                            traceback.format_exc(),
+                        )
+                        ui.label(f'⚠ Widget error: {_render_err}') \
+                          .classes('text-xs text-red-400 p-2')
 
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
@@ -750,50 +773,23 @@ def content() -> None:
         dashboard_grid.refresh(state['year'])
 
     def _widget_settings_dialog(widget_id: int, chart_def, current_config: dict) -> None:
-        inputs = {}
+        def _on_save(new_config: dict, instance_label: str | None) -> None:
+            update_widget_config(widget_id, new_config)
+            if instance_label is not None:
+                update_widget_label(widget_id, instance_label)
+            dashboard_grid.refresh(state['year'])
 
-        with ui.dialog() as dlg, ui.card().classes('rounded-2xl p-6 gap-3 min-w-80'):
-            with ui.row().classes('items-center justify-between w-full mb-1'):
-                ui.label(f'{chart_def.title}').classes('text-base font-semibold text-zinc-800')
-                ui.button(icon='close', on_click=dlg.close) \
-                    .props('flat round dense size=sm').classes('text-zinc-400')
-
-            for field in chart_def.config_fields:
-                key     = field['key']
-                label   = field['label']
-                value   = current_config.get(key, field.get('default'))
-
-                if field['type'] == 'number':
-                    inputs[key] = ui.number(
-                        label, value=value,
-                        min=field.get('min'), max=field.get('max'),
-                    ).props('outlined dense').classes('w-full')
-                elif field['type'] == 'select':
-                    opts = {o: l for o, l in zip(field['options'], field['option_labels'])}
-                    inputs[key] = ui.select(opts, value=value, label=label) \
-                        .props('outlined dense').classes('w-full')
-
-            def _save():
-                new_config = dict(current_config)
-                for k, inp in inputs.items():
-                    new_config[k] = inp.value
-                update_widget_config(widget_id, new_config)
-                dashboard_grid.refresh(state['year'])
-                dlg.close()
-
-            with ui.row().classes('justify-end gap-2 mt-2 w-full'):
-                ui.button('Cancel', on_click=dlg.close) \
-                    .props('flat no-caps').classes('text-zinc-500')
-                ui.button('Save', on_click=_save) \
-                    .props('unelevated no-caps') \
-                    .classes('bg-zinc-800 text-white rounded-lg px-4')
-
-        dlg.open()
+        open_widget_settings_dialog(
+            widget_id=widget_id,
+            widget_def=chart_def,
+            current_config=current_config,
+            on_save=_on_save,
+            page_year=state['year'],
+        )
 
     def _add_widget_dialog() -> None:
-        dashboard_id = state['active_dashboard_id']
-        existing     = {w['chart_id'] for w in get_widgets(dashboard_id)}
-        available    = [c for c in REGISTRY if c.id not in existing]
+        # All widgets are always available — multiple copies of the same widget are allowed
+        available = list(REGISTRY)
 
         with ui.dialog() as dlg, \
              ui.card().classes('w-[520px] rounded-2xl p-0 gap-0 overflow-hidden'):
@@ -804,30 +800,26 @@ def content() -> None:
 
             with ui.scroll_area().style('height:420px'):
                 with ui.column().classes('w-full px-4 py-3 gap-1'):
-                    if not available:
-                        ui.label('All available widgets are already on this dashboard.') \
-                            .classes('text-sm text-muted py-6 text-center w-full')
-                    else:
-                        from itertools import groupby
-                        for category, charts in groupby(available, key=lambda c: c.category):
-                            ui.label(category.title()) \
-                                .classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide mt-3 mb-1')
-                            for chart_def in charts:
-                                with ui.row().classes(
-                                    'items-center justify-between py-2 px-3 rounded-lg '
-                                    'hover:bg-zinc-50 w-full'
-                                ):
-                                    with ui.row().classes('items-center gap-3'):
-                                        ui.icon(chart_def.icon) \
-                                            .classes('text-zinc-400').style('font-size:1.3rem')
-                                        with ui.column().classes('gap-0'):
-                                            ui.label(chart_def.title).classes('text-sm font-medium')
-                                            ui.label(chart_def.description).classes('text-xs text-muted')
-                                    ui.button(
-                                        'Add',
-                                        on_click=lambda _, cd=chart_def: _do_add_widget(cd, dlg),
-                                    ).props('unelevated dense no-caps size=sm') \
-                                     .classes('bg-zinc-800 text-white px-3')
+                    from itertools import groupby
+                    for category, charts in groupby(available, key=lambda c: c.category):
+                        ui.label(category.title()) \
+                            .classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide mt-3 mb-1')
+                        for chart_def in charts:
+                            with ui.row().classes(
+                                'items-center justify-between py-2 px-3 rounded-lg '
+                                'hover:bg-zinc-50 w-full'
+                            ):
+                                with ui.row().classes('items-center gap-3'):
+                                    ui.icon(chart_def.icon) \
+                                        .classes('text-zinc-400').style('font-size:1.3rem')
+                                    with ui.column().classes('gap-0'):
+                                        ui.label(chart_def.title).classes('text-sm font-medium')
+                                        ui.label(chart_def.description).classes('text-xs text-muted')
+                                ui.button(
+                                    'Add',
+                                    on_click=lambda _, cd=chart_def: _do_add_widget(cd, dlg),
+                                ).props('unelevated dense no-caps size=sm') \
+                                 .classes('bg-zinc-800 text-white px-3')
 
         dlg.open()
 

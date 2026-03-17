@@ -135,21 +135,23 @@ def get_widgets(dashboard_id: int) -> list[dict]:
     """Return widgets for a dashboard ordered by row_start, col_start."""
     with _engine().connect() as conn:
         rows = conn.execute(text(f"""
-            SELECT id, chart_id, position, col_span, row_span, config, col_start, row_start
+            SELECT id, chart_id, position, col_span, row_span, config,
+                   col_start, row_start, instance_label
             FROM   {_schema()}.app_dashboard_widgets
             WHERE  dashboard_id = :did
             ORDER  BY row_start ASC, col_start ASC
         """), {"did": dashboard_id}).fetchall()
     return [
         {
-            "id":        r[0],
-            "chart_id":  r[1],
-            "position":  r[2],
-            "col_span":  r[3],
-            "row_span":  r[4],
-            "config":    r[5] if isinstance(r[5], dict) else json.loads(r[5] or "{}"),
-            "col_start": r[6],
-            "row_start": r[7],
+            "id":             r[0],
+            "chart_id":       r[1],
+            "position":       r[2],
+            "col_span":       r[3],
+            "row_span":       r[4],
+            "config":         r[5] if isinstance(r[5], dict) else json.loads(r[5] or "{}"),
+            "col_start":      r[6],
+            "row_start":      r[7],
+            "instance_label": r[8],
         }
         for r in rows
     ]
@@ -260,6 +262,16 @@ def update_widget_config(widget_id: int, config: dict) -> None:
             SET    config = CAST(:cfg AS jsonb)
             WHERE  id = :wid
         """), {"wid": widget_id, "cfg": json.dumps(config)})
+
+
+def update_widget_label(widget_id: int, label: str | None) -> None:
+    """Set or clear the custom instance label for a widget."""
+    with _engine().begin() as conn:
+        conn.execute(text(f"""
+            UPDATE {_schema()}.app_dashboard_widgets
+            SET    instance_label = :lbl
+            WHERE  id = :wid
+        """), {"wid": widget_id, "lbl": label or None})
 
 
 def update_widget_layout(

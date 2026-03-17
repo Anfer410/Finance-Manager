@@ -58,7 +58,7 @@ def _persons_filter(persons: list[int] | None) -> tuple[str, dict]:
     if not persons:
         return "", {}
     arr = "{" + ",".join(str(int(p)) for p in persons) + "}"
-    return "AND person && :_persons::integer[]", {"_persons": arr}
+    return "AND person && CAST(:_persons AS integer[])", {"_persons": arr}
 
 
 # ── Available years ───────────────────────────────────────────────────────────
@@ -383,6 +383,94 @@ def get_persons() -> list[str]:
         ORDER BY u.person_name
     """)
     return [r[0] for r in rows]
+
+
+def get_persons_with_ids() -> list[dict]:
+    """Return [{id, name}, …] for users that appear in any spend transaction."""
+    rows = _q(f"""
+        SELECT DISTINCT u.id, u.person_name
+        FROM {_SCHEMA}.app_users u
+        WHERE u.id IN (
+            SELECT DISTINCT unnest(person)
+            FROM {V_ALL_SPEND}
+            WHERE cardinality(person) > 0
+        )
+        ORDER BY u.person_name
+    """)
+    return [{'id': r[0], 'name': r[1]} for r in rows]
+
+
+def get_spend_by_person_monthly(
+    year: int,
+    date_from=None,
+    date_to=None,
+) -> dict:
+    """
+    Monthly spend per person.
+
+    When date_from/date_to are provided the query spans those dates and
+    month labels are generated dynamically (e.g. trailing-months mode).
+    Otherwise the query covers the full calendar year given by `year`.
+
+    Returns {'months': [...], 'persons': {name: [v1..vN], ...}}.
+    """
+    if date_from is not None and date_to is not None:
+        rows = _q(f"""
+            SELECT
+                u.person_name,
+                TO_CHAR(transaction_date, 'Mon YY') AS label,
+                DATE_TRUNC('month', transaction_date) AS month_start,
+                COALESCE(SUM(amount), 0) AS spend
+            FROM {V_ALL_SPEND} s
+            JOIN LATERAL unnest(s.person) AS pid ON TRUE
+            JOIN {_SCHEMA}.app_users u ON u.id = pid
+            WHERE transaction_date >= :df AND transaction_date < :dt
+            GROUP BY u.person_name, label, month_start
+            ORDER BY u.person_name, month_start
+        """, df=date_from, dt=date_to)
+
+        # Single pass: collect ordered month labels and per-person spend together
+        month_order: list[str] = []
+        seen_labels: set[str] = set()
+        by_person: dict[str, dict[str, float]] = {}
+        for row in rows:
+            name, label, spend = row[0], row[1], row[3]
+            if label not in seen_labels:
+                month_order.append(label)
+                seen_labels.add(label)
+            if name not in by_person:
+                by_person[name] = {}
+            by_person[name][label] = round(float(spend), 2)
+
+        return {
+            'months': month_order,
+            'persons': {
+                name: [vals.get(lbl, 0.0) for lbl in month_order]
+                for name, vals in by_person.items()
+            },
+        }
+
+    # ── Full calendar year ────────────────────────────────────────────────────
+    rows = _q(f"""
+        SELECT
+            u.person_name,
+            EXTRACT(MONTH FROM transaction_date)::INT AS m,
+            COALESCE(SUM(amount), 0) AS spend
+        FROM {V_ALL_SPEND} s
+        JOIN LATERAL unnest(s.person) AS pid ON TRUE
+        JOIN {_SCHEMA}.app_users u ON u.id = pid
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year
+        GROUP BY u.person_name, m
+        ORDER BY u.person_name, m
+    """, year=year)
+
+    by_person_yr: dict[str, list[float]] = {}
+    for name, m, spend in rows:
+        if name not in by_person_yr:
+            by_person_yr[name] = [0.0] * 12
+        by_person_yr[name][int(m) - 1] = round(float(spend), 2)
+
+    return {'months': MONTH_LABELS, 'persons': by_person_yr}
 
 
 def get_filter_options(year: int) -> dict:

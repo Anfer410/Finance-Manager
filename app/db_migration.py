@@ -154,6 +154,11 @@ def _create_app_tables(conn, schema: str) -> None:
         EXCEPTION WHEN OTHERS THEN NULL;
         END $$;
     """))
+    # Custom label for duplicate widget instances (nullable — NULL = use widget default title)
+    conn.execute(text(f"""
+        ALTER TABLE {schema}.app_dashboard_widgets
+        ADD COLUMN IF NOT EXISTS instance_label TEXT
+    """))
 
     conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS {schema}.app_loans (

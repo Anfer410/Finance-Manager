@@ -718,13 +718,10 @@ def content() -> None:
             with ui.column().classes("flex-1 gap-4 min-w-0"):
                 with ui.row().classes("items-center gap-3"):
                     ui.label("Person:").classes("text-sm text-zinc-500 shrink-0")
-                    radio = ui.radio(
-                        person_options, value=person_ref["value"]
+                    ui.radio(
+                        person_options, value=person_ref["value"],
+                        on_change=lambda e: person_ref.update({"value": int(e.value)}),
                     ).classes("inline-flex items-center gap-3")
-                    radio.on(
-                        "update:model-value",
-                        lambda e: person_ref.update({"value": int(e.args)})
-                    )
 
                 active_rule = next(
                     (r for r in rules if r.prefix == selected_ref["value"]), None

@@ -57,7 +57,17 @@ class ChartDef:
     default_row_span: int = 1              # 1–2 grid rows
     has_own_header: bool = False           # render() draws its own header?
     supports_person_filter: bool = True
+    config_fields: list[dict] | None = None  # optional per-widget settings schema
     render: Callable = field(default=None, repr=False)
+
+# config_fields schema — each entry is a dict with:
+#   key:           str          — key stored in widget_config JSONB
+#   label:         str          — shown in settings dialog
+#   type:          str          — 'number' | 'select'
+#   default:       any          — value used when not set in config
+#   min/max:       int          — for type='number'
+#   options:       list         — for type='select', the values
+#   option_labels: list[str]    — for type='select', display labels (parallel to options)
 
 
 # ── Lazy imports — only resolved at render time, not at module load ───────────
@@ -142,7 +152,7 @@ def _render_category_donut(year, persons, cfg, shared_state):
         _view.refresh()
 
     with ui.row().classes('items-center justify-between mb-3'):
-        ui.label('Spend by Category').classes('section-title')
+        ui.label('Spend by Category').classes('label-text')
         with ui.row().classes('items-center gap-2'):
             ui.label(str(year)).classes('text-xs text-muted')
             ui.button(icon='swap_vert', on_click=_toggle) \
@@ -161,6 +171,127 @@ def _render_fixed_vs_variable(year, persons, cfg, shared_state):
 def _render_employer_income(year, persons, cfg, shared_state):
     from components.finance_charts import employer_income_chart
     employer_income_chart(_data().get_employer_income_series(year, persons))
+
+
+# ── Loans ─────────────────────────────────────────────────────────────────────
+
+def _render_loan_kpi(year, persons, cfg, shared_state):
+    from nicegui import ui
+    from services.loan_service import load_loans, compute_stats, get_baseline
+
+    loans    = load_loans()
+    baseline = get_baseline(months=12)
+
+    total_balance = sum(l.current_balance for l in loans)
+    total_monthly = sum(l.monthly_payment  for l in loans)
+    dti = baseline['dti']
+
+    if baseline['avg_surplus'] < 0:
+        dti_color, dti_label = '#ef4444', 'Overspending'
+    elif dti < 28:
+        dti_color, dti_label = '#22c55e', 'Healthy'
+    elif dti < 36:
+        dti_color, dti_label = '#f59e0b', 'Moderate'
+    elif dti < 43:
+        dti_color, dti_label = '#f97316', 'High'
+    else:
+        dti_color, dti_label = '#ef4444', 'Stretched'
+
+    with ui.row().classes('items-center justify-between mb-3'):
+        ui.label('Loan Overview').classes('label-text')
+        ui.icon('account_balance_wallet').style('font-size:1.2rem;color:var(--muted-fg)')
+    with ui.row().classes('items-center justify-between'):
+        ui.label('Total balance').classes('text-xs text-muted')
+        ui.label(f'${total_balance:,.0f}').classes('text-sm font-semibold text-zinc-800')
+    with ui.row().classes('items-center justify-between'):
+        ui.label('Monthly payments').classes('text-xs text-muted')
+        ui.label(f'${total_monthly:,.0f}').classes('text-sm font-semibold text-zinc-800')
+    ui.separator().classes('my-2')
+    with ui.row().classes('items-center gap-2'):
+        ui.label(f'DTI {dti:.1f}%').classes('text-xl font-bold text-zinc-800')
+        with ui.element('span').classes('text-xs px-1.5 py-0.5 rounded-full font-medium') \
+                .style(f'background:{dti_color}22;color:{dti_color}'):
+            ui.label(dti_label)
+    ui.label(f'{len(loans)} active loan{"s" if len(loans) != 1 else ""}') \
+        .classes('text-xs text-muted')
+
+
+def _render_loan_balances(year, persons, cfg, shared_state):
+    from nicegui import ui
+    from services.loan_service import load_loans, compute_stats
+
+    _COLORS = ['#6366f1', '#f59e0b', '#10b981', '#f43f5e', '#3b82f6', '#8b5cf6']
+    _TYPE_COLOR = {
+        'mortgage': '#6366f1', 'auto': '#f59e0b', 'student': '#10b981',
+        'personal': '#f43f5e', 'heloc': '#3b82f6', 'other': '#8b5cf6',
+    }
+
+    loans = load_loans()
+    if not loans:
+        with ui.column().classes('items-center justify-center h-full gap-2 py-8'):
+            ui.icon('account_balance_wallet').classes('text-5xl text-zinc-200')
+            ui.label('No loans added yet').classes('text-sm text-zinc-400')
+        return
+
+    series = []
+    for i, loan in enumerate(loans):
+        stats = compute_stats(loan)
+        amort = stats.amortization
+        if not amort:
+            continue
+        sampled = amort[::6]
+        if amort[-1] not in sampled:
+            sampled = sampled + [amort[-1]]
+        color = _TYPE_COLOR.get(loan.loan_type, _COLORS[i % len(_COLORS)])
+        series.append({
+            'name': loan.name,
+            'type': 'line',
+            'data': [[str(r.date), r.balance] for r in sampled],
+            'smooth': 0.4, 'symbol': 'none',
+            'lineStyle': {'width': 2, 'color': color},
+            'areaStyle': {'color': {
+                'type': 'linear', 'x': 0, 'y': 0, 'x2': 0, 'y2': 1,
+                'colorStops': [
+                    {'offset': 0, 'color': color + '20'},
+                    {'offset': 1, 'color': color + '05'},
+                ],
+            }},
+            'itemStyle': {'color': color},
+        })
+
+    ui.echart({
+        'tooltip': {
+            'trigger': 'axis',
+            'backgroundColor': '#fff', 'borderColor': '#e4e4e7',
+            'textStyle': {'color': '#09090b', 'fontSize': 11},
+            ':formatter': "params => params[0].name + '<br/>' + params.map(p => p.marker + ' ' + p.seriesName + ': $' + p.value[1].toLocaleString(undefined,{maximumFractionDigits:0})).join('<br/>')",
+        },
+        'legend': {'top': 0, 'textStyle': {'color': '#71717a', 'fontSize': 11}},
+        'grid': {'left': '2%', 'right': '2%', 'top': '30px', 'bottom': '8%', 'containLabel': True},
+        'xAxis': {
+            'type': 'time', 'boundaryGap': False,
+            'axisLine': {'lineStyle': {'color': '#e4e4e7'}},
+            'axisTick': {'show': False},
+            'axisLabel': {
+                'color': '#71717a', 'fontSize': 9,
+                ':formatter': "v => { let d = new Date(v); return d.toLocaleDateString('en-US',{month:'short',year:'2-digit'}); }",
+            },
+        },
+        'yAxis': {
+            'type': 'value',
+            'splitLine': {'lineStyle': {'color': '#f4f4f5', 'type': 'dashed'}},
+            'axisLabel': {':formatter': "v => '$' + (v/1000).toFixed(0) + 'k'",
+                          'color': '#71717a', 'fontSize': 9},
+        },
+        'series': series,
+    }).classes('w-full h-full')
+
+
+def _render_loan_spend_24m(year, persons, cfg, shared_state):
+    from components.finance_charts import spend_income_chart
+    from data.finance_dashboard_data import get_year_over_year_monthly_spend_series
+    year_back = int(cfg.get('year_back', 2))
+    spend_income_chart(get_year_over_year_monthly_spend_series(year_back=year_back, persons=persons))
 
 
 # ── Trends ────────────────────────────────────────────────────────────────────
@@ -290,6 +421,48 @@ REGISTRY: list[ChartDef] = [
         default_col_span=4,
         default_row_span=2,
         render=_render_weekly_txns,
+    ),
+    ChartDef(
+        id='loan_kpi',
+        title='Loan Overview',
+        description='Total outstanding balance, monthly payments, and debt-to-income ratio.',
+        icon='account_balance_wallet',
+        category='overview',
+        default_col_span=2,
+        default_row_span=1,
+        has_own_header=True,
+        supports_person_filter=False,
+        render=_render_loan_kpi,
+    ),
+    ChartDef(
+        id='loan_balances',
+        title='Loan Balance Projections',
+        description='Balance payoff curves for all loans on one chart.',
+        icon='trending_down',
+        category='overview',
+        default_col_span=4,
+        default_row_span=1,
+        supports_person_filter=False,
+        render=_render_loan_balances,
+    ),
+    ChartDef(
+        id='loan_spend_24m',
+        title='Spend vs Income — trailing months',
+        description='Trailing spend and income across years. Configurable lookback period.',
+        icon='show_chart',
+        category='spend',
+        default_col_span=4,
+        default_row_span=1,
+        config_fields=[{
+            'key':           'year_back',
+            'label':         'Lookback period',
+            'type':          'select',
+            'default':       2,
+            'options':       [1, 2, 3, 4, 5],
+            'option_labels': ['1 year (12 mo)', '2 years (24 mo)', '3 years (36 mo)',
+                              '4 years (48 mo)', '5 years (60 mo)'],
+        }],
+        render=_render_loan_spend_24m,
     ),
 ]
 

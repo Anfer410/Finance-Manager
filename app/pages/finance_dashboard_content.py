@@ -15,6 +15,7 @@ from services.dashboard_config import (
     get_or_create_default, list_dashboards, create_dashboard,
     delete_dashboard, rename_dashboard,
     get_widgets, save_widget_layout, add_widget, remove_widget, update_widget_layout,
+    update_widget_config,
 )
 from components.dashboard_registry import REGISTRY, REGISTRY_BY_ID
 from data.db import get_conn_tuple, get_schema
@@ -466,6 +467,14 @@ def content() -> None:
 
                             ui.element('div').style('flex:1')  # spacer
 
+                            # Settings button (only for widgets with config_fields)
+                            if chart_def.config_fields:
+                                ui.button(
+                                    icon='tune',
+                                    on_click=lambda _, wid=w['id'], cd=chart_def, cfg=dict(w['config']): _widget_settings_dialog(wid, cd, cfg),
+                                ).props('flat round dense size=xs').classes('text-zinc-400') \
+                                 .tooltip('Widget settings')
+
                             # Remove button
                             ui.button(
                                 icon='close',
@@ -499,7 +508,7 @@ def content() -> None:
                     # ── Standard header ───────────────────────────────────────
                     if not chart_def.has_own_header:
                         with ui.row().classes('items-center justify-between mb-3'):
-                            ui.label(chart_def.title).classes('section-title')
+                            ui.label(chart_def.title).classes('label-text')
                             ui.label(str(y)).classes('text-xs text-muted')
 
                     # ── Chart content ─────────────────────────────────────────
@@ -740,6 +749,47 @@ def content() -> None:
         _compact_grid(state['active_dashboard_id'])
         dashboard_grid.refresh(state['year'])
 
+    def _widget_settings_dialog(widget_id: int, chart_def, current_config: dict) -> None:
+        inputs = {}
+
+        with ui.dialog() as dlg, ui.card().classes('rounded-2xl p-6 gap-3 min-w-80'):
+            with ui.row().classes('items-center justify-between w-full mb-1'):
+                ui.label(f'{chart_def.title}').classes('text-base font-semibold text-zinc-800')
+                ui.button(icon='close', on_click=dlg.close) \
+                    .props('flat round dense size=sm').classes('text-zinc-400')
+
+            for field in chart_def.config_fields:
+                key     = field['key']
+                label   = field['label']
+                value   = current_config.get(key, field.get('default'))
+
+                if field['type'] == 'number':
+                    inputs[key] = ui.number(
+                        label, value=value,
+                        min=field.get('min'), max=field.get('max'),
+                    ).props('outlined dense').classes('w-full')
+                elif field['type'] == 'select':
+                    opts = {o: l for o, l in zip(field['options'], field['option_labels'])}
+                    inputs[key] = ui.select(opts, value=value, label=label) \
+                        .props('outlined dense').classes('w-full')
+
+            def _save():
+                new_config = dict(current_config)
+                for k, inp in inputs.items():
+                    new_config[k] = inp.value
+                update_widget_config(widget_id, new_config)
+                dashboard_grid.refresh(state['year'])
+                dlg.close()
+
+            with ui.row().classes('justify-end gap-2 mt-2 w-full'):
+                ui.button('Cancel', on_click=dlg.close) \
+                    .props('flat no-caps').classes('text-zinc-500')
+                ui.button('Save', on_click=_save) \
+                    .props('unelevated no-caps') \
+                    .classes('bg-zinc-800 text-white rounded-lg px-4')
+
+        dlg.open()
+
     def _add_widget_dialog() -> None:
         dashboard_id = state['active_dashboard_id']
         existing     = {w['chart_id'] for w in get_widgets(dashboard_id)}
@@ -824,7 +874,7 @@ def content() -> None:
             filter_area.refresh()
 
         with ui.row().classes('items-center justify-between mb-3'):
-            ui.label('All Transactions').classes('section-title')
+            ui.label('All Transactions').classes('label-text')
             adv_btn = ui.button('Advanced Search', icon='tune') \
                 .props('flat dense no-caps size=sm').classes('text-gray-400 text-xs')
             adv_btn.on('click', lambda: _toggle_mode())

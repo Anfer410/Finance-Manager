@@ -719,11 +719,11 @@ def content() -> None:
                 with ui.row().classes("items-center gap-3"):
                     ui.label("Person:").classes("text-sm text-zinc-500 shrink-0")
                     radio = ui.radio(
-                        person_options, value=default_user_id
+                        person_options, value=person_ref["value"]
                     ).classes("inline-flex items-center gap-3")
                     radio.on(
                         "update:model-value",
-                        lambda e: person_ref.update({"value": e.args})
+                        lambda e: person_ref.update({"value": int(e.args)})
                     )
 
                 active_rule = next(

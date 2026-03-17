@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.5.0 (2026-03-17)
+
+### Bug Fixes
+
+- Person id on upload
+  ([`2241768`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/22417680f03b2d067436e798483c359c797163f7))
+
+### Features
+
+- Refactor widgets
+  ([`15f04cf`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/15f04cf09470af88bb7e0915fb32e48769aff80e))
+
+
 ## v1.4.0 (2026-03-17)
 
 ### Bug Fixes

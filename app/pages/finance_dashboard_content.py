@@ -159,7 +159,6 @@ def content() -> None:
         'edit_mode':           False,
         'active_dashboard_id': get_or_create_default(user_id),
     }
-
     def _persons() -> list[int] | None:
         """Resolve session-level person filter. Empty list → None (all people)."""
         sp = current_selected_persons()
@@ -245,8 +244,6 @@ def content() -> None:
         widgets      = get_widgets(dashboard_id)
         edit         = state['edit_mode']
 
-        # shared_state is passed to every render() call so charts can trigger
-        # cross-widget actions (category filter, refreshes)
         shared_state = {
             'category':            state.get('category'),
             '_on_category_click':  lambda cat: _on_cat_change(cat),
@@ -254,31 +251,72 @@ def content() -> None:
             '_refresh_txn_table':  lambda: txn_table.refresh(),
         }
 
+        # Add-widget button shown at the top in edit mode
+        if edit:
+            with ui.row().classes('mb-3 justify-start'):
+                ui.button(
+                    'Add Widget', icon='add_circle_outline',
+                    on_click=lambda: _add_widget_dialog(),
+                ).props('unelevated no-caps').classes('bg-zinc-800 text-white px-4 rounded-lg')
+
+        # Fixed row height — each row unit is 280px; gap is 1rem (16px).
+        # grid-auto-rows ensures rows beyond the first 8 also get 280px.
+        ROW_H = 180
         with ui.element('div').style(
             'display:grid;grid-template-columns:repeat(4,1fr);'
-            'gap:1rem;align-items:start'
+            f'grid-auto-rows:{ROW_H}px;'
+            'gap:1rem;'
         ):
             for w in widgets:
                 chart_def = REGISTRY_BY_ID.get(w['chart_id'])
                 if not chart_def:
                     continue
 
-                col_span = w['col_span']
-                row_span = w['row_span']
+                col_span  = w['col_span']
+                row_span  = w['row_span']
+                col_start = w['col_start']
+                row_start = w['row_start']
 
-                # Widget-level person override trumps the page-level filter
                 widget_persons = w['config'].get('persons') or persons
 
-                with ui.element('div').classes('card').style(
-                    f'grid-column:span {col_span};'
-                    + (f'grid-row:span {row_span};' if row_span > 1 else '')
-                ):
-                    # ── Edit-mode control bar ─────────────────────────────────
+                # Card fills its grid area exactly; overflow hidden clips any excess.
+                # position:relative lets the edit-bar overlay sit inside it.
+                card_el = ui.element('div').classes('card').style(
+                    f'grid-column:{col_start} / span {col_span};'
+                    f'grid-row:{row_start} / span {row_span};'
+                    'position:relative;overflow:hidden;'
+                    # total height = row_span * ROW_H + (row_span-1) * 16px gap
+                    f'height:calc({row_span}*{ROW_H}px + {row_span - 1}*1rem);'
+                )
+
+                with card_el:
+                    # ── Edit-mode control bar (absolute overlay at top) ───────
                     if edit:
-                        with ui.row().classes(
-                            'items-center justify-between mb-2 pb-2 '
-                            'border-b border-zinc-100'
+                        CTRL_H = 44  # px — keep in sync with the bar's actual height
+                        with ui.element('div').style(
+                            'position:absolute;top:0;left:0;right:0;'
+                            f'height:{CTRL_H}px;'
+                            'display:flex;align-items:center;justify-content:space-between;'
+                            'padding:0 8px;'
+                            'background:rgba(255,255,255,0.95);'
+                            'border-bottom:1px solid #e4e4e7;'
+                            'z-index:10;gap:4px;'
                         ):
+                            # Move arrows
+                            with ui.row().classes('items-center gap-0'):
+                                ui.button(icon='arrow_upward',
+                                    on_click=lambda _, wid=w['id']: _move_widget(wid, 0, -1),
+                                ).props('flat round dense size=xs').classes('text-zinc-400').tooltip('Move up')
+                                ui.button(icon='arrow_downward',
+                                    on_click=lambda _, wid=w['id']: _move_widget(wid, 0, 1),
+                                ).props('flat round dense size=xs').classes('text-zinc-400').tooltip('Move down')
+                                ui.button(icon='arrow_back',
+                                    on_click=lambda _, wid=w['id']: _move_widget(wid, -1, 0),
+                                ).props('flat round dense size=xs').classes('text-zinc-400').tooltip('Move left')
+                                ui.button(icon='arrow_forward',
+                                    on_click=lambda _, wid=w['id']: _move_widget(wid, 1, 0),
+                                ).props('flat round dense size=xs').classes('text-zinc-400').tooltip('Move right')
+
                             # Col-span selector
                             with ui.row().classes('items-center gap-1'):
                                 for cs in [1, 2, 3, 4]:
@@ -290,27 +328,32 @@ def content() -> None:
                                         ('bg-zinc-800 text-white' if cs == col_span
                                          else 'bg-zinc-100 text-zinc-500')
                                     )
-                                ui.label('cols').classes('text-xs text-zinc-400 ml-1')
+                                ui.label('cols').classes('text-xs text-zinc-400')
 
-                            # Move / remove
-                            with ui.row().classes('items-center gap-0'):
-                                ui.button(
-                                    icon='keyboard_arrow_up',
-                                    on_click=lambda _, wid=w['id']: _move_widget(wid, -1),
-                                ).props('flat round dense size=xs').classes('text-zinc-400') \
-                                 .tooltip('Move left / up')
-                                ui.button(
-                                    icon='keyboard_arrow_down',
-                                    on_click=lambda _, wid=w['id']: _move_widget(wid, 1),
-                                ).props('flat round dense size=xs').classes('text-zinc-400') \
-                                 .tooltip('Move right / down')
-                                ui.button(
-                                    icon='close',
-                                    on_click=lambda _, wid=w['id']: _remove_widget(wid),
-                                ).props('flat round dense size=xs').classes('text-red-400') \
-                                 .tooltip('Remove widget')
+                            # Row-span selector
+                            with ui.row().classes('items-center gap-1'):
+                                ui.label('rows:').classes('text-xs text-zinc-400')
+                                for rs in [1, 2, 3, 4]:
+                                    ui.button(
+                                        str(rs),
+                                        on_click=lambda _, wid=w['id'], r=rs: _set_row_span(wid, r),
+                                    ).props('dense unelevated size=xs').classes(
+                                        'min-w-0 w-6 h-6 text-xs ' +
+                                        ('bg-zinc-800 text-white' if rs == row_span
+                                         else 'bg-zinc-100 text-zinc-500')
+                                    )
 
-                    # ── Standard header (for charts without their own) ────────
+                            # Remove button
+                            ui.button(
+                                icon='close',
+                                on_click=lambda _, wid=w['id']: _remove_widget(wid),
+                            ).props('flat round dense size=xs').classes('text-red-400') \
+                             .tooltip('Remove widget')
+
+                        # Push chart content below the overlay bar
+                        ui.element('div').style(f'height:{CTRL_H}px;flex-shrink:0')
+
+                    # ── Standard header ───────────────────────────────────────
                     if not chart_def.has_own_header:
                         with ui.row().classes('items-center justify-between mb-3'):
                             ui.label(chart_def.title).classes('section-title')
@@ -319,13 +362,6 @@ def content() -> None:
                     # ── Chart content ─────────────────────────────────────────
                     chart_def.render(y, widget_persons, w['config'], shared_state)
 
-        # Add-widget button shown below grid in edit mode
-        if edit:
-            with ui.row().classes('mt-4 justify-center'):
-                ui.button(
-                    'Add Widget', icon='add_circle_outline',
-                    on_click=lambda: _add_widget_dialog(),
-                ).props('unelevated no-caps').classes('bg-zinc-800 text-white px-4 rounded-lg')
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -425,28 +461,193 @@ def content() -> None:
 
     # ── Widget management ─────────────────────────────────────────────────────
 
+    def _occupied_cells(widgets: list[dict], exclude_id: int) -> set[tuple[int, int]]:
+        """Return the set of (row, col) cells occupied by all widgets except exclude_id."""
+        cells: set[tuple[int, int]] = set()
+        for w in widgets:
+            if w['id'] == exclude_id:
+                continue
+            for dr in range(w['row_span']):
+                for dc in range(w['col_span']):
+                    cells.add((w['row_start'] + dr, w['col_start'] + dc))
+        return cells
+
+    def _would_collide(occupied: set, col_start: int, row_start: int,
+                       col_span: int, row_span: int) -> bool:
+        new_cells = {(row_start + dr, col_start + dc)
+                     for dr in range(row_span) for dc in range(col_span)}
+        return bool(new_cells & occupied)
+
+    def _cascade_push_down(dashboard_id: int) -> None:
+        """Iteratively push the lower widget in any colliding pair downward until stable."""
+        while True:
+            widgets = get_widgets(dashboard_id)
+            pushed = False
+            for anchor in widgets:
+                anchor_cells = {(anchor['row_start'] + dr, anchor['col_start'] + dc)
+                                for dr in range(anchor['row_span'])
+                                for dc in range(anchor['col_span'])}
+                for other in widgets:
+                    if other['id'] == anchor['id']:
+                        continue
+                    other_cells = {(other['row_start'] + dr, other['col_start'] + dc)
+                                   for dr in range(other['row_span'])
+                                   for dc in range(other['col_span'])}
+                    if anchor_cells & other_cells:
+                        upper = anchor if anchor['row_start'] <= other['row_start'] else other
+                        lower = other  if anchor['row_start'] <= other['row_start'] else anchor
+                        bottom = upper['row_start'] + upper['row_span']
+                        new_start = bottom  # place immediately after upper widget
+                        if new_start > lower['row_start']:
+                            update_widget_layout(lower['id'], row_start=new_start)
+                            pushed = True
+                            break
+                if pushed:
+                    break
+            if not pushed:
+                break
+
+    def _compact_grid(dashboard_id: int) -> None:
+        """Gravity-compact: pull each widget up to the highest row it fits in."""
+        widgets = get_widgets(dashboard_id)
+        if not widgets:
+            return
+        occupied: set[tuple[int, int]] = set()
+        for w in sorted(widgets, key=lambda x: (x['row_start'], x['col_start'])):
+            rs = w['row_span']
+            target_row = w['row_start']
+            for r in range(1, w['row_start'] + 1):
+                cells = {(r + dr, w['col_start'] + dc)
+                         for dr in range(rs) for dc in range(w['col_span'])}
+                if not cells & occupied:
+                    target_row = r
+                    break
+            for dr in range(rs):
+                for dc in range(w['col_span']):
+                    occupied.add((target_row + dr, w['col_start'] + dc))
+            if target_row != w['row_start']:
+                update_widget_layout(w['id'], row_start=target_row)
+
     def _set_col_span(widget_id: int, col_span: int) -> None:
+        widgets  = get_widgets(state['active_dashboard_id'])
+        w        = next((x for x in widgets if x['id'] == widget_id), None)
+        if not w:
+            return
+        # Clamp so widget stays within the 4-column grid
+        col_span = max(1, min(col_span, 5 - w['col_start']))
+        occupied = _occupied_cells(widgets, widget_id)
+        if _would_collide(occupied, w['col_start'], w['row_start'], col_span, w['row_span']):
+            return
         update_widget_layout(widget_id, col_span=col_span)
         dashboard_grid.refresh(state['year'])
 
-    def _move_widget(widget_id: int, direction: int) -> None:
-        """Shift a widget one position earlier (−1) or later (+1) in the list."""
-        dashboard_id = state['active_dashboard_id']
-        widgets = get_widgets(dashboard_id)
-        ids = [w['id'] for w in widgets]
-        if widget_id not in ids:
+    def _set_row_span(widget_id: int, row_span: int) -> None:
+        widgets  = get_widgets(state['active_dashboard_id'])
+        w        = next((x for x in widgets if x['id'] == widget_id), None)
+        if not w:
             return
-        idx = ids.index(widget_id)
-        new_idx = idx + direction
-        if new_idx < 0 or new_idx >= len(ids):
+        update_widget_layout(widget_id, row_span=row_span)
+        _cascade_push_down(state['active_dashboard_id'])
+        _compact_grid(state['active_dashboard_id'])
+        dashboard_grid.refresh(state['year'])
+
+    def _move_widget(widget_id: int, dcol: int, drow: int) -> None:
+        """
+        Move W one step in direction (dcol, drow).
+        If the target is occupied by blocker B:
+          - W  → B's old origin
+          - B  → W's old origin
+          - Any widget C that B would now collide with at W's old origin
+            gets moved to B's old origin + C's relative offset from W's origin.
+        This handles the case where a wide/tall blocker displaces multiple widgets.
+        """
+        widgets = get_widgets(state['active_dashboard_id'])
+        w = next((x for x in widgets if x['id'] == widget_id), None)
+        if not w:
             return
-        ids[idx], ids[new_idx] = ids[new_idx], ids[idx]
-        widget_map = {w['id']: w for w in widgets}
-        save_widget_layout(dashboard_id, [widget_map[wid] for wid in ids])
+        new_col = max(1, min(5 - w['col_span'], w['col_start'] + dcol))
+        new_row = max(1, w['row_start'] + drow)
+        # Snap row to a valid slot for this row_span:
+        # row_span=2 → valid row_starts are 1, 3, 5, ...
+        # When moving down (drow>0) snap forward; when moving up (drow<0) snap backward.
+        if w['row_span'] > 1:
+            rs = w['row_span']
+            if drow > 0:
+                new_row = ((new_row - 1 + rs - 1) // rs) * rs + 1   # ceil-snap
+            elif drow < 0:
+                new_row = ((new_row - 1) // rs) * rs + 1             # floor-snap
+            new_row = max(1, new_row)
+        if new_col == w['col_start'] and new_row == w['row_start']:
+            return  # clamped at grid edge or already on valid slot
+
+        # Find blocker: first widget whose cells overlap W's target area
+        new_cells = {(new_row + dr, new_col + dc)
+                     for dr in range(w['row_span']) for dc in range(w['col_span'])}
+        blocker = None
+        for other in widgets:
+            if other['id'] == widget_id:
+                continue
+            other_cells = {(other['row_start'] + dr, other['col_start'] + dc)
+                           for dr in range(other['row_span']) for dc in range(other['col_span'])}
+            if new_cells & other_cells:
+                blocker = other
+                break
+
+        if blocker:
+            # Collect all position updates before writing (avoids mid-state confusion).
+            pending: dict[int, tuple[int, int]] = {}
+
+            # Step 1 — W moves to blocker's origin.
+            # Find other widgets W would cover there; send them to W's old origin
+            # at the same relative offset from blocker's origin.
+            w_at_blocker = {(blocker['row_start'] + dr, blocker['col_start'] + dc)
+                            for dr in range(w['row_span'])
+                            for dc in range(w['col_span'])}
+            for other in widgets:
+                if other['id'] in (widget_id, blocker['id']):
+                    continue
+                other_cells = {(other['row_start'] + dr, other['col_start'] + dc)
+                               for dr in range(other['row_span'])
+                               for dc in range(other['col_span'])}
+                if other_cells & w_at_blocker:
+                    dr_off = other['row_start'] - blocker['row_start']
+                    dc_off = other['col_start'] - blocker['col_start']
+                    pending[other['id']] = (w['col_start'] + dc_off,
+                                            w['row_start'] + dr_off)
+
+            # Step 2 — blocker moves to W's old origin.
+            # Find other widgets blocker would cover there; send them to blocker's
+            # old origin at the same relative offset from W's origin.
+            blocker_at_w = {(w['row_start'] + dr, w['col_start'] + dc)
+                            for dr in range(blocker['row_span'])
+                            for dc in range(blocker['col_span'])}
+            for other in widgets:
+                if other['id'] in (widget_id, blocker['id']) or other['id'] in pending:
+                    continue
+                other_cells = {(other['row_start'] + dr, other['col_start'] + dc)
+                               for dr in range(other['row_span'])
+                               for dc in range(other['col_span'])}
+                if other_cells & blocker_at_w:
+                    dr_off = other['row_start'] - w['row_start']
+                    dc_off = other['col_start'] - w['col_start']
+                    pending[other['id']] = (blocker['col_start'] + dc_off,
+                                            blocker['row_start'] + dr_off)
+
+            for wid, (nc, nr) in pending.items():
+                update_widget_layout(wid, col_start=nc, row_start=nr)
+
+            # Swap W ↔ blocker
+            update_widget_layout(blocker['id'],
+                                 col_start=w['col_start'], row_start=w['row_start'])
+            update_widget_layout(widget_id,
+                                 col_start=blocker['col_start'], row_start=blocker['row_start'])
+        else:
+            update_widget_layout(widget_id, col_start=new_col, row_start=new_row)
         dashboard_grid.refresh(state['year'])
 
     def _remove_widget(widget_id: int) -> None:
         remove_widget(widget_id)
+        _compact_grid(state['active_dashboard_id'])
         dashboard_grid.refresh(state['year'])
 
     def _add_widget_dialog() -> None:
@@ -467,7 +668,6 @@ def content() -> None:
                         ui.label('All available widgets are already on this dashboard.') \
                             .classes('text-sm text-muted py-6 text-center w-full')
                     else:
-                        # Group by category
                         from itertools import groupby
                         for category, charts in groupby(available, key=lambda c: c.category):
                             ui.label(category.title()) \

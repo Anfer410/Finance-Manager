@@ -43,6 +43,7 @@ def run_migrations() -> None:
         schema = get_schema()
         with engine.begin() as conn:
             _create_app_tables(conn, schema)
+            _migrate_widget_positions(conn, schema)   # <-- add this
             _create_transaction_tables(conn, schema)
             _migrate_configs_if_needed(conn, schema)
         print("[migration] Startup migrations complete.")
@@ -132,6 +133,28 @@ def _create_app_tables(conn, schema: str) -> None:
         )
     """))
 
+    # Add explicit grid placement columns to dashboard widgets (idempotent)
+    conn.execute(text(f"""
+        ALTER TABLE {schema}.app_dashboard_widgets
+        ADD COLUMN IF NOT EXISTS col_start SMALLINT NOT NULL DEFAULT 1
+    """))
+    conn.execute(text(f"""
+        ALTER TABLE {schema}.app_dashboard_widgets
+        ADD COLUMN IF NOT EXISTS row_start SMALLINT NOT NULL DEFAULT 1
+    """))
+    # Widen row_span limit from 2 to 8 (drop + re-add constraint, idempotent via DO $$ ... $$)
+    conn.execute(text(f"""
+        DO $$
+        BEGIN
+            ALTER TABLE {schema}.app_dashboard_widgets
+                DROP CONSTRAINT IF EXISTS app_dashboard_widgets_row_span_check;
+            ALTER TABLE {schema}.app_dashboard_widgets
+                ADD CONSTRAINT app_dashboard_widgets_row_span_check
+                CHECK (row_span BETWEEN 1 AND 8);
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END $$;
+    """))
+
     conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS {schema}.app_loans (
             id                           SERIAL PRIMARY KEY,
@@ -164,6 +187,67 @@ def _create_app_tables(conn, schema: str) -> None:
         ALTER TABLE {schema}.app_loans
         ADD COLUMN IF NOT EXISTS monthly_insurance NUMERIC(12,2) NOT NULL DEFAULT 0
     """))
+
+
+def _migrate_widget_positions(conn, schema: str) -> None:
+    """
+    One-time: populate col_start/row_start for any widgets still at (1,1).
+    Uses a strip-packing algo (left→right, top→bottom) per dashboard.
+    Safe to run repeatedly — only touches widgets where BOTH are still 1.
+    """
+    # Find dashboards that have widgets needing placement
+    rows = conn.execute(text(f"""
+        SELECT DISTINCT dashboard_id
+        FROM   {schema}.app_dashboard_widgets
+        WHERE  col_start = 1 AND row_start = 1
+    """)).fetchall()
+
+    for (dashboard_id,) in rows:
+        widgets = conn.execute(text(f"""
+            SELECT id, col_span, row_span, position
+            FROM   {schema}.app_dashboard_widgets
+            WHERE  dashboard_id = :did
+            ORDER  BY position ASC
+        """), {"did": dashboard_id}).fetchall()
+
+        placements = _pack_widget_positions(
+            [{"id": r[0], "col_span": r[1], "row_span": r[2], "position": r[3]}
+             for r in widgets]
+        )
+        for wid, (col_start, row_start) in placements.items():
+            conn.execute(text(f"""
+                UPDATE {schema}.app_dashboard_widgets
+                SET    col_start = :cs, row_start = :rs
+                WHERE  id = :id
+            """), {"cs": col_start, "rs": row_start, "id": wid})
+
+
+def _pack_widget_positions(widgets: list[dict]) -> dict:
+    """
+    Strip-pack widgets onto a 4-column grid.
+    Returns dict: widget_id → (col_start, row_start).
+    """
+    occupied: set[tuple[int, int]] = set()
+    result: dict[int, tuple[int, int]] = {}
+
+    for w in sorted(widgets, key=lambda x: x["position"]):
+        cs, rs = w["col_span"], w["row_span"]
+        placed = False
+        row = 1
+        while not placed:
+            for col in range(1, 5):
+                if col + cs - 1 > 4:
+                    continue
+                cells = {(row + dr, col + dc) for dr in range(rs) for dc in range(cs)}
+                if not cells & occupied:
+                    occupied |= cells
+                    result[w["id"]] = (col, row)
+                    placed = True
+                    break
+            if not placed:
+                row += 1
+
+    return result
 
 
 # ── Consolidated transaction tables ───────────────────────────────────────────

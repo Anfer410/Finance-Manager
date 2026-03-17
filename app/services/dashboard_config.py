@@ -132,22 +132,24 @@ def delete_dashboard(dashboard_id: int, user_id: int) -> None:
 # ── Widget CRUD ───────────────────────────────────────────────────────────────
 
 def get_widgets(dashboard_id: int) -> list[dict]:
-    """Return widgets for a dashboard ordered by position."""
+    """Return widgets for a dashboard ordered by row_start, col_start."""
     with _engine().connect() as conn:
         rows = conn.execute(text(f"""
-            SELECT id, chart_id, position, col_span, row_span, config
+            SELECT id, chart_id, position, col_span, row_span, config, col_start, row_start
             FROM   {_schema()}.app_dashboard_widgets
             WHERE  dashboard_id = :did
-            ORDER  BY position ASC
+            ORDER  BY row_start ASC, col_start ASC
         """), {"did": dashboard_id}).fetchall()
     return [
         {
-            "id":       r[0],
-            "chart_id": r[1],
-            "position": r[2],
-            "col_span": r[3],
-            "row_span": r[4],
-            "config":   r[5] if isinstance(r[5], dict) else json.loads(r[5] or "{}"),
+            "id":        r[0],
+            "chart_id":  r[1],
+            "position":  r[2],
+            "col_span":  r[3],
+            "row_span":  r[4],
+            "config":    r[5] if isinstance(r[5], dict) else json.loads(r[5] or "{}"),
+            "col_start": r[6],
+            "row_start": r[7],
         }
         for r in rows
     ]
@@ -156,9 +158,7 @@ def get_widgets(dashboard_id: int) -> list[dict]:
 def save_widget_layout(dashboard_id: int, widgets: list[dict]) -> None:
     """
     Full replace of the widget list for a dashboard.
-    widgets: list of {chart_id, position, col_span, row_span, config}
-    Positions are reassigned from the list order (0, 1, 2, …) so callers
-    don't need to manage them explicitly.
+    widgets: list of {chart_id, position, col_span, row_span, col_start, row_start, config}
     """
     with _engine().begin() as conn:
         conn.execute(text(f"""
@@ -168,16 +168,41 @@ def save_widget_layout(dashboard_id: int, widgets: list[dict]) -> None:
         for i, w in enumerate(widgets):
             conn.execute(text(f"""
                 INSERT INTO {_schema()}.app_dashboard_widgets
-                    (dashboard_id, chart_id, position, col_span, row_span, config)
-                VALUES (:did, :cid, :pos, :cs, :rs, CAST(:cfg AS jsonb))
+                    (dashboard_id, chart_id, position, col_span, row_span, col_start, row_start, config)
+                VALUES (:did, :cid, :pos, :cs, :rs, :cst, :rst, CAST(:cfg AS jsonb))
             """), {
                 "did": dashboard_id,
                 "cid": w["chart_id"],
                 "pos": i,
                 "cs":  w.get("col_span", 2),
                 "rs":  w.get("row_span", 1),
+                "cst": w.get("col_start", 1),
+                "rst": w.get("row_start", 1),
                 "cfg": json.dumps(w.get("config", {})),
             })
+
+
+def find_free_position(dashboard_id: int, col_span: int, row_span: int) -> tuple[int, int]:
+    """
+    Find the first free (col_start, row_start) on the grid that fits the given span.
+    """
+    widgets = get_widgets(dashboard_id)
+    occupied: set[tuple[int, int]] = set()
+    for w in widgets:
+        cs, rs = w["col_start"], w["row_start"]
+        for dr in range(w["row_span"]):
+            for dc in range(w["col_span"]):
+                occupied.add((rs + dr, cs + dc))
+
+    row = 1
+    while True:
+        for col in range(1, 5):
+            if col + col_span - 1 > 4:
+                continue
+            cells = {(row + dr, col + dc) for dr in range(row_span) for dc in range(col_span)}
+            if not cells & occupied:
+                return col, row
+        row += 1
 
 
 def add_widget(
@@ -186,9 +211,14 @@ def add_widget(
     *,
     col_span: int = 2,
     row_span: int = 1,
+    col_start: int | None = None,
+    row_start: int | None = None,
     config: dict | None = None,
 ) -> int:
-    """Append a widget at the end of the dashboard. Returns the new widget id."""
+    """Append a widget at the next free grid position. Returns the new widget id."""
+    if col_start is None or row_start is None:
+        col_start, row_start = find_free_position(dashboard_id, col_span, row_span)
+
     with _engine().begin() as conn:
         row = conn.execute(text(f"""
             SELECT COALESCE(MAX(position), -1) + 1
@@ -199,8 +229,8 @@ def add_widget(
 
         result = conn.execute(text(f"""
             INSERT INTO {_schema()}.app_dashboard_widgets
-                (dashboard_id, chart_id, position, col_span, row_span, config)
-            VALUES (:did, :cid, :pos, :cs, :rs, CAST(:cfg AS jsonb))
+                (dashboard_id, chart_id, position, col_span, row_span, col_start, row_start, config)
+            VALUES (:did, :cid, :pos, :cs, :rs, :cst, :rst, CAST(:cfg AS jsonb))
             RETURNING id
         """), {
             "did": dashboard_id,
@@ -208,6 +238,8 @@ def add_widget(
             "pos": position,
             "cs":  col_span,
             "rs":  row_span,
+            "cst": col_start,
+            "rst": row_start,
             "cfg": json.dumps(config or {}),
         })
     return result.fetchone()[0]
@@ -236,6 +268,8 @@ def update_widget_layout(
     col_span: int | None = None,
     row_span: int | None = None,
     position: int | None = None,
+    col_start: int | None = None,
+    row_start: int | None = None,
 ) -> None:
     """Update sizing/position fields for a single widget."""
     fields: list[str] = []
@@ -250,6 +284,12 @@ def update_widget_layout(
     if position is not None:
         fields.append("position = :position")
         params["position"] = position
+    if col_start is not None:
+        fields.append("col_start = :col_start")
+        params["col_start"] = col_start
+    if row_start is not None:
+        fields.append("row_start = :row_start")
+        params["row_start"] = row_start
 
     if not fields:
         return
@@ -264,11 +304,15 @@ def update_widget_layout(
 # ── Default dashboard seeding ─────────────────────────────────────────────────
 
 def _create_default_dashboard(user_id: int) -> int:
-    """
-    Create the default dashboard for a user, pre-populated with every chart
-    in the registry using its default col_span and row_span.
-    """
     from components.dashboard_registry import REGISTRY
+    from db_migration import _pack_widget_positions
+
+    widgets_to_place = [
+        {"id": i, "col_span": chart.default_col_span,
+         "row_span": chart.default_row_span, "position": i}
+        for i, chart in enumerate(REGISTRY)
+    ]
+    placements = _pack_widget_positions(widgets_to_place)
 
     with _engine().begin() as conn:
         row = conn.execute(text(f"""
@@ -279,16 +323,19 @@ def _create_default_dashboard(user_id: int) -> int:
         dashboard_id = row[0]
 
         for i, chart in enumerate(REGISTRY):
+            col_start, row_start = placements[i]
             conn.execute(text(f"""
                 INSERT INTO {_schema()}.app_dashboard_widgets
-                    (dashboard_id, chart_id, position, col_span, row_span, config)
-                VALUES (:did, :cid, :pos, :cs, :rs, '{{}}')
+                    (dashboard_id, chart_id, position, col_span, row_span, col_start, row_start, config)
+                VALUES (:did, :cid, :pos, :cs, :rs, :cst, :rst, '{{}}')
             """), {
                 "did": dashboard_id,
                 "cid": chart.id,
                 "pos": i,
                 "cs":  chart.default_col_span,
                 "rs":  chart.default_row_span,
+                "cst": col_start,
+                "rst": row_start,
             })
 
     return dashboard_id

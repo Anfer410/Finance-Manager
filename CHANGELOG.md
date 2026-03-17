@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v1.4.0 (2026-03-17)
+
+### Bug Fixes
+
+- Update calculations for matrix snaps
+  ([`d25619b`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/d25619bf9508c526914f0200f3f4c8e0e0b44509))
+
+### Features
+
+- Drag and drop + resize
+  ([`a22468c`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/a22468ca06c2b484cc5683735e867e7fda1d2cfe))
+
+- Phase 1 editable dashboard
+  ([`09df1cf`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/09df1cf3d1c1f6757752b2d3439a66a8801b7265))
+
+- Phase 2 editable dashboard
+  ([`f959f5a`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/f959f5ab50c18b13c8d963c850db369dc2847e5e))
+
+- Unified font on dashboard labels
+  ([`b4cb0b6`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/b4cb0b65618eb2eab6751e18eaac783009601fef))
+
+
 ## v1.3.0 (2026-03-16)
 
 ### Features

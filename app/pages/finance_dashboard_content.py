@@ -159,6 +159,163 @@ def content() -> None:
         'edit_mode':           False,
         'active_dashboard_id': get_or_create_default(user_id),
     }
+
+    # ── Drag-to-move event bus ────────────────────────────────────────────────
+    _bus = ui.element('div').style('display:none')
+
+    def _on_drag_move(e) -> None:
+        args = e.args or {}
+        wid, col, row = args.get('widget_id'), args.get('col'), args.get('row')
+        if wid is not None and col is not None and row is not None:
+            _apply_move(int(wid), int(col), int(row))
+
+    _bus.on('widget-moved', _on_drag_move, args=['widget_id', 'col', 'row'])
+
+    def _on_drag_resize(e) -> None:
+        args = e.args or {}
+        wid   = args.get('widget_id')
+        rtype = args.get('rtype')
+        val   = args.get('val')
+        if wid is None or val is None:
+            return
+        if rtype == 'col':
+            _set_col_span(int(wid), int(val))
+        elif rtype == 'row':
+            _set_row_span(int(wid), int(val))
+
+    _bus.on('widget-resized', _on_drag_resize, args=['widget_id', 'rtype', 'val'])
+
+    _drag_js = """
+(function() {
+    window.__dragBusId = '__BUS_ID__';
+    if (window.__dashboardDragLoaded) return;
+    window.__dashboardDragLoaded = true;
+
+    var ROW_H = 180, GAP = 16, THRESH = 5;
+    var drag = null, hl = null;
+
+    function getGrid() { return document.querySelector('.dashboard-grid-container'); }
+
+    function calcPos(cx, cy) {
+        var g = getGrid(); if (!g) return null;
+        var r = g.getBoundingClientRect();
+        var cw = (r.width - 3 * GAP) / 4;
+        return {
+            col: Math.max(1, Math.min(4, Math.floor((cx - r.left) / (cw + GAP)) + 1)),
+            row: Math.max(1, Math.floor((cy - r.top) / (ROW_H + GAP)) + 1),
+            r: r, cw: cw
+        };
+    }
+
+    function makeHl() {
+        var el = document.createElement('div');
+        el.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;' +
+            'background:rgba(99,102,241,0.1);border:2px dashed #6366f1;' +
+            'border-radius:12px;transition:left 60ms,top 60ms,width 60ms,height 60ms';
+        document.body.appendChild(el);
+        return el;
+    }
+
+    function placeHl(col, row, cs, rs) {
+        var g = getGrid(); if (!g || !hl) return;
+        var r = g.getBoundingClientRect();
+        var cw = (r.width - 3 * GAP) / 4;
+        var c = Math.min(col, 5 - cs);
+        hl.style.left   = (r.left + (c - 1) * (cw + GAP)) + 'px';
+        hl.style.top    = (r.top  + (row - 1) * (ROW_H + GAP)) + 'px';
+        hl.style.width  = (cs * cw  + (cs - 1) * GAP) + 'px';
+        hl.style.height = (rs * ROW_H + (rs - 1) * GAP) + 'px';
+    }
+
+    document.addEventListener('mousedown', function(e) {
+        if (e.button !== 0) return;
+        var rh = e.target.closest('.dashboard-resize-right');
+        var rb = e.target.closest('.dashboard-resize-bottom');
+        var mh = e.target.closest('.dashboard-drag-handle');
+        if (!rh && !rb && !mh) return;
+        if (e.target.closest('button, input, [data-no-drag]')) return;
+        var card = (rh || rb || mh).closest('.dashboard-card');
+        if (!card) return;
+        e.preventDefault();
+        var cls = card.className;
+        var id = +((cls.match(/\\bwid-(\\d+)\\b/) || [0,0])[1]);
+        var cs = +((cls.match(/\\bwcs-(\\d+)\\b/) || [0,1])[1]);
+        var rs = +((cls.match(/\\bwrs-(\\d+)\\b/) || [0,1])[1]);
+        var co = +((cls.match(/\\bwco-(\\d+)\\b/) || [0,1])[1]);
+        var ro = +((cls.match(/\\bwro-(\\d+)\\b/) || [0,1])[1]);
+        if (rh)
+            drag = {type:'resize-col', id:id, cs:cs, rs:rs, co:co, ro:ro, sx:e.clientX, sy:e.clientY, active:false, val:cs};
+        else if (rb)
+            drag = {type:'resize-row', id:id, cs:cs, rs:rs, co:co, ro:ro, sx:e.clientX, sy:e.clientY, active:false, val:rs};
+        else
+            drag = {type:'move', id:id, cs:cs, rs:rs, sx:e.clientX, sy:e.clientY, active:false, col:null, row:null};
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (!drag) return;
+        if (!drag.active) {
+            if (Math.abs(e.clientX-drag.sx) < THRESH && Math.abs(e.clientY-drag.sy) < THRESH) return;
+            drag.active = true;
+            hl = makeHl();
+            document.body.style.userSelect = 'none';
+        }
+        var p = calcPos(e.clientX, e.clientY); if (!p) return;
+        if (drag.type === 'move') {
+            document.body.style.cursor = 'grabbing';
+            drag.col = Math.min(p.col, 5 - drag.cs);
+            drag.row = p.row;
+            placeHl(drag.col, drag.row, drag.cs, drag.rs);
+        } else if (drag.type === 'resize-col') {
+            document.body.style.cursor = 'ew-resize';
+            var new_cs = Math.max(1, Math.min(5 - drag.co, p.col - drag.co + 1));
+            drag.val = new_cs;
+            placeHl(drag.co, drag.ro, new_cs, drag.rs);
+        } else if (drag.type === 'resize-row') {
+            document.body.style.cursor = 'ns-resize';
+            var new_rs = Math.max(1, p.row - drag.ro + 1);
+            drag.val = new_rs;
+            placeHl(drag.co, drag.ro, drag.cs, new_rs);
+        }
+    });
+
+    document.addEventListener('mouseup', function(e) {
+        if (!drag) return;
+        if (hl) { hl.remove(); hl = null; }
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        if (drag.active) {
+            var bus = document.getElementById(window.__dragBusId);
+            if (bus) {
+                if (drag.type === 'move' && drag.col !== null) {
+                    var evt = new Event('widget-moved');
+                    evt.widget_id = drag.id;
+                    evt.col = drag.col;
+                    evt.row = drag.row;
+                    bus.dispatchEvent(evt);
+                } else if (drag.type === 'resize-col' || drag.type === 'resize-row') {
+                    var evt = new Event('widget-resized');
+                    evt.widget_id = drag.id;
+                    evt.rtype = drag.type === 'resize-col' ? 'col' : 'row';
+                    evt.val = drag.val;
+                    bus.dispatchEvent(evt);
+                }
+            }
+        }
+        drag = null;
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && drag) {
+            if (hl) { hl.remove(); hl = null; }
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+            drag = null;
+        }
+    });
+})();
+""".replace('__BUS_ID__', f'c{_bus.id}')
+    ui.run_javascript(_drag_js)
+
     def _persons() -> list[int] | None:
         """Resolve session-level person filter. Empty list → None (all people)."""
         sp = current_selected_persons()
@@ -262,7 +419,7 @@ def content() -> None:
         # Fixed row height — each row unit is 280px; gap is 1rem (16px).
         # grid-auto-rows ensures rows beyond the first 8 also get 280px.
         ROW_H = 180
-        with ui.element('div').style(
+        with ui.element('div').classes('dashboard-grid-container').style(
             'display:grid;grid-template-columns:repeat(4,1fr);'
             f'grid-auto-rows:{ROW_H}px;'
             'gap:1rem;'
@@ -281,67 +438,33 @@ def content() -> None:
 
                 # Card fills its grid area exactly; overflow hidden clips any excess.
                 # position:relative lets the edit-bar overlay sit inside it.
-                card_el = ui.element('div').classes('card').style(
+                card_el = ui.element('div').classes(
+                    f'card dashboard-card wid-{w["id"]} wcs-{col_span} wrs-{row_span} wco-{col_start} wro-{row_start}'
+                ).style(
                     f'grid-column:{col_start} / span {col_span};'
                     f'grid-row:{row_start} / span {row_span};'
                     'position:relative;overflow:hidden;'
-                    # total height = row_span * ROW_H + (row_span-1) * 16px gap
                     f'height:calc({row_span}*{ROW_H}px + {row_span - 1}*1rem);'
                 )
 
                 with card_el:
                     # ── Edit-mode control bar (absolute overlay at top) ───────
                     if edit:
-                        CTRL_H = 44  # px — keep in sync with the bar's actual height
-                        with ui.element('div').style(
+                        CTRL_H = 44
+                        with ui.element('div').classes('dashboard-drag-handle').style(
                             'position:absolute;top:0;left:0;right:0;'
                             f'height:{CTRL_H}px;'
                             'display:flex;align-items:center;justify-content:space-between;'
                             'padding:0 8px;'
                             'background:rgba(255,255,255,0.95);'
                             'border-bottom:1px solid #e4e4e7;'
-                            'z-index:10;gap:4px;'
+                            'z-index:10;gap:4px;cursor:grab;'
                         ):
-                            # Move arrows
-                            with ui.row().classes('items-center gap-0'):
-                                ui.button(icon='arrow_upward',
-                                    on_click=lambda _, wid=w['id']: _move_widget(wid, 0, -1),
-                                ).props('flat round dense size=xs').classes('text-zinc-400').tooltip('Move up')
-                                ui.button(icon='arrow_downward',
-                                    on_click=lambda _, wid=w['id']: _move_widget(wid, 0, 1),
-                                ).props('flat round dense size=xs').classes('text-zinc-400').tooltip('Move down')
-                                ui.button(icon='arrow_back',
-                                    on_click=lambda _, wid=w['id']: _move_widget(wid, -1, 0),
-                                ).props('flat round dense size=xs').classes('text-zinc-400').tooltip('Move left')
-                                ui.button(icon='arrow_forward',
-                                    on_click=lambda _, wid=w['id']: _move_widget(wid, 1, 0),
-                                ).props('flat round dense size=xs').classes('text-zinc-400').tooltip('Move right')
+                            # Drag grip indicator
+                            ui.icon('drag_indicator').classes('text-zinc-400') \
+                              .style('font-size:1.1rem;flex-shrink:0;pointer-events:none')
 
-                            # Col-span selector
-                            with ui.row().classes('items-center gap-1'):
-                                for cs in [1, 2, 3, 4]:
-                                    ui.button(
-                                        str(cs),
-                                        on_click=lambda _, wid=w['id'], c=cs: _set_col_span(wid, c),
-                                    ).props('dense unelevated size=xs').classes(
-                                        'min-w-0 w-6 h-6 text-xs ' +
-                                        ('bg-zinc-800 text-white' if cs == col_span
-                                         else 'bg-zinc-100 text-zinc-500')
-                                    )
-                                ui.label('cols').classes('text-xs text-zinc-400')
-
-                            # Row-span selector
-                            with ui.row().classes('items-center gap-1'):
-                                ui.label('rows:').classes('text-xs text-zinc-400')
-                                for rs in [1, 2, 3, 4]:
-                                    ui.button(
-                                        str(rs),
-                                        on_click=lambda _, wid=w['id'], r=rs: _set_row_span(wid, r),
-                                    ).props('dense unelevated size=xs').classes(
-                                        'min-w-0 w-6 h-6 text-xs ' +
-                                        ('bg-zinc-800 text-white' if rs == row_span
-                                         else 'bg-zinc-100 text-zinc-500')
-                                    )
+                            ui.element('div').style('flex:1')  # spacer
 
                             # Remove button
                             ui.button(
@@ -352,6 +475,26 @@ def content() -> None:
 
                         # Push chart content below the overlay bar
                         ui.element('div').style(f'height:{CTRL_H}px;flex-shrink:0')
+
+                        # Right resize handle (col-span)
+                        ui.element('div').classes('dashboard-resize-right').style(
+                            f'position:absolute;top:{CTRL_H}px;bottom:8px;right:0;width:8px;'
+                            'cursor:ew-resize;z-index:10;'
+                            'background:rgba(99,102,241,0.15);border-radius:0 8px 8px 0;'
+                        )
+
+                        # Bottom resize handle (row-span)
+                        ui.element('div').classes('dashboard-resize-bottom').style(
+                            'position:absolute;bottom:0;left:8px;right:8px;height:8px;'
+                            'cursor:ns-resize;z-index:10;'
+                            'background:rgba(99,102,241,0.15);border-radius:0 0 8px 8px;'
+                        )
+
+                        # Invisible overlay — blocks chart interactions and acts as drag handle
+                        ui.element('div').classes('dashboard-drag-handle').style(
+                            f'position:absolute;top:{CTRL_H}px;left:0;right:8px;bottom:8px;'
+                            'z-index:9;cursor:grab;'
+                        )
 
                     # ── Standard header ───────────────────────────────────────
                     if not chart_def.has_own_header:
@@ -461,22 +604,6 @@ def content() -> None:
 
     # ── Widget management ─────────────────────────────────────────────────────
 
-    def _occupied_cells(widgets: list[dict], exclude_id: int) -> set[tuple[int, int]]:
-        """Return the set of (row, col) cells occupied by all widgets except exclude_id."""
-        cells: set[tuple[int, int]] = set()
-        for w in widgets:
-            if w['id'] == exclude_id:
-                continue
-            for dr in range(w['row_span']):
-                for dc in range(w['col_span']):
-                    cells.add((w['row_start'] + dr, w['col_start'] + dc))
-        return cells
-
-    def _would_collide(occupied: set, col_start: int, row_start: int,
-                       col_span: int, row_span: int) -> bool:
-        new_cells = {(row_start + dr, col_start + dc)
-                     for dr in range(row_span) for dc in range(col_span)}
-        return bool(new_cells & occupied)
 
     def _cascade_push_down(dashboard_id: int) -> None:
         """Iteratively push the lower widget in any colliding pair downward until stable."""
@@ -535,10 +662,9 @@ def content() -> None:
             return
         # Clamp so widget stays within the 4-column grid
         col_span = max(1, min(col_span, 5 - w['col_start']))
-        occupied = _occupied_cells(widgets, widget_id)
-        if _would_collide(occupied, w['col_start'], w['row_start'], col_span, w['row_span']):
-            return
         update_widget_layout(widget_id, col_span=col_span)
+        _cascade_push_down(state['active_dashboard_id'])
+        _compact_grid(state['active_dashboard_id'])
         dashboard_grid.refresh(state['year'])
 
     def _set_row_span(widget_id: int, row_span: int) -> None:
@@ -551,36 +677,17 @@ def content() -> None:
         _compact_grid(state['active_dashboard_id'])
         dashboard_grid.refresh(state['year'])
 
-    def _move_widget(widget_id: int, dcol: int, drow: int) -> None:
-        """
-        Move W one step in direction (dcol, drow).
-        If the target is occupied by blocker B:
-          - W  → B's old origin
-          - B  → W's old origin
-          - Any widget C that B would now collide with at W's old origin
-            gets moved to B's old origin + C's relative offset from W's origin.
-        This handles the case where a wide/tall blocker displaces multiple widgets.
-        """
+    def _apply_move(widget_id: int, new_col: int, new_row: int) -> None:
+        """Move widget to absolute (new_col, new_row), swapping any blocker."""
         widgets = get_widgets(state['active_dashboard_id'])
         w = next((x for x in widgets if x['id'] == widget_id), None)
         if not w:
             return
-        new_col = max(1, min(5 - w['col_span'], w['col_start'] + dcol))
-        new_row = max(1, w['row_start'] + drow)
-        # Snap row to a valid slot for this row_span:
-        # row_span=2 → valid row_starts are 1, 3, 5, ...
-        # When moving down (drow>0) snap forward; when moving up (drow<0) snap backward.
-        if w['row_span'] > 1:
-            rs = w['row_span']
-            if drow > 0:
-                new_row = ((new_row - 1 + rs - 1) // rs) * rs + 1   # ceil-snap
-            elif drow < 0:
-                new_row = ((new_row - 1) // rs) * rs + 1             # floor-snap
-            new_row = max(1, new_row)
+        new_col = max(1, min(5 - w['col_span'], new_col))
+        new_row = max(1, new_row)
         if new_col == w['col_start'] and new_row == w['row_start']:
-            return  # clamped at grid edge or already on valid slot
+            return
 
-        # Find blocker: first widget whose cells overlap W's target area
         new_cells = {(new_row + dr, new_col + dc)
                      for dr in range(w['row_span']) for dc in range(w['col_span'])}
         blocker = None
@@ -594,53 +701,36 @@ def content() -> None:
                 break
 
         if blocker:
-            # Collect all position updates before writing (avoids mid-state confusion).
             pending: dict[int, tuple[int, int]] = {}
 
-            # Step 1 — W moves to blocker's origin.
-            # Find other widgets W would cover there; send them to W's old origin
-            # at the same relative offset from blocker's origin.
+            # Step 1: W at blocker's origin — displace any collateral there
             w_at_blocker = {(blocker['row_start'] + dr, blocker['col_start'] + dc)
-                            for dr in range(w['row_span'])
-                            for dc in range(w['col_span'])}
+                            for dr in range(w['row_span']) for dc in range(w['col_span'])}
             for other in widgets:
                 if other['id'] in (widget_id, blocker['id']):
                     continue
                 other_cells = {(other['row_start'] + dr, other['col_start'] + dc)
-                               for dr in range(other['row_span'])
-                               for dc in range(other['col_span'])}
+                               for dr in range(other['row_span']) for dc in range(other['col_span'])}
                 if other_cells & w_at_blocker:
-                    dr_off = other['row_start'] - blocker['row_start']
-                    dc_off = other['col_start'] - blocker['col_start']
-                    pending[other['id']] = (w['col_start'] + dc_off,
-                                            w['row_start'] + dr_off)
+                    pending[other['id']] = (w['col_start'] + other['col_start'] - blocker['col_start'],
+                                            w['row_start'] + other['row_start'] - blocker['row_start'])
 
-            # Step 2 — blocker moves to W's old origin.
-            # Find other widgets blocker would cover there; send them to blocker's
-            # old origin at the same relative offset from W's origin.
+            # Step 2: blocker at W's origin — displace any collateral there
             blocker_at_w = {(w['row_start'] + dr, w['col_start'] + dc)
-                            for dr in range(blocker['row_span'])
-                            for dc in range(blocker['col_span'])}
+                            for dr in range(blocker['row_span']) for dc in range(blocker['col_span'])}
             for other in widgets:
                 if other['id'] in (widget_id, blocker['id']) or other['id'] in pending:
                     continue
                 other_cells = {(other['row_start'] + dr, other['col_start'] + dc)
-                               for dr in range(other['row_span'])
-                               for dc in range(other['col_span'])}
+                               for dr in range(other['row_span']) for dc in range(other['col_span'])}
                 if other_cells & blocker_at_w:
-                    dr_off = other['row_start'] - w['row_start']
-                    dc_off = other['col_start'] - w['col_start']
-                    pending[other['id']] = (blocker['col_start'] + dc_off,
-                                            blocker['row_start'] + dr_off)
+                    pending[other['id']] = (blocker['col_start'] + other['col_start'] - w['col_start'],
+                                            blocker['row_start'] + other['row_start'] - w['row_start'])
 
             for wid, (nc, nr) in pending.items():
                 update_widget_layout(wid, col_start=nc, row_start=nr)
-
-            # Swap W ↔ blocker
-            update_widget_layout(blocker['id'],
-                                 col_start=w['col_start'], row_start=w['row_start'])
-            update_widget_layout(widget_id,
-                                 col_start=blocker['col_start'], row_start=blocker['row_start'])
+            update_widget_layout(blocker['id'], col_start=w['col_start'], row_start=w['row_start'])
+            update_widget_layout(widget_id, col_start=blocker['col_start'], row_start=blocker['row_start'])
         else:
             update_widget_layout(widget_id, col_start=new_col, row_start=new_row)
         dashboard_grid.refresh(state['year'])

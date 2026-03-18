@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.7.1 (2026-03-18)
+
+### Bug Fixes
+
+- Db migrations
+  ([`c4a297c`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/c4a297c2ea6d0c8989483b747b9ced8ae5b0683a))
+
+
 ## v1.7.0 (2026-03-18)
 
 ### Features

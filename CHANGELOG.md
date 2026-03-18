@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.6.0 (2026-03-18)
+
+### Features
+
+- Chart editor
+  ([`c903a75`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/c903a75ad182ba89ae2461e2696999e10aec5b58))
+
+
 ## v1.5.1 (2026-03-17)
 
 ### Bug Fixes

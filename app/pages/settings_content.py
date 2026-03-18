@@ -392,6 +392,84 @@ def _aliases_section() -> None:
                     .props('unelevated dense no-caps').classes('bg-zinc-800 text-white rounded-lg')
 
 
+def _employers_section() -> None:
+    cfg = load_config()
+
+    with _card('Employers', 'business'):
+        _section_header('Employers', 'business')
+        with ui.column().classes('px-6 py-5 gap-4 w-full'):
+
+            ui.label(
+                'Payroll description substrings used to identify income transactions. '
+                'Any debit transaction whose description contains one of these patterns '
+                'is treated as a payroll deposit (e.g. "ACME CORP PAYROLL").'
+            ).classes('text-xs text-zinc-400')
+
+            @ui.refreshable
+            def render_employer_chips() -> None:
+                if not cfg.employer_patterns:
+                    ui.label('No employers configured.').classes('text-xs text-zinc-400')
+                    return
+                with ui.row().classes('flex-wrap gap-1'):
+                    for pattern in list(cfg.employer_patterns):
+                        with ui.element('div').classes(
+                            'inline-flex items-center gap-1 px-2 py-0.5 rounded-full '
+                            'bg-zinc-100 text-zinc-700 border border-zinc-200 text-xs font-mono'
+                        ):
+                            ui.label(pattern)
+                            ui.button(icon='close',
+                                      on_click=lambda _, p=pattern: _remove_employer(p)) \
+                                .props('flat round dense size=xs').classes('text-zinc-400')
+
+            def _remove_employer(pattern: str) -> None:
+                if pattern in cfg.employer_patterns:
+                    cfg.employer_patterns.remove(pattern)
+                    save_config(cfg)
+                    render_employer_chips.refresh()
+
+            render_employer_chips()
+
+            with ui.row().classes('items-center gap-2'):
+                pattern_in = ui.input(
+                    label='Payroll description pattern',
+                    placeholder='e.g. ACME CORP PAYROLL',
+                ).props('outlined dense').classes('flex-1')
+
+                def _add_employer() -> None:
+                    val = pattern_in.value.strip()
+                    if val and val not in cfg.employer_patterns:
+                        cfg.employer_patterns.append(val)
+                        pattern_in.set_value('')
+                        save_config(cfg)
+                        render_employer_chips.refresh()
+
+                ui.button('Add', icon='add', on_click=_add_employer) \
+                    .props('unelevated dense no-caps').classes('bg-zinc-800 text-white rounded-lg')
+
+
+def _refresh_views_section() -> None:
+    with _card('Database views', 'storage'):
+        _section_header('Database views', 'storage')
+        with ui.column().classes('px-6 py-5 gap-3 w-full'):
+            ui.label(
+                'Rebuild the PostgreSQL views used by the dashboard. '
+                'Run this after changing transfer patterns, bank accounts, or category rules.'
+            ).classes('text-xs text-zinc-400')
+
+            def _do_refresh():
+                try:
+                    from services.view_manager import ViewManager
+                    from data.db import get_engine, get_schema
+                    ViewManager(get_engine(), schema=get_schema()).refresh()
+                    notify('Views refreshed.', type='positive', position='top')
+                except Exception as ex:
+                    notify(f'Refresh failed: {ex}', type='negative', position='top')
+
+            ui.button('Refresh views', icon='refresh', on_click=_do_refresh) \
+                .props('unelevated no-caps') \
+                .classes('bg-zinc-800 text-white rounded-lg px-4 self-start')
+
+
 def content() -> None:
     with ui.column().classes('w-full max-w-3xl mx-auto px-4 py-6 gap-6'):
 
@@ -407,6 +485,8 @@ def content() -> None:
         if auth.is_admin():
             _user_management_section()
             # _aliases_section()
+            _employers_section()
+            _refresh_views_section()
             _finance_data_export_section()
             _finance_data_import_section()
             _raw_export_section()

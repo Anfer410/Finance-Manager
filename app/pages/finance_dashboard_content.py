@@ -23,7 +23,6 @@ from services.dashboard_grid_layout import (
 )
 from components.widgets import REGISTRY_BY_ID, RenderContext
 from components.widgets.settings_ui import open_widget_settings_dialog
-from components.dashboard_settings_dialog import open_settings_dialog
 from components.add_widget_dialog import open_add_widget_dialog
 from components.dashboard_txn_table import render_txn_table
 
@@ -105,11 +104,6 @@ def content() -> None:
 
             ui.button('Refresh', icon='refresh', on_click=lambda: _refresh_all()) \
                 .props('flat no-caps').classes('button button-outline')
-
-            ui.button(
-                icon='settings',
-                on_click=lambda: open_settings_dialog(on_save_callback=_refresh_all),
-            ).props('flat round').classes('text-zinc-400').tooltip('Transaction settings')
 
             edit_btn = ui.button('Edit Dashboard', icon='edit', on_click=lambda: _toggle_edit()) \
                 .props('flat no-caps').classes('text-zinc-500')

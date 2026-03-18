@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.7.0 (2026-03-18)
+
+### Features
+
+- Add cancel flow for widgets and dashboard
+  ([`40a75e6`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/40a75e65b0c6f8fd8a472a9e8badc81a2d94ce01))
+
+- Per bank settings
+  ([`c13f3e6`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/c13f3e69ce3bff470654d2a7dacf82340833db93))
+
+- Refactor finance dashboard to break into smaller components
+  ([`3a86185`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/3a8618523775b7818461a7c1ece0119ae70f4b8d))
+
+- Separate build in charts from custom
+  ([`fef0ecb`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/fef0ecbd591ec125b29d6097e71c73a9303612e4))
+
+- Setting moved from dashboard page
+  ([`20693b3`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/20693b3582765bb2457970d4745091e0a3af7089))
+
+
 ## v1.6.0 (2026-03-18)
 
 ### Features

@@ -95,10 +95,11 @@ def open_widget_settings_dialog(
                     available_years = _get_available_years()
 
                     time_mode_opts = {
-                        'page_year': 'Page Year (default)',
-                        'trailing':  'Trailing Months',
-                        'year':      'Specific Year',
-                        'all_time':  'All Time',
+                        'page_year':  'Page Year (default)',
+                        'trailing':   'Trailing Months',
+                        'year':       'Specific Year',
+                        'date_range': 'Date Range',
+                        'all_time':   'All Time',
                     }
 
                     @ui.refreshable
@@ -129,6 +130,18 @@ def open_widget_settings_dialog(
                                 value=int(cfg.get('year', page_year)),
                                 label='Year',
                                 on_change=lambda e: cfg.update({'year': e.value}),
+                            ).props('outlined dense').classes('w-full mt-2')
+
+                        elif mode == 'date_range':
+                            ui.input(
+                                'From (YYYY-MM-DD)',
+                                value=cfg.get('date_from', ''),
+                                on_change=lambda e: cfg.update({'date_from': e.value}),
+                            ).props('outlined dense').classes('w-full mt-2')
+                            ui.input(
+                                'To (YYYY-MM-DD)',
+                                value=cfg.get('date_to', ''),
+                                on_change=lambda e: cfg.update({'date_to': e.value}),
                             ).props('outlined dense').classes('w-full mt-2')
 
                     def _on_time_mode(e):
@@ -172,6 +185,16 @@ def open_widget_settings_dialog(
                                 ),
                             ).classes('text-sm')
                         ui.element('div').classes('mb-4')
+
+                # ── Legend position ───────────────────────────────────────────
+                if widget_def.widget_type.value not in ('kpi', 'table'):
+                    _section_header('Legend', 'legend_toggle')
+                    ui.select(
+                        {'top': 'Top', 'bottom': 'Bottom', 'left': 'Left', 'right': 'Right'},
+                        value=cfg.get('legend_position', 'top'),
+                        label='Legend Position',
+                        on_change=lambda e: cfg.update({'legend_position': e.value}),
+                    ).props('outlined dense').classes('w-full mb-4')
 
                 # ── Loan selector ─────────────────────────────────────────────
                 if widget_def.supports_loan_select:

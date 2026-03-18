@@ -44,8 +44,9 @@ from components.widgets.echart      import (
     StackedBarChartWidget, DonutChartWidget, AreaLineChartWidget,
 )
 from components.widgets.table_widget  import TableWidget
-from components.widgets.settings_ui   import open_widget_settings_dialog
-from components.widgets.registry      import REGISTRY, REGISTRY_BY_ID
+from components.widgets.settings_ui        import open_widget_settings_dialog
+from components.widgets.registry           import REGISTRY, REGISTRY_BY_ID
+from components.widgets.custom_chart_widget import CustomChartWidget
 
 __all__ = [
     # Base
@@ -59,4 +60,6 @@ __all__ = [
     'REGISTRY', 'REGISTRY_BY_ID',
     # Settings
     'open_widget_settings_dialog',
+    # Custom charts
+    'CustomChartWidget',
 ]

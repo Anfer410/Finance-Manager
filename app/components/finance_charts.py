@@ -1,5 +1,5 @@
 from nicegui import ui
-from styles.dashboards import GRID, TT_AXIS, LEGEND, C_SPEND, C_INCOME, C_PAYROLL, C_NET_POS, C_NET_NEG, BANK_COLORS
+from styles.dashboards import GRID, TT_AXIS, LEGEND, C_SPEND, C_INCOME, C_PAYROLL, C_NET_POS, C_NET_NEG, BANK_COLORS, legend_pos, grid_for_legend
 
 # ── KPI card ──────────────────────────────────────────────────────────────────
 
@@ -24,7 +24,7 @@ def kpi_card(title: str, icon: str, kpi: dict) -> None:
 
 # ── Chart builders ────────────────────────────────────────────────────────────
 
-def spend_income_chart(series: dict) -> None:
+def spend_income_chart(series: dict, legend_position: str = 'top') -> None:
     import json
     budget      = series.get('budget', [None] * 12)
     budget_json = json.dumps(budget)
@@ -42,8 +42,8 @@ def spend_income_chart(series: dict) -> None:
                 return params[0].name + '<br/>' + lines.join('<br/>');
             }}""",
         },
-        'legend': {**LEGEND, 'data': ['Spend', 'Income', 'Budget'], 'left': 'center', 'top': 0},
-        'grid': GRID,
+        'legend': legend_pos(legend_position, data=['Spend', 'Income', 'Budget']),
+        'grid': grid_for_legend(legend_position),
         'xAxis': {
             'type': 'category', 'data': series['months'],
             'axisLine': {'lineStyle': {'color': '#e4e4e7'}},
@@ -100,15 +100,15 @@ def spend_income_chart(series: dict) -> None:
     }).classes('w-full').style('height:300px')
 
 
-def per_bank_chart(series: dict) -> None:
+def per_bank_chart(series: dict, legend_position: str = 'top') -> None:
     banks = series['banks']
     if not banks:
         ui.label('No spend data for this year.').classes('text-sm text-muted py-8 text-center w-full')
         return
     ui.echart({
         'tooltip': {**TT_AXIS, 'axisPointer': {'type': 'cross'}},
-        'legend': {**LEGEND, 'data': list(banks.keys()), 'left': 'center', 'top': 0},
-        'grid': GRID,
+        'legend': legend_pos(legend_position, data=list(banks.keys())),
+        'grid': grid_for_legend(legend_position),
         'xAxis': {
             'type': 'category', 'data': series['months'],
             'axisLine': {'lineStyle': {'color': '#e4e4e7'}},
@@ -135,7 +135,7 @@ def per_bank_chart(series: dict) -> None:
     }).classes('w-full').style('height:300px')
 
 
-def employer_income_chart(series: dict) -> None:
+def employer_income_chart(series: dict, legend_position: str = 'top') -> None:
     legend  = []
     charts  = []
 
@@ -166,8 +166,8 @@ def employer_income_chart(series: dict) -> None:
 
     ui.echart({
         'tooltip': {**TT_AXIS, 'axisPointer': {'type': 'shadow'}},
-        'legend': {**LEGEND, 'data': legend, 'left': 'center', 'top': 0},
-        'grid': GRID,
+        'legend': legend_pos(legend_position, data=legend),
+        'grid': grid_for_legend(legend_position),
         'xAxis': {
             'type': 'category', 'data': series['months'],
             'axisLine': {'lineStyle': {'color': '#e4e4e7'}},
@@ -238,7 +238,7 @@ def category_donut(series: dict, inverted: bool = False) -> None:
     }).classes("w-full").style("height:300px")
 
 
-def category_trend_chart(series: dict, on_category_click=None, active_category: str | None = None) -> None:
+def category_trend_chart(series: dict, on_category_click=None, active_category: str | None = None, legend_position: str = 'top') -> None:
     cats = series["categories"]
     if not cats:
         ui.label("No data.").classes("text-sm text-muted text-center py-8 w-full")
@@ -285,9 +285,8 @@ def category_trend_chart(series: dict, on_category_click=None, active_category: 
                 return params[0].name + '<br/>' + lines.join('<br/>');
             }""",
         },
-        "legend": {**LEGEND, "top": 0, "left": "center",
-                   "data": cat_names, "textStyle": {"fontSize": 10}},
-        "grid": GRID,
+        "legend": legend_pos(legend_position, data=cat_names, textStyle={"fontSize": 10}),
+        "grid": grid_for_legend(legend_position),
         "xAxis": {
             "type": "category", "data": series["months"],
             "axisLine": {"lineStyle": {"color": "#e4e4e7"}},
@@ -304,11 +303,11 @@ def category_trend_chart(series: dict, on_category_click=None, active_category: 
     ).classes("w-full").style("height:320px; cursor:pointer")
 
 
-def fixed_vs_variable_chart(series: dict) -> None:
+def fixed_vs_variable_chart(series: dict, legend_position: str = 'top') -> None:
     ui.echart({
         "tooltip": {**TT_AXIS, "axisPointer": {"type": "shadow"}},
-        "legend": {**LEGEND, "data": ["Fixed", "Variable"], "left": "center", "top": 0},
-        "grid": GRID,
+        "legend": legend_pos(legend_position, data=["Fixed", "Variable"]),
+        "grid": grid_for_legend(legend_position),
         "xAxis": {
             "type": "category", "data": series["months"],
             "axisLine": {"lineStyle": {"color": "#e4e4e7"}},

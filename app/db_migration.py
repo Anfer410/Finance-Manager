@@ -193,6 +193,20 @@ def _create_app_tables(conn, schema: str) -> None:
         ADD COLUMN IF NOT EXISTS monthly_insurance NUMERIC(12,2) NOT NULL DEFAULT 0
     """))
 
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.app_custom_charts (
+            id           SERIAL PRIMARY KEY,
+            user_id      INTEGER NOT NULL
+                         REFERENCES {schema}.app_users(id) ON DELETE CASCADE,
+            name         TEXT NOT NULL DEFAULT 'Untitled Chart',
+            chart_type   TEXT NOT NULL DEFAULT 'bar',
+            data_source  TEXT NOT NULL DEFAULT 'v_all_spend',
+            config       JSONB NOT NULL DEFAULT '{{}}',
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+
 
 def _migrate_widget_positions(conn, schema: str) -> None:
     """

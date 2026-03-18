@@ -18,6 +18,19 @@ from services.dashboard_config import (
     update_widget_config, update_widget_label,
 )
 from components.widgets import REGISTRY, REGISTRY_BY_ID, RenderContext
+
+
+def _resolve_widget(chart_id: str):
+    if chart_id.startswith('custom:'):
+        try:
+            cid = int(chart_id.split(':', 1)[1])
+        except (ValueError, IndexError):
+            return None
+        from services.custom_chart_repo import get_custom_chart
+        from components.widgets.custom_chart_widget import CustomChartWidget
+        record = get_custom_chart(cid)
+        return CustomChartWidget(record) if record else None
+    return REGISTRY_BY_ID.get(chart_id)
 from components.widgets.settings_ui import open_widget_settings_dialog
 from data.db import get_conn_tuple, get_schema
 
@@ -427,7 +440,7 @@ def content() -> None:
             'gap:1rem;'
         ):
             for w in widgets:
-                chart_def = REGISTRY_BY_ID.get(w['chart_id'])
+                chart_def = _resolve_widget(w['chart_id'])
                 if not chart_def:
                     continue
 

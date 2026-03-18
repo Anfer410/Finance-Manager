@@ -138,7 +138,7 @@ class _SpendIncome(MixedChartWidget):
         else:
             series = _data().get_monthly_spend_series(ctx.year, ctx.persons)
 
-        spend_income_chart(series)
+        spend_income_chart(series, legend_position=ctx.config.get('legend_position', 'top'))
 
 
 class _PerBank(LineChartWidget):
@@ -152,7 +152,8 @@ class _PerBank(LineChartWidget):
 
     def render(self, ctx: RenderContext) -> None:
         from components.finance_charts import per_bank_chart
-        per_bank_chart(_data().get_spend_per_bank_series(ctx.year, ctx.persons))
+        per_bank_chart(_data().get_spend_per_bank_series(ctx.year, ctx.persons),
+                       legend_position=ctx.config.get('legend_position', 'top'))
 
 
 class _CategoryDonut(DonutChartWidget):
@@ -210,7 +211,8 @@ class _FixedVsVariable(BarChartWidget):
 
     def render(self, ctx: RenderContext) -> None:
         from components.finance_charts import fixed_vs_variable_chart
-        fixed_vs_variable_chart(_data().get_fixed_vs_variable(ctx.year, ctx.persons))
+        fixed_vs_variable_chart(_data().get_fixed_vs_variable(ctx.year, ctx.persons),
+                                legend_position=ctx.config.get('legend_position', 'top'))
 
 
 class _TrailingSpend(MixedChartWidget):
@@ -238,7 +240,7 @@ class _TrailingSpend(MixedChartWidget):
         series = _data().get_year_over_year_monthly_spend_series(
             year_back=year_back, persons=ctx.persons
         )
-        spend_income_chart(series)
+        spend_income_chart(series, legend_position=ctx.config.get('legend_position', 'top'))
 
 
 class _PersonSpend(BarChartWidget):
@@ -254,7 +256,8 @@ class _PersonSpend(BarChartWidget):
 
     def render(self, ctx: RenderContext) -> None:
         from nicegui import ui
-        from styles.dashboards import GRID, TT_AXIS, LEGEND, BANK_COLORS
+        from styles.dashboards import TT_AXIS, BANK_COLORS, legend_pos, grid_for_legend
+        lp = ctx.config.get('legend_position', 'top')
 
         if ctx.time_mode == TimeMode.TRAILING and ctx.date_from and ctx.date_to:
             rows = _data().get_spend_by_person_monthly(
@@ -284,9 +287,8 @@ class _PersonSpend(BarChartWidget):
 
         _ui.echart({
             'tooltip': {**TT_AXIS, 'axisPointer': {'type': 'shadow'}},
-            'legend': {**LEGEND, 'data': list(rows['persons'].keys()),
-                       'left': 'center', 'top': 0},
-            'grid': GRID,
+            'legend': legend_pos(lp, data=list(rows['persons'].keys())),
+            'grid': grid_for_legend(lp),
             'xAxis': {
                 'type': 'category', 'data': rows['months'],
                 'axisLine': {'lineStyle': {'color': '#e4e4e7'}},
@@ -319,7 +321,8 @@ class _EmployerIncome(StackedBarChartWidget):
 
     def render(self, ctx: RenderContext) -> None:
         from components.finance_charts import employer_income_chart
-        employer_income_chart(_data().get_employer_income_series(ctx.year, ctx.persons))
+        employer_income_chart(_data().get_employer_income_series(ctx.year, ctx.persons),
+                              legend_position=ctx.config.get('legend_position', 'top'))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -348,6 +351,7 @@ class _CategoryTrend(StackedBarChartWidget):
             _data().get_category_trend(ctx.year, ctx.persons),
             on_category_click=_on_click,
             active_category=ctx.shared_state.get('category'),
+            legend_position=ctx.config.get('legend_position', 'top'),
         )
 
 

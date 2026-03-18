@@ -16,6 +16,8 @@ import pages.settings_content
 import pages.login_content
 import pages.loans_content
 import pages.loan_planning_content
+import pages.charts_content
+import pages.chart_builder_content
 import services.auth as auth
 
 from services.helpers import env
@@ -80,6 +82,8 @@ def root():
         '/settings':       settings,
         '/loans':          loans,
         '/loan-planning':  loan_planning,
+        '/charts':         charts_gallery,
+        '/chart-builder':  chart_builder,
     })
 
 
@@ -105,6 +109,12 @@ def loans():
 
 def loan_planning():
     pages.loan_planning_content.content()
+
+def charts_gallery():
+    pages.charts_content.content()
+
+def chart_builder():
+    pages.chart_builder_content.content()
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

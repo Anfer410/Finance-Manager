@@ -426,7 +426,8 @@ def create_admin(
     """
     from services.auth import hash_password
 
-    engine, schema = _engine()
+    engine = get_engine()
+    schema = get_schema()
     with engine.begin() as conn:
         existing = conn.execute(
             text(f"SELECT id FROM {schema}.app_users WHERE username = :u"),

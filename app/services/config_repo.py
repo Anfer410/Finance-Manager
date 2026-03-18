@@ -10,6 +10,7 @@ their own files and remain pure data — no DB imports there.
 
 Table layout (all in the configured schema):
     app_config_bank_rules    — id=1, data JSONB  {rules: [...]}
+    app_config_banks         — id=1, data JSONB  {banks: [...]}
     app_config_categories    — id=1, data JSONB  {categories: [...], rules: [...]}
     app_config_transaction   — id=1, data JSONB  {transfer_patterns, employer_patterns, member_aliases}
     app_settings             — key TEXT PK, value JSONB   (generic k/v store)
@@ -18,6 +19,9 @@ Public API
 ──────────
     load_bank_rules()       -> list[dict]
     save_bank_rules(rules)
+
+    load_banks()            -> list[dict]
+    save_banks(banks)
 
     load_categories()       -> dict   {categories, rules}
     save_categories(data)
@@ -114,6 +118,18 @@ def load_bank_rules() -> list[dict]:
 
 def save_bank_rules(rules: list[dict]) -> None:
     _config_set("bank_rules", {"rules": rules})
+
+
+# ── Banks ─────────────────────────────────────────────────────────────────────
+
+def load_banks() -> list[dict]:
+    """Returns list of BankConfig dicts."""
+    data = _config_get("banks")
+    return data.get("banks", [])
+
+
+def save_banks(banks: list[dict]) -> None:
+    _config_set("banks", {"banks": banks})
 
 
 # ── Categories ────────────────────────────────────────────────────────────────

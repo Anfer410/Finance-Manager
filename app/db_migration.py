@@ -80,7 +80,7 @@ def _create_app_tables(conn, schema: str) -> None:
         )
     """))
 
-    for cfg_name in ("bank_rules", "categories", "transaction"):
+    for cfg_name in ("bank_rules", "banks", "categories", "transaction"):
         conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS {schema}.app_config_{cfg_name} (
                 id         INT PRIMARY KEY DEFAULT 1

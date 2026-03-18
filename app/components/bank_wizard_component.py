@@ -1,12 +1,12 @@
 """
-pages/bank_wizard_component.py — Add-bank wizard (5 steps)
+components/bank_wizard_component.py — Add-account wizard
 
-Step 1 — Upload sample CSV
-Step 2 — Map columns  →  stages CSV data into a temp DB table
-Step 3 — Bank details (name, alias, filename matching, member aliases)
-Step 4 — Payment patterns (credit only); browse staged data (credit) or
-          existing debit transactions (debit) via a toggle switch
-Step 5 — Confirm + save; pushes staged data to consolidated tables
+Step 1 — Account details (bank selector, alias, account type)
+Step 2 — Upload sample CSV + filename detection (pre-populated from actual file)
+Step 3 — Column mapping  →  stages CSV data into a temp DB table
+Step 4 — Member aliases + person override  (skipped if no member column)
+Step 5 — Payment patterns  (skipped for non-credit accounts)
+Step 6 — Review + save
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from sqlalchemy import text as sa_text
 
 import services.auth as auth
 from data.bank_rules import BankRule, load_rules, save_rules
+from data.bank_config import BankConfig, load_banks, save_banks
 from services.notifications import notify
 from services.upload_pipeline import (
     sniff, suggest_mapping, ColumnMapping,
@@ -50,6 +51,15 @@ MATCH_TYPE_OPTIONS = {
 ACCOUNT_COLORS = {
     "credit":   ("bg-violet-50 text-violet-700 border-violet-200", "credit_card"),
     "checking": ("bg-sky-50 text-sky-700 border-sky-200",          "account_balance"),
+}
+
+_STEP_TITLES = {
+    1: "Account details",
+    2: "Upload CSV",
+    3: "Column mapping",
+    4: "Member aliases",
+    5: "Payment patterns",
+    6: "Review & save",
 }
 
 
@@ -95,6 +105,13 @@ def _create_staging_table(state: dict) -> bool:
             df.columns = [f"col_{i}" for i in range(len(df.columns))]
         else:
             df = pd.read_csv(io.BytesIO(raw), sep=sep, dtype=str)
+            # Normalize column names to match what sniff() produced and what the
+            # mapping stores (e.g. "Transaction Date" → "transaction_date")
+            import re as _re2
+            df.columns = [
+                _re2.sub(r"[^a-z0-9]+", "_", c.strip().lower()).strip("_")
+                for c in df.columns
+            ]
     except Exception as ex:
         print(f"[WizardStage] CSV parse failed: {ex}")
         return False
@@ -187,19 +204,28 @@ def _create_staging_table(state: dict) -> bool:
 
 # ── Wizard ─────────────────────────────────────────────────────────────────────
 
-def open_add_bank_wizard(on_done) -> None:
-    """Open the 5-step add-bank wizard dialog."""
+def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> None:
+    """Open the add-account wizard.
 
+    Args:
+        on_done: Callback invoked after a successful save.
+        preselected_bank_slug: If set, the bank selector in Step 1 is pre-filled
+            to this bank slug and locked.  Pass when launching from "+ Add Account"
+            under a specific bank in the sidebar.
+    """
     state: dict = {
-        "step":         1,
-        "raw":          None,
-        "filename":     "",
-        "sniff":        None,
-        "mapping":      None,
-        "account_type": "checking",
-        "bank_details": {},
-        "staged_df":    None,
-        "temp_table":   f"wizard_stage_{uuid.uuid4().hex[:12]}",
+        "step":              1,
+        "raw":               None,
+        "filename":          "",
+        "sniff":             None,
+        "mapping":           None,
+        "account_type":      "checking",
+        "bank_details":      {},
+        "staged_df":         None,
+        "temp_table":        f"wizard_stage_{uuid.uuid4().hex[:12]}",
+        # Bank selection
+        "selected_bank_slug": preselected_bank_slug,  # slug of chosen bank, or None = new
+        "new_bank_name":      "",
     }
 
     with ui.dialog().props("persistent") as dlg, \
@@ -209,7 +235,7 @@ def open_add_bank_wizard(on_done) -> None:
         with ui.row().classes("items-center justify-between px-6 py-4 border-b border-zinc-100"):
             with ui.row().classes("items-center gap-3"):
                 ui.icon("add_card").classes("text-zinc-400 text-xl")
-                title_lbl = ui.label("Add bank — step 1 of 5") \
+                title_lbl = ui.label("Add account — Account details") \
                     .classes("text-base font-semibold text-zinc-800")
             ui.button(icon="close", on_click=lambda: _close_wizard()) \
                 .props("flat round dense").classes("text-zinc-400")
@@ -232,17 +258,45 @@ def open_add_bank_wizard(on_done) -> None:
         _drop_staging_table(state["temp_table"])
         dlg.close()
 
+    # ── Step navigation helpers ────────────────────────────────────────────────
+
+    def _has_member_col() -> bool:
+        return bool((state.get("mapping") and state["mapping"].member_name) or "")
+
+    def _is_credit() -> bool:
+        return state.get("account_type") == "credit"
+
+    def _next_step(from_step: int) -> int:
+        """Compute the next step number, skipping optional steps when not applicable."""
+        if from_step == 3:
+            # After column mapping: member aliases only if member col is mapped
+            return 4 if _has_member_col() else _next_step(4)
+        if from_step == 4:
+            # After member aliases: payment patterns only for credit accounts
+            return 5 if _is_credit() else 6
+        return from_step + 1
+
+    def _prev_step(from_step: int) -> int:
+        """Compute the previous step number, skipping optional steps when not applicable."""
+        if from_step == 5:
+            return 4 if _has_member_col() else 3
+        if from_step == 6:
+            if _is_credit():
+                return 5
+            return 4 if _has_member_col() else 3
+        return from_step - 1
+
     # ── render_step ─────────────────────────────────────────────────────────────
     def render_step():
         body.clear()
         st = state["step"]
-        title_lbl.set_text(f"Add bank — step {st} of 5")
+        title_lbl.set_text(f"Add account — {_STEP_TITLES[st]}")
         back_btn.set_visibility(st > 1)
-        next_btn.set_text("Save bank" if st == 5 else "Next")
+        next_btn.set_text("Save account" if st == 6 else "Next")
         next_btn.enable()
         next_btn._event_listeners.clear()
         back_btn._event_listeners.clear()
-        skip_btn.set_visibility(st == 4)
+        skip_btn.set_visibility(st == 5)
         back_btn.on("click", go_back)
         with body:
             if st == 1:   _step1()
@@ -250,11 +304,160 @@ def open_add_bank_wizard(on_done) -> None:
             elif st == 3: _step3()
             elif st == 4: _step4()
             elif st == 5: _step5()
+            elif st == 6: _step6()
 
-    # ── Step 1: upload sample CSV ──────────────────────────────────────────────
+    # ── Step 1: account details (bank selector + alias) ────────────────────────
     def _step1():
+        banks = load_banks()
+        bank_slugs  = [b.slug for b in banks]
+        bank_labels = {b.slug: b.name for b in banks}
+
+        # Build select options: existing banks + sentinel for new bank
+        _NEW = "__new__"
+        select_options: dict[str, str] = {b.slug: b.name for b in banks}
+        select_options[_NEW] = "+ New bank…"
+
+        # Pre-select: if locked by caller, use that; else keep previous or default
+        initial_sel = state["selected_bank_slug"] or (
+            bank_slugs[0] if bank_slugs else _NEW
+        )
+        locked = bool(preselected_bank_slug)
+
+        sel_ref     = {"value": initial_sel}
+        state["selected_bank_slug"] = initial_sel if initial_sel != _NEW else None
+
+        def _to_slug(text: str) -> str:
+            return _re.sub(r"[^a-z0-9]+", "_", text.strip().lower()).strip("_")
+
+        def _table_name(bank_slug: str, alias: str) -> str:
+            parts = [p for p in [bank_slug, _to_slug(alias)] if p]
+            return "_".join(parts) if parts else ""
+
+        with ui.scroll_area().style("max-height:62vh"):
+          with ui.column().classes("px-6 py-5 gap-5 w-full"):
+
+            ui.label("Bank & account") \
+                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
+
+            # Bank selector
+            with ui.column().classes("w-full gap-1"):
+                ui.label("Bank").classes("text-sm font-medium text-zinc-700")
+                ui.label("Select an existing bank or create a new one.") \
+                    .classes("text-xs text-zinc-400")
+
+                if locked:
+                    locked_bank = bank_labels.get(preselected_bank_slug, preselected_bank_slug)
+                    ui.label(locked_bank).classes(
+                        "px-3 py-2 rounded border border-zinc-200 bg-zinc-50 "
+                        "text-zinc-600 text-sm font-medium"
+                    )
+                else:
+                    bank_sel = ui.select(
+                        select_options,
+                        value=initial_sel,
+                    ).classes("w-full").props("outlined dense")
+
+            # New bank name input (shown only when "+ New bank…" is selected)
+            new_bank_col = ui.column().classes("w-full gap-1")
+            new_bank_col.set_visibility(initial_sel == _NEW)
+            with new_bank_col:
+                ui.label("New bank name").classes("text-sm font-medium text-zinc-700")
+                ui.label("The institution name, e.g. Citi, Wells Fargo, Capital One.") \
+                    .classes("text-xs text-zinc-400")
+                new_bank_in = ui.input(
+                    placeholder="e.g. Capital One",
+                    value=state.get("new_bank_name", ""),
+                ).classes("w-full").props("outlined dense")
+
+            # Account alias
+            with ui.column().classes("w-full gap-1"):
+                ui.label("Account alias").classes("text-sm font-medium text-zinc-700")
+                ui.label(
+                    "A short name for this specific account, e.g. Checking, Savings, "
+                    "Daily Spending. Combined with the bank name to form the raw table name."
+                ).classes("text-xs text-zinc-400")
+                alias_in = ui.input(
+                    placeholder="e.g. Checking",
+                    value=state["bank_details"].get("_alias", ""),
+                ).classes("w-full").props("outlined dense")
+
+            table_preview = ui.label("raw table: raw_") \
+                .classes("text-xs font-mono text-zinc-400 bg-zinc-50 "
+                         "border border-zinc-200 rounded px-2 py-1")
+
+            # Account type
+            ui.separator()
+            ui.label("Account type") \
+                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
+            acct_toggle = ui.toggle(
+                {"checking": "Checking / savings", "credit": "Credit card"},
+                value=state["account_type"],
+            ).props("no-caps")
+
+            def _update_preview(_=None):
+                if locked:
+                    bslug = preselected_bank_slug or ""
+                else:
+                    sel = bank_sel.value if not locked else preselected_bank_slug
+                    bslug = sel if sel != _NEW else _to_slug(new_bank_in.value)
+                slug = _table_name(bslug, alias_in.value)
+                table_preview.set_text("raw table: raw_" + slug if slug else "raw table: raw_")
+
+            if not locked:
+                def _on_bank_change(e):
+                    sel_ref["value"] = e.value
+                    new_bank_col.set_visibility(e.value == _NEW)
+                    _update_preview()
+
+                bank_sel.on("update:model-value", _on_bank_change)
+                new_bank_in.on("update:model-value", _update_preview)
+
+            alias_in.on("update:model-value", _update_preview)
+            acct_toggle.on("update:model-value", lambda e: state.update({"account_type": e.args}))
+            _update_preview()
+
+        def advance_step1():
+            alias = alias_in.value.strip()
+            if not alias:
+                notify("Account alias is required.", type="warning", position="top")
+                return
+
+            sel = preselected_bank_slug if locked else bank_sel.value
+
+            if sel == _NEW or sel is None:
+                new_name = new_bank_in.value.strip()
+                if not new_name:
+                    notify("Enter a name for the new bank.", type="warning", position="top")
+                    return
+                state["new_bank_name"]     = new_name
+                state["selected_bank_slug"] = None  # will be created on save
+                bslug = _to_slug(new_name)
+            else:
+                state["selected_bank_slug"] = sel
+                state["new_bank_name"]       = ""
+                bslug = sel
+
+            pfx = _table_name(bslug, alias)
+            if not pfx:
+                notify("Could not derive a table name — check bank and alias.", type="warning", position="top")
+                return
+
+            state["bank_details"]["_alias"]   = alias
+            state["bank_details"]["prefix"]   = pfx
+            state["bank_details"]["bank_name"] = (
+                bank_labels.get(sel, sel) if sel and sel != _NEW
+                else state["new_bank_name"]
+            )
+            state["account_type"] = acct_toggle.value
+            _advance(_next_step(1))
+
+        next_btn.on("click", advance_step1)
+
+    # ── Step 2: upload CSV + filename detection ─────────────────────────────────
+    def _step2():
         next_btn.disable()
-        with ui.column().classes("px-6 py-5 gap-4 w-full"):
+
+        with ui.column().classes("px-6 py-5 gap-5 w-full"):
             ui.label("Upload a sample CSV from this bank.") \
                 .classes("text-sm text-zinc-500")
             ui.label(
@@ -263,6 +466,34 @@ def open_add_bank_wizard(on_done) -> None:
             ).classes("text-xs text-zinc-400")
 
             status_lbl = ui.label("").classes("text-sm")
+
+            # ── Filename detection (populated after upload) ────────────────────
+            filename_col = ui.column().classes("w-full gap-4")
+            filename_col.set_visibility(bool(state["sniff"]))
+
+            with filename_col:
+                ui.separator()
+                ui.label("Filename detection") \
+                    .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
+                ui.label(
+                    "Auto-detect uploaded files for this account by matching the filename. "
+                    "Pre-filled from your sample — adjust match type if needed."
+                ).classes("text-xs text-zinc-400")
+
+                with ui.row().classes("w-full gap-3 items-end"):
+                    with ui.column().classes("gap-0.5 w-40 shrink-0"):
+                        ui.label("Match type").classes("text-xs text-zinc-500")
+                        match_type_sel = ui.select(
+                            MATCH_TYPE_OPTIONS,
+                            value=state["bank_details"].get("match_type", "exact"),
+                        ).classes("w-full").props("outlined dense")
+                    with ui.column().classes("gap-0.5 flex-1"):
+                        ui.label("Filename value").classes("text-xs text-zinc-500")
+                        uploaded_stem = Path(state["filename"]).stem if state["filename"] else ""
+                        match_val_in = ui.input(
+                            value=state["bank_details"].get("match_value", uploaded_stem),
+                            placeholder="e.g. transaction_download",
+                        ).classes("w-full").props("outlined dense")
 
             async def on_sample(e: events.UploadEventArguments):
                 raw = await e.file.read()
@@ -277,6 +508,10 @@ def open_add_bank_wizard(on_done) -> None:
                         + ("  (no header)" if not result.has_header else "")
                     )
                     status_lbl.classes(replace="text-sm text-green-600")
+                    # Pre-populate filename detection from the actual filename
+                    stem = Path(e.file.name).stem
+                    match_val_in.set_value(stem)
+                    filename_col.set_visibility(True)
                     next_btn.enable()
                 except Exception as ex:
                     status_lbl.set_text(f"Could not read file: {ex}")
@@ -297,10 +532,22 @@ def open_add_bank_wizard(on_done) -> None:
                 status_lbl.classes(replace="text-sm text-green-600")
                 next_btn.enable()
 
-        next_btn.on("click", lambda: _advance(2))
+        def advance_step2():
+            if not state["sniff"]:
+                notify("Upload a sample CSV first.", type="warning", position="top")
+                return
+            mval = match_val_in.value.strip()
+            if not mval:
+                notify("Filename value is required.", type="warning", position="top")
+                return
+            state["bank_details"]["match_type"]  = match_type_sel.value
+            state["bank_details"]["match_value"] = mval
+            _advance(_next_step(2))
 
-    # ── Step 2: column mapping → stages CSV on advance ─────────────────────────
-    def _step2():
+        next_btn.on("click", advance_step2)
+
+    # ── Step 3: column mapping → stages CSV on advance ─────────────────────────
+    def _step3():
         sniff_res: SniffResult = state["sniff"]
         norm_cols = sniff_res.norm_columns
         dragging: dict = {"col": None}
@@ -434,7 +681,7 @@ def open_add_bank_wizard(on_done) -> None:
                                     ):
                                         ui.label(str(cell)[:24])
 
-        def advance_step2():
+        def advance_step3():
             acct = acct_sel.value
             state["account_type"] = acct
             m = state["mapping"]
@@ -445,7 +692,6 @@ def open_add_bank_wizard(on_done) -> None:
                     type="warning", position="top",
                 )
                 return
-            # Stage CSV data now that mapping is confirmed
             next_btn.disable()
             next_btn.set_text("Staging…")
             ok = _create_staging_table(state)
@@ -457,14 +703,14 @@ def open_add_bank_wizard(on_done) -> None:
                     type="warning", position="top",
                 )
                 return
-            _advance(3)
+            state["bank_details"]["member_name_column"] = (state["mapping"].member_name or "")
+            _advance(_next_step(3))
 
-        next_btn.on("click", advance_step2)
+        next_btn.on("click", advance_step3)
 
-    # ── Step 3: bank details + member aliases ──────────────────────────────────
-    def _step3():
-        uploaded_stem = Path(state["filename"]).stem if state["filename"] else ""
-
+    # ── Step 4: member aliases + person override (conditional) ─────────────────
+    def _step4():
+        member_col   = state["bank_details"].get("member_name_column", "")
         all_users    = auth.get_all_users()
         active_users = [u for u in all_users if u.is_active]
         user_opt_map: dict[str, int] = {
@@ -473,85 +719,21 @@ def open_add_bank_wizard(on_done) -> None:
         }
         user_opt_labels = list(user_opt_map.keys())
 
-        alias_rows: list[dict] = []
-        member_col = (state["mapping"].member_name or "") if state["mapping"] else ""
-
-        def _to_slug(text: str) -> str:
-            return _re.sub(r"[^a-z0-9]+", "_", text.strip().lower()).strip("_")
-
-        def _table_name(bank: str, alias: str) -> str:
-            parts = [p for p in [_to_slug(bank), _to_slug(alias)] if p]
-            return "_".join(parts) if parts else ""
+        alias_rows: list[dict] = list(
+            {"raw_value": rv, "user_id": uid}
+            for rv, uid in (state["bank_details"].get("member_aliases") or {}).items()
+        )
 
         with ui.scroll_area().style("max-height:62vh"):
           with ui.column().classes("px-6 py-5 gap-5 w-full"):
 
-            # ── Bank name + account alias ──────────────────────────────────────
-            ui.label("Bank details") \
-                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
-
-            with ui.column().classes("w-full gap-1"):
-                ui.label("Bank name").classes("text-sm font-medium text-zinc-700")
-                ui.label("The institution name, e.g. Citi, Wells Fargo, Capital One.") \
-                    .classes("text-xs text-zinc-400")
-                bank_name_in = ui.input(placeholder="e.g. Citi") \
-                    .classes("w-full").props("outlined dense")
-
-            with ui.column().classes("w-full gap-1"):
-                ui.label("Account alias").classes("text-sm font-medium text-zinc-700")
-                ui.label(
-                    "A short name for this specific account, e.g. Daily Spending, Rewards, Joint. "
-                    "Together with the bank name this becomes the raw data table name."
-                ).classes("text-xs text-zinc-400")
-                prefix_in = ui.input(placeholder="e.g. Daily Spending") \
-                    .classes("w-full").props("outlined dense")
-
-            table_preview = ui.label("raw table: raw_") \
-                .classes("text-xs font-mono text-zinc-400 bg-zinc-50 "
-                         "border border-zinc-200 rounded px-2 py-1")
-
-            def update_table_preview(_=None):
-                slug = _table_name(bank_name_in.value, prefix_in.value)
-                table_preview.set_text("raw table: raw_" + slug if slug else "raw table: raw_")
-
-            bank_name_in.on("update:model-value", update_table_preview)
-            prefix_in.on("update:model-value", update_table_preview)
-
-            # ── Filename detection ─────────────────────────────────────────────
-            ui.separator()
-            ui.label("Filename detection") \
-                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
-
-            with ui.column().classes("w-full gap-1"):
-                ui.label("Match type").classes("text-sm font-medium text-zinc-700")
-                ui.label(
-                    "How to compare the uploaded filename against the value below. "
-                    'Exact is pre-selected from your sample. Switch to Contains and use * for wildcards.'
-                ).classes("text-xs text-zinc-400")
-                match_type_sel = ui.select(
-                    MATCH_TYPE_OPTIONS, value="exact",
-                ).classes("w-full").props("outlined dense")
-
-            with ui.column().classes("w-full gap-1"):
-                ui.label("Filename value").classes("text-sm font-medium text-zinc-700")
-                ui.label(
-                    "Matched against the uploaded filename without its extension. "
-                    "Pre-filled from your sample file."
-                ).classes("text-xs text-zinc-400")
-                match_val_in = ui.input(
-                    value=uploaded_stem,
-                    placeholder="e.g. transaction_download",
-                ).classes("w-full").props("outlined dense")
-
-            # ── Member name aliases (only if member col was mapped) ────────────
             if member_col:
-                ui.separator()
                 ui.label("Member name aliases") \
                     .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
                 ui.label(
-                    "Column \"" + member_col + "\" was mapped as the member name. "
-                    "Map each raw value found in that column to a registered user. "
-                    "Aliases are stored by user ID, so renaming a user never breaks old data."
+                    f'Column "{member_col}" was mapped as the member name. '
+                    "Map each raw value in that column to a registered user. "
+                    "Aliases are stored by user ID so renames never break old data."
                 ).classes("text-xs text-zinc-400")
 
                 aliases_container = ui.column().classes("w-full gap-1")
@@ -594,7 +776,7 @@ def open_add_bank_wizard(on_done) -> None:
                     ui.label("Add alias").classes("text-sm font-medium text-zinc-700")
                     ui.label(
                         "Enter the exact value as it appears in the member column "
-                        "(the app will uppercase it), then pick the matching user."
+                        "(uppercased automatically), then pick the matching user."
                     ).classes("text-xs text-zinc-400")
                 with ui.row().classes("w-full items-end gap-2"):
                     raw_val_in = ui.input(placeholder="e.g. JOHN") \
@@ -614,10 +796,8 @@ def open_add_bank_wizard(on_done) -> None:
                             notify("Select a user to map to.", type="warning", position="top")
                             return
                         if any(a["raw_value"] == rv for a in alias_rows):
-                            notify(
-                                "An alias for " + rv + " already exists.",
-                                type="warning", position="top",
-                            )
+                            notify("An alias for " + rv + " already exists.",
+                                   type="warning", position="top")
                             return
                         alias_rows.append({"raw_value": rv, "user_id": uid})
                         raw_val_in.set_value("")
@@ -627,96 +807,65 @@ def open_add_bank_wizard(on_done) -> None:
                         .props("unelevated dense no-caps") \
                         .classes("bg-zinc-800 text-white rounded-lg px-3")
 
+                ui.separator()
+
             # ── Person override ────────────────────────────────────────────────
-            ui.separator()
+            ui.label("Person override") \
+                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
             with ui.column().classes("w-full gap-1"):
                 ui.label("Person override (optional)") \
                     .classes("text-sm font-medium text-zinc-700")
                 ui.label(
-                    "Pin every row from this bank to specific people. "
+                    "Pin every row from this account to specific people. "
                     "Select multiple for a shared/mutual account."
                 ).classes("text-xs text-zinc-400")
 
-            override_ids: set[int] = set()
-            override_sw = ui.switch("Enable person override").classes("text-sm")
+            prev_override = state["bank_details"].get("person_override")
+            override_ids: set[int] = set(prev_override or [])
+            override_sw = ui.switch("Enable person override", value=bool(prev_override)) \
+                .classes("text-sm")
             override_container = ui.column().classes("w-full gap-1 pl-1")
-            override_container.set_visibility(False)
-            override_sw.on(
-                "update:model-value",
-                lambda e: override_container.set_visibility(e.args)
-            )
+            override_container.set_visibility(bool(prev_override))
+            override_sw.on("update:model-value",
+                           lambda e: override_container.set_visibility(e.args))
             with override_container:
                 for u in active_users:
-                    chk = ui.checkbox(f"{u.person_name}  ({u.display_name})", value=False)
-                    chk.on(
-                        "update:model-value",
-                        lambda e, uid=u.id: (
-                            override_ids.add(uid) if e.args else override_ids.discard(uid)
-                        ),
+                    chk = ui.checkbox(
+                        f"{u.person_name}  ({u.display_name})",
+                        value=(u.id in override_ids),
                     )
+                    chk.on("update:model-value",
+                           lambda e, uid=u.id: (
+                               override_ids.add(uid) if e.args else override_ids.discard(uid)
+                           ))
 
-        def advance_step3():
-            bname = bank_name_in.value.strip()
-            pfx   = _table_name(bank_name_in.value, prefix_in.value)
-            mval  = match_val_in.value.strip()
-            if not bname:
-                notify("Bank name is required.", type="warning", position="top")
-                return
-            if not prefix_in.value.strip():
-                notify("Account alias is required.", type="warning", position="top")
-                return
-            if not pfx:
-                notify(
-                    "Could not generate a table name — check bank name and alias.",
-                    type="warning", position="top",
-                )
-                return
-            if not mval:
-                notify("Filename value is required.", type="warning", position="top")
-                return
-            state["bank_details"] = dict(
-                bank_name                = bname,
-                prefix                   = pfx,
-                match_type               = match_type_sel.value,
-                match_value              = mval,
-                account_type             = state["account_type"],
-                member_name_column       = member_col,
-                member_aliases           = {a["raw_value"]: a["user_id"] for a in alias_rows},
-                person_override          = sorted(override_ids) if override_sw.value and override_ids else None,
+        def advance_step4():
+            state["bank_details"]["member_aliases"] = {
+                a["raw_value"]: a["user_id"] for a in alias_rows
+            }
+            state["bank_details"]["person_override"] = (
+                sorted(override_ids) if override_sw.value and override_ids else None
             )
-            _advance(4)
+            _advance(_next_step(4))
 
-        next_btn.on("click", advance_step3)
+        next_btn.on("click", advance_step4)
 
-    # ── Step 4: payment patterns + dual-source transaction browser ─────────────
-    def _step4():
-        d         = state["bank_details"]
-        is_credit = state.get("account_type", "") == "credit"
+    # ── Step 5: payment patterns (credit only) ─────────────────────────────────
+    def _step5():
+        d = state["bank_details"]
 
         skip_btn.set_text("Skip")
 
         with ui.column().classes("w-full gap-0"):
 
-            # Header
             with ui.column().classes("px-6 py-4 gap-1"):
                 ui.label("Payment patterns").classes("text-base font-semibold text-zinc-800")
-                if is_credit:
-                    ui.label(
-                        "Search transactions to identify payment rows and the checking-side pattern. "
-                        "Use the Credit tab to browse your uploaded CSV data, "
-                        "or the Debit tab to find how this card's payment appears in your checking account."
-                    ).classes("text-sm text-zinc-500")
-                else:
-                    ui.label(
-                        "No payment patterns needed for checking accounts. "
-                        "Click Next to review and save."
-                    ).classes("text-sm text-zinc-500")
+                ui.label(
+                    "Search transactions to identify payment rows and the checking-side pattern. "
+                    "Use the Credit tab to browse your uploaded CSV data, "
+                    "or the Debit tab to find how this card's payment appears in your checking account."
+                ).classes("text-sm text-zinc-500")
 
-            if not is_credit:
-                next_btn.on("click", lambda: _advance(5))
-                return
-
-            # Pattern fields
             with ui.row().classes("px-6 gap-3 flex-wrap"):
                 with ui.column().classes("gap-0.5 flex-1 min-w-36"):
                     ui.label("Payment category").classes("text-xs text-zinc-500")
@@ -739,7 +888,6 @@ def open_add_bank_wizard(on_done) -> None:
 
             ui.separator().classes("mx-6")
 
-            # Source toggle + search bar
             with ui.row().classes("px-6 items-center gap-4 py-2 flex-wrap"):
                 source_toggle = ui.toggle(
                     {"credit": "Credit (uploaded data)", "debit": "Debit transactions"},
@@ -765,10 +913,7 @@ def open_add_bank_wizard(on_done) -> None:
             tbl_page   = {"n": 1, "search": ""}
             PAGE_SIZE  = 40
 
-            # ── Query helpers ──────────────────────────────────────────────────
-
             def _query_credit(search: str, page: int):
-                """Query staged credit data from temp table."""
                 try:
                     with engine.connect() as conn:
                         params: dict = {
@@ -794,7 +939,6 @@ def open_add_bank_wizard(on_done) -> None:
                     return ["date", "description", "debit", "credit"], [], 0
 
             def _query_debit(search: str, page: int):
-                """Query existing transactions_debit rows."""
                 try:
                     with engine.connect() as conn:
                         params: dict = {
@@ -827,8 +971,6 @@ def open_add_bank_wizard(on_done) -> None:
                 ]
                 return any(c and c in v for c in checks)
 
-            # ── Table renderer ─────────────────────────────────────────────────
-
             @ui.refreshable
             def render_rows():
                 tbl_wrap.clear()
@@ -846,7 +988,7 @@ def open_add_bank_wizard(on_done) -> None:
                     copy_targets = [("Checking pattern", pat_chk_in)]
 
                 total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
-                desc_idx    = 1  # description is always the second column
+                desc_idx    = 1
 
                 with tbl_wrap:
                     if not rows:
@@ -896,10 +1038,8 @@ def open_add_bank_wizard(on_done) -> None:
                                                         def make_copy(w=widget, v=desc_val, l=lbl):
                                                             def _do():
                                                                 w.set_value(v)
-                                                                notify(
-                                                                    "Copied to " + l,
-                                                                    type="positive", position="top",
-                                                                )
+                                                                notify("Copied to " + l,
+                                                                       type="positive", position="top")
                                                                 render_rows.refresh()
                                                             return _do
                                                         ui.menu_item(
@@ -938,7 +1078,6 @@ def open_add_bank_wizard(on_done) -> None:
                     ).props("flat round dense size=sm").classes("text-zinc-500") \
                      .bind_enabled_from(tbl_page, "n", lambda p: p < total_pages)
 
-            # Reset page + search when switching tabs
             source_toggle.on("update:model-value", lambda _: (
                 tbl_page.update({"n": 1, "search": ""}),
                 render_rows.refresh()
@@ -946,16 +1085,16 @@ def open_add_bank_wizard(on_done) -> None:
 
             render_rows()
 
-        def advance_step4():
+        def advance_step5():
             d["payment_category"]         = pat_cat_in.value.strip()
             d["payment_description"]      = pat_desc_in.value.strip()
             d["checking_payment_pattern"] = pat_chk_in.value.strip()
-            _advance(5)
+            _advance(6)
 
-        next_btn.on("click", advance_step4)
+        next_btn.on("click", advance_step5)
 
-    # ── Step 5: confirm + save ─────────────────────────────────────────────────
-    def _step5():
+    # ── Step 6: review + save ──────────────────────────────────────────────────
+    def _step6():
         d    = state["bank_details"]
         m    = state["mapping"]
         acct = state["account_type"]
@@ -975,7 +1114,7 @@ def open_add_bank_wizard(on_done) -> None:
 
                 chips = [
                     d["match_type"] + ': "' + d["match_value"] + '"',
-                    d["account_type"],
+                    acct,
                 ]
                 if d.get("payment_description"):
                     chips.append("payment: " + d["payment_description"])
@@ -1013,7 +1152,6 @@ def open_add_bank_wizard(on_done) -> None:
                                 raw_val + " → " + uid_to_label.get(uid, "user #" + str(uid))
                             ).classes("text-xs font-mono text-zinc-600")
 
-            # Show how many rows will be committed
             staged_count = len(state["staged_df"]) if state.get("staged_df") is not None else 0
             if staged_count:
                 ui.label(
@@ -1021,13 +1159,13 @@ def open_add_bank_wizard(on_done) -> None:
                     f"to transactions_{acct}."
                 ).classes("text-xs text-zinc-400")
 
-        def save_bank():
+        def save_account():
             rule = BankRule(
                 bank_name                = d["bank_name"],
                 prefix                   = d["prefix"],
                 match_type               = d["match_type"],
                 match_value              = d["match_value"],
-                account_type             = d["account_type"],
+                account_type             = acct,
                 payment_category         = d.get("payment_category", ""),
                 payment_description      = d.get("payment_description", ""),
                 checking_payment_pattern = d.get("checking_payment_pattern", ""),
@@ -1035,19 +1173,26 @@ def open_add_bank_wizard(on_done) -> None:
                 member_aliases           = d.get("member_aliases", {}),
                 person_override          = d.get("person_override"),
                 column_map               = m.to_dict(),
-                dedup_columns            = m.dedup_columns(d["account_type"]),
+                dedup_columns            = m.dedup_columns(acct),
             )
 
             rules = load_rules()
             if any(r.prefix == rule.prefix for r in rules):
                 notify(
-                    'A bank with alias "' + rule.prefix + '" already exists. '
+                    'An account with alias "' + rule.prefix + '" already exists. '
                     "Choose a different account alias.",
                     type="warning", position="top",
                 )
                 return
             rules.append(rule)
             save_rules(rules)
+
+            # Ensure BankConfig entity exists (create if new bank)
+            banks = load_banks()
+            if not any(b.slug == _re.sub(r"[^a-z0-9]+", "_", d["bank_name"].lower()).strip("_")
+                       for b in banks):
+                banks.append(BankConfig.from_name(d["bank_name"]))
+                save_banks(banks)
 
             # Push staged CSV data to consolidated tables
             if state.get("staged_df") is not None:
@@ -1072,7 +1217,7 @@ def open_add_bank_wizard(on_done) -> None:
             dlg.close()
             on_done()
 
-        next_btn.on("click", save_bank)
+        next_btn.on("click", save_account)
 
     # ── Navigation ─────────────────────────────────────────────────────────────
     def _advance(step: int):
@@ -1081,7 +1226,7 @@ def open_add_bank_wizard(on_done) -> None:
 
     def go_back():
         if state["step"] > 1:
-            state["step"] -= 1
+            state["step"] = _prev_step(state["step"])
             render_step()
 
     render_step()

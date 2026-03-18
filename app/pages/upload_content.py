@@ -3,10 +3,12 @@ pages/upload_content.py  —  bank sidebar + upload zone
 """
 from __future__ import annotations
 
+import re as _re
 from nicegui import ui
 
 import services.auth as auth
 from data.bank_rules import BankRule, load_rules, save_rules
+from data.bank_config import BankConfig, load_banks, save_banks
 from services.handle_upload import handle_upload
 from services.notifications import notify
 from data.db import get_engine, get_schema
@@ -17,11 +19,13 @@ from components.bank_wizard_component import (
 )
 
 
-import re as _re
+def _slugify(name: str) -> str:
+    return _re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
+
 
 def _bank_alias(rule: BankRule) -> str:
-    """Return the human-readable account alias for a BankRule (e.g. 'Checking', 'Daily Spending')."""
-    slug   = _re.sub(r"[^a-z0-9]+", "_", rule.bank_name.strip().lower()).strip("_")
+    """Return the human-readable account alias for a BankRule."""
+    slug   = _slugify(rule.bank_name)
     prefix = rule.prefix
     if prefix.startswith(slug + "_"):
         return prefix[len(slug) + 1:].replace("_", " ").title()
@@ -42,20 +46,12 @@ def _open_transaction_search_dialog(
     payment_desc_ref: dict | None = None,
     checking_pat_ref: dict | None = None,
 ):
-    """
-    Browse transactions_debit or transactions_credit rows for a given account_key (prefix).
-    For credit accounts, each row has a copy-to button that writes into the provided input refs.
-
-    Refs are dicts with a "widget" key holding the ui.input instance,
-    e.g. {"widget": payment_desc_in}.  Pass None to hide that target.
-    """
     from sqlalchemy import text
 
     schema     = get_schema()
     engine     = get_engine()
     tbl        = f"{schema}.transactions_{'credit' if account_type == 'credit' else 'debit'}"
 
-    # Columns to display — exclude internal fields (id, person, source_file, inserted_at)
     if account_type == "credit":
         DISPLAY_COLS = ["transaction_date", "description", "debit", "credit"]
     else:
@@ -69,7 +65,6 @@ def _open_transaction_search_dialog(
     if checking_pat_ref:
         COPY_TARGETS["Checking pattern"] = checking_pat_ref
 
-    # ── Check data exists ─────────────────────────────────────────────────────
     def _has_data() -> bool:
         try:
             with engine.connect() as conn:
@@ -80,7 +75,6 @@ def _open_transaction_search_dialog(
         except Exception:
             return False
 
-    # ── Query ─────────────────────────────────────────────────────────────────
     def _query(search: str, date_from: str, date_to: str, page: int, page_size: int = 50):
         try:
             with engine.connect() as conn:
@@ -90,11 +84,9 @@ def _open_transaction_search_dialog(
                 if search:
                     where_parts.append("description ILIKE :search")
                     params["search"] = "%" + search + "%"
-
                 if date_from:
                     where_parts.append("transaction_date >= :date_from")
                     params["date_from"] = date_from
-
                 if date_to:
                     where_parts.append("transaction_date <= :date_to")
                     params["date_to"] = date_to
@@ -116,7 +108,6 @@ def _open_transaction_search_dialog(
         except Exception:
             return [], [], 0
 
-    # ── Dialog ────────────────────────────────────────────────────────────────
     with ui.dialog().props("maximized") as dlg, \
          ui.card().classes("w-full h-full rounded-none p-0 gap-0 overflow-hidden"):
 
@@ -134,7 +125,7 @@ def _open_transaction_search_dialog(
                 ui.icon("table_view").classes("text-zinc-200 text-6xl")
                 ui.label("No data yet").classes("text-lg font-semibold text-zinc-400")
                 ui.label(
-                    "Upload a CSV for this bank first, then come back to browse transactions."
+                    "Upload a CSV for this account first, then come back to browse transactions."
                 ).classes("text-sm text-zinc-400")
             dlg.open()
             return
@@ -174,12 +165,9 @@ def _open_transaction_search_dialog(
             pagination_row.clear()
 
             cols, rows, total = _query(
-                page_state["search"],
-                page_state["date_from"],
-                page_state["date_to"],
-                page_state["page"],
+                page_state["search"], page_state["date_from"],
+                page_state["date_to"], page_state["page"],
             )
-
             page_size   = 50
             total_pages = max(1, (total + page_size - 1) // page_size)
 
@@ -219,9 +207,9 @@ def _open_transaction_search_dialog(
                                                 )
                                                 desc_val = str(row[desc_idx]) if desc_idx is not None else ""
                                                 with ui.button_group().props("flat"):
-                                                    ui.button(
-                                                        icon="add_circle_outline"
-                                                    ).props("flat dense size=xs").classes("text-zinc-400 hover:text-blue-500")
+                                                    ui.button(icon="add_circle_outline") \
+                                                        .props("flat dense size=xs") \
+                                                        .classes("text-zinc-400 hover:text-blue-500")
                                                     with ui.menu().props("auto-close"):
                                                         ui.label("Copy to field:").classes(
                                                             "text-xs text-zinc-400 px-3 pt-2 pb-1 font-semibold"
@@ -230,10 +218,8 @@ def _open_transaction_search_dialog(
                                                             def make_copy(lbl=target_label, r=ref, v=desc_val):
                                                                 def _do():
                                                                     r["widget"].set_value(v)
-                                                                    notify(
-                                                                        "Copied to " + lbl,
-                                                                        type="positive", position="top"
-                                                                    )
+                                                                    notify("Copied to " + lbl,
+                                                                           type="positive", position="top")
                                                                 return _do
                                                             ui.menu_item(
                                                                 target_label + " ← " + (desc_val[:30] + "…" if len(desc_val) > 30 else desc_val),
@@ -280,11 +266,11 @@ def _open_transaction_search_dialog(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Edit / delete bank dialog
+# Edit / delete account dialog  (same as before, renamed "bank" → "account")
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
-    """Edit an existing BankRule or delete it."""
+def _open_edit_account_dialog(rule: BankRule, on_save, on_delete):
+    """Edit an existing BankRule (account) or delete it."""
     all_users    = auth.get_all_users()
     active_users = [u for u in all_users if u.is_active]
     user_opt_map: dict[str, int] = {
@@ -299,7 +285,6 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
     ]
 
     alias_display = _bank_alias(rule)
-
     is_credit = rule.account_type == "credit"
 
     with ui.dialog().props("persistent") as dlg, \
@@ -308,19 +293,19 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
         with ui.row().classes("items-center justify-between px-6 py-4 border-b border-zinc-100"):
             with ui.row().classes("items-center gap-3"):
                 ui.icon("tune").classes("text-zinc-400 text-xl")
-                ui.label("Edit bank").classes("text-base font-semibold text-zinc-800")
+                ui.label("Edit account").classes("text-base font-semibold text-zinc-800")
             ui.button(icon="close", on_click=dlg.close) \
                 .props("flat round dense").classes("text-zinc-400")
 
         with ui.scroll_area().style("max-height:70vh"):
           with ui.column().classes("px-6 py-5 gap-5 w-full"):
 
-            ui.label("Bank details") \
+            ui.label("Account details") \
                 .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
 
             with ui.column().classes("w-full gap-1"):
                 ui.label("Bank name").classes("text-sm font-medium text-zinc-700")
-                ui.label("The institution name, e.g. Citi, Wells Fargo, Capital One.") \
+                ui.label("The institution name. Changing this does not rename the raw table.") \
                     .classes("text-xs text-zinc-400")
                 bank_name_in = ui.input(value=rule.bank_name, placeholder="e.g. Citi") \
                     .classes("w-full").props("outlined dense")
@@ -328,8 +313,7 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
             with ui.column().classes("w-full gap-1"):
                 ui.label("Account alias").classes("text-sm font-medium text-zinc-700")
                 ui.label(
-                    "The alias is locked after creation — it forms part of the raw table name "
-                    "which cannot be renamed."
+                    "The alias is locked after creation — it forms part of the raw table name."
                 ).classes("text-xs text-zinc-400")
                 with ui.row().classes("w-full items-center gap-2"):
                     ui.label(alias_display or "—") \
@@ -347,8 +331,6 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
 
             with ui.column().classes("w-full gap-1"):
                 ui.label("Match type").classes("text-sm font-medium text-zinc-700")
-                ui.label('How the filename is compared. Use Contains with * for wildcards.') \
-                    .classes("text-xs text-zinc-400")
                 match_type_sel = ui.select(
                     MATCH_TYPE_OPTIONS, value=rule.match_type,
                 ).classes("w-full").props("outlined dense")
@@ -370,8 +352,7 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
                     ui.button(
                         icon="manage_search",
                         on_click=lambda r=rule: _open_transaction_search_dialog(
-                            r.prefix,
-                            r.account_type,
+                            r.prefix, r.account_type,
                             payment_cat_ref={"widget": payment_cat_in},
                             payment_desc_ref={"widget": payment_desc_in},
                             checking_pat_ref={"widget": checking_pat_in},
@@ -382,17 +363,12 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
 
                 with ui.column().classes("w-full gap-1"):
                     ui.label("Payment category value").classes("text-sm font-medium text-zinc-700")
-                    ui.label(
-                        "Category value in CSV that marks a payment/credit row, e.g. Payment/Credit."
-                    ).classes("text-xs text-zinc-400")
                     payment_cat_in = ui.input(
                         value=rule.payment_category, placeholder="e.g. Payment/Credit"
                     ).classes("w-full").props("outlined dense")
 
                 with ui.column().classes("w-full gap-1"):
                     ui.label("Payment description pattern").classes("text-sm font-medium text-zinc-700")
-                    ui.label("Substring in the description of payment rows, e.g. ONLINE PAYMENT.") \
-                        .classes("text-xs text-zinc-400")
                     payment_desc_in = ui.input(
                         value=rule.payment_description, placeholder="e.g. ONLINE PAYMENT"
                     ).classes("w-full").props("outlined dense")
@@ -400,7 +376,7 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
                 with ui.column().classes("w-full gap-1"):
                     ui.label("Checking-side payment pattern").classes("text-sm font-medium text-zinc-700")
                     ui.label(
-                        "Text in your checking account when paying this card, e.g. CAPITAL ONE. "
+                        "Text in your checking account when paying this card. "
                         "Those rows are excluded from debit spend."
                     ).classes("text-xs text-zinc-400")
                     checking_pat_in = ui.input(
@@ -414,8 +390,8 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
                 ui.label("Member name aliases") \
                     .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
                 ui.label(
-                    "Column \"" + rule.member_name_column + "\" stores the member name. "
-                    "Map raw values to registered users. Stored by user ID so renames never break data."
+                    'Column "' + rule.member_name_column + '" stores the member name. '
+                    "Map raw values to registered users."
                 ).classes("text-xs text-zinc-400")
 
                 aliases_container = ui.column().classes("w-full gap-1")
@@ -452,13 +428,7 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
 
                 render_aliases()
 
-                with ui.column().classes("w-full gap-1 mt-1"):
-                    ui.label("Add alias").classes("text-sm font-medium text-zinc-700")
-                    ui.label(
-                        "Enter the value as it appears in the member column (uppercased automatically), "
-                        "then pick the matching user."
-                    ).classes("text-xs text-zinc-400")
-                with ui.row().classes("w-full items-end gap-2"):
+                with ui.row().classes("w-full items-end gap-2 mt-1"):
                     raw_val_in = ui.input(placeholder="e.g. JOHN") \
                         .classes("flex-1").props("outlined dense")
                     user_sel = ui.select(
@@ -490,39 +460,29 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
             with ui.column().classes("w-full gap-1"):
                 ui.label("Person override (optional)").classes("text-sm font-medium text-zinc-700")
                 ui.label(
-                    "Pin every row from this bank to specific people. "
-                    "Select multiple for a shared/mutual account."
+                    "Pin every row from this account to specific people."
                 ).classes("text-xs text-zinc-400")
 
             has_override = bool(rule.person_override)
-            # Track which user IDs are selected for the override
             override_ids: set[int] = set(rule.person_override or [])
-
-            override_sw = ui.switch("Enable person override", value=has_override) \
-                .classes("text-sm")
-
+            override_sw = ui.switch("Enable person override", value=has_override).classes("text-sm")
             override_container = ui.column().classes("w-full gap-1 pl-1")
             override_container.set_visibility(has_override)
-            override_sw.on(
-                "update:model-value",
-                lambda e: override_container.set_visibility(e.args)
-            )
-
+            override_sw.on("update:model-value",
+                           lambda e: override_container.set_visibility(e.args))
             with override_container:
                 for u in active_users:
                     chk = ui.checkbox(
                         f"{u.person_name}  ({u.display_name})",
                         value=(u.id in override_ids),
                     )
-                    chk.on(
-                        "update:model-value",
-                        lambda e, uid=u.id: (
-                            override_ids.add(uid) if e.args else override_ids.discard(uid)
-                        ),
-                    )
+                    chk.on("update:model-value",
+                           lambda e, uid=u.id: (
+                               override_ids.add(uid) if e.args else override_ids.discard(uid)
+                           ))
 
         with ui.row().classes("items-center justify-between px-6 py-4 border-t border-zinc-100"):
-            ui.button("Delete bank", icon="delete_outline", on_click=lambda: _confirm_delete()) \
+            ui.button("Delete account", icon="delete_outline", on_click=lambda: _confirm_delete()) \
                 .props("flat no-caps").classes("text-red-400 text-sm")
             with ui.row().classes("gap-2"):
                 ui.button("Cancel", on_click=dlg.close) \
@@ -552,9 +512,9 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
         with ui.dialog() as confirm_dlg, \
              ui.card().classes("rounded-2xl p-0 gap-0 overflow-hidden w-80"):
             with ui.column().classes("px-6 py-5 gap-3"):
-                ui.label("Delete bank?").classes("text-base font-semibold text-zinc-800")
+                ui.label("Delete account?").classes("text-base font-semibold text-zinc-800")
                 ui.label(
-                    "This removes the rule for \"" + rule.bank_name + "\". "
+                    'This removes the rule for "' + rule.bank_name + '". '
                     "Uploaded data in the raw table is not deleted."
                 ).classes("text-sm text-zinc-500")
             with ui.row().classes("items-center justify-end gap-2 px-6 py-4 border-t border-zinc-100"):
@@ -571,34 +531,217 @@ def _open_edit_bank_dialog(rule: BankRule, on_save, on_delete):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Bank sidebar card
+# Bank settings dialog  (name + transfer patterns)
 # ─────────────────────────────────────────────────────────────────────────────
-def _bank_card(rule: BankRule, selected_ref: dict, on_select, on_edit) -> None:
-    is_sel = selected_ref["value"] == rule.prefix
-    _, acct_icon = ACCOUNT_COLORS.get(rule.account_type, ("", "account_balance"))
-    with ui.row().classes("w-full items-center gap-1"):
-        with ui.row().classes(
-            "flex-1 items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer "
-            "transition-colors border min-w-0 " +
-            ("bg-zinc-800 border-zinc-700" if is_sel
-             else "bg-white border-zinc-100 hover:bg-zinc-50")
-        ).on("click", lambda r=rule: on_select(r.prefix)):
-            ui.icon(acct_icon).classes(
-                "text-xl " + ("text-white" if is_sel else "text-zinc-400")
-            )
-            with ui.column().classes("gap-0 flex-1 min-w-0"):
-                ui.label(rule.bank_name).classes(
-                    "text-sm font-medium truncate " +
-                    ("text-white" if is_sel else "text-zinc-800")
-                )
-                alias = _bank_alias(rule)
-                if alias:
-                    ui.label(alias).classes(
-                        "text-[11px] " + ("text-zinc-300" if is_sel else "text-zinc-400")
-                    )
-        ui.button(icon="settings", on_click=lambda r=rule: on_edit(r)) \
-            .props("flat round dense") \
-            .classes("text-zinc-400 hover:text-zinc-700 shrink-0")
+
+def _open_bank_settings_dialog(bank: BankConfig, on_save, on_delete, bank_rules: list | None = None):
+    """Edit bank-level settings: name and transfer patterns."""
+    patterns: list[str] = list(bank.transfer_patterns)
+
+    with ui.dialog().props("persistent") as dlg, \
+         ui.card().classes("w-[520px] rounded-2xl p-0 gap-0 overflow-hidden"):
+
+        with ui.row().classes("items-center justify-between px-6 py-4 border-b border-zinc-100"):
+            with ui.row().classes("items-center gap-3"):
+                ui.icon("account_balance").classes("text-zinc-400 text-xl")
+                ui.label("Bank settings").classes("text-base font-semibold text-zinc-800")
+            ui.button(icon="close", on_click=dlg.close) \
+                .props("flat round dense").classes("text-zinc-400")
+
+        with ui.scroll_area().style("max-height:70vh"):
+          with ui.column().classes("px-6 py-5 gap-5 w-full"):
+
+            ui.label("Bank details") \
+                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
+
+            with ui.column().classes("w-full gap-1"):
+                ui.label("Bank name").classes("text-sm font-medium text-zinc-700")
+                ui.label("Display name for this bank — does not affect table names.") \
+                    .classes("text-xs text-zinc-400")
+                name_in = ui.input(value=bank.name, placeholder="e.g. Capital One") \
+                    .classes("w-full").props("outlined dense")
+
+            ui.label("slug: " + bank.slug) \
+                .classes("text-xs font-mono text-zinc-400 bg-zinc-50 "
+                         "border border-zinc-200 rounded px-2 py-1")
+
+            ui.separator()
+            ui.label("Transfer exclusion patterns") \
+                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
+            ui.label(
+                "Transactions whose descriptions contain any of these patterns "
+                "are excluded from spend and income totals across all accounts at this bank. "
+                "Use for inter-account transfers (e.g. TRANSFER, ZELLE)."
+            ).classes("text-xs text-zinc-400")
+
+            chips_container = ui.row().classes("flex-wrap gap-2 min-h-8")
+            new_pat_in = ui.input(placeholder="e.g. TRANSFER") \
+                .classes("w-full").props("outlined dense")
+
+            @ui.refreshable
+            def render_chips():
+                chips_container.clear()
+                with chips_container:
+                    if not patterns:
+                        ui.label("No patterns yet.") \
+                            .classes("text-xs text-zinc-400 italic py-1")
+                        return
+                    for i, pat in enumerate(patterns):
+                        with ui.row().classes(
+                            "items-center gap-1 px-2.5 py-1 rounded-full border "
+                            "bg-zinc-50 border-zinc-200 text-zinc-700 text-xs"
+                        ):
+                            ui.label(pat).classes("font-mono")
+                            ui.button(
+                                icon="close",
+                                on_click=lambda _, idx=i: (
+                                    patterns.pop(idx),
+                                    render_chips.refresh()
+                                )
+                            ).props("flat round dense size=xs").classes("text-zinc-400 -mr-1")
+
+            render_chips()
+
+            def add_pattern():
+                val = new_pat_in.value.strip().upper()
+                if not val:
+                    return
+                if val in patterns:
+                    notify("Pattern already exists.", type="warning", position="top")
+                    return
+                patterns.append(val)
+                new_pat_in.set_value("")
+                render_chips.refresh()
+
+            with ui.row().classes("w-full gap-2 items-end"):
+                new_pat_in.on("keydown.enter", lambda _: add_pattern())
+                ui.button("Add", icon="add", on_click=add_pattern) \
+                    .props("unelevated dense no-caps") \
+                    .classes("bg-zinc-800 text-white rounded-lg px-3")
+
+        with ui.row().classes("items-center justify-between px-6 py-4 border-t border-zinc-100"):
+            ui.button("Delete bank", icon="delete_outline", on_click=lambda: _confirm_delete()) \
+                .props("flat no-caps").classes("text-red-400 text-sm")
+            with ui.row().classes("gap-2"):
+                ui.button("Cancel", on_click=dlg.close) \
+                    .props("flat no-caps").classes("text-zinc-500")
+                ui.button("Save", icon="check", on_click=lambda: _save()) \
+                    .props("unelevated no-caps") \
+                    .classes("bg-zinc-800 text-white px-4 rounded-lg")
+
+    def _save():
+        new_name = name_in.value.strip()
+        if not new_name:
+            notify("Bank name is required.", type="warning", position="top")
+            return
+        bank.name             = new_name
+        bank.transfer_patterns = list(patterns)
+        dlg.close()
+        on_save(bank)
+
+    def _confirm_delete():
+        affected = bank_rules or []
+        with ui.dialog() as confirm_dlg, \
+             ui.card().classes("rounded-2xl p-0 gap-0 overflow-hidden w-80"):
+            with ui.column().classes("px-6 py-5 gap-3"):
+                ui.label("Delete bank?").classes("text-base font-semibold text-zinc-800")
+                if affected:
+                    aliases = [_bank_alias(r) or r.prefix for r in affected]
+                    acct_list = ", ".join(aliases)
+                    ui.label(
+                        f'"{bank.name}" has {len(affected)} account(s): {acct_list}. '
+                        "Deleting the bank will also remove these account configurations. "
+                        "Uploaded transaction data is not affected."
+                    ).classes("text-sm text-zinc-500")
+                else:
+                    ui.label(
+                        f'Remove the bank "{bank.name}"? '
+                        "No accounts are configured under it."
+                    ).classes("text-sm text-zinc-500")
+            with ui.row().classes("items-center justify-end gap-2 px-6 py-4 border-t border-zinc-100"):
+                ui.button("Cancel", on_click=confirm_dlg.close) \
+                    .props("flat no-caps").classes("text-zinc-500")
+                ui.button(
+                    "Delete", icon="delete",
+                    on_click=lambda: (confirm_dlg.close(), dlg.close(), on_delete(bank, affected))
+                ).props("unelevated no-caps") \
+                 .classes("bg-red-500 text-white px-4 rounded-lg")
+        confirm_dlg.open()
+
+    dlg.open()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Create bank dialog  (quick — just a name)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _open_create_bank_dialog(on_save):
+    with ui.dialog().props("persistent") as dlg, \
+         ui.card().classes("w-96 rounded-2xl p-0 gap-0 overflow-hidden"):
+
+        with ui.row().classes("items-center justify-between px-6 py-4 border-b border-zinc-100"):
+            with ui.row().classes("items-center gap-3"):
+                ui.icon("add_card").classes("text-zinc-400 text-xl")
+                ui.label("Add bank").classes("text-base font-semibold text-zinc-800")
+            ui.button(icon="close", on_click=dlg.close) \
+                .props("flat round dense").classes("text-zinc-400")
+
+        with ui.column().classes("px-6 py-5 gap-3 w-full"):
+            ui.label("Bank name").classes("text-sm font-medium text-zinc-700")
+            ui.label("The institution name, e.g. Chase, Capital One, Citi.") \
+                .classes("text-xs text-zinc-400")
+            name_in = ui.input(placeholder="e.g. Chase") \
+                .classes("w-full").props("outlined dense autofocus")
+
+        with ui.row().classes("items-center justify-end gap-2 px-6 py-4 border-t border-zinc-100"):
+            ui.button("Cancel", on_click=dlg.close) \
+                .props("flat no-caps").classes("text-zinc-500")
+            ui.button("Create bank", icon="add", on_click=lambda: _create()) \
+                .props("unelevated no-caps") \
+                .classes("bg-zinc-800 text-white px-4 rounded-lg")
+
+    def _create():
+        name = name_in.value.strip()
+        if not name:
+            notify("Bank name is required.", type="warning", position="top")
+            return
+        banks = load_banks()
+        slug  = _slugify(name)
+        if any(b.slug == slug for b in banks):
+            notify(f'A bank named "{name}" already exists.', type="warning", position="top")
+            return
+        new_bank = BankConfig.from_name(name)
+        banks.append(new_bank)
+        save_banks(banks)
+        notify(f"Bank \"{name}\" created.", type="positive", position="top")
+        dlg.close()
+        on_save(new_bank)
+
+    dlg.open()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sidebar helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_bank_for_rule(rule: BankRule, banks: list[BankConfig]) -> BankConfig | None:
+    """Find the BankConfig that owns this rule (matched by bank_name slug)."""
+    rule_slug = _slugify(rule.bank_name)
+    return next((b for b in banks if b.slug == rule_slug), None)
+
+
+def _ensure_banks_for_rules(rules: list[BankRule]) -> list[BankConfig]:
+    """Load banks; auto-create BankConfig entries for any banks implied by rules."""
+    banks = load_banks()
+    changed = False
+    for rule in rules:
+        slug = _slugify(rule.bank_name)
+        if not any(b.slug == slug for b in banks):
+            banks.append(BankConfig.from_name(rule.bank_name))
+            changed = True
+    if changed:
+        save_banks(banks)
+    return banks
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -616,14 +759,13 @@ def content() -> None:
         cur = auth.get_user_by_id(auth.current_user_id())
         active_users = [cur] if cur else []
 
-    # {user_id: display_label} for the radio
     person_options  = {u.id: u.person_name for u in active_users}
     default_user_id = auth.current_user_id() or (active_users[0].id if active_users else None)
     person_ref["value"] = default_user_id
 
     with ui.row().classes("w-full items-center justify-between mb-2"):
         with ui.column().classes("gap-0"):
-            ui.label("Data uploader").classes("page-title")
+            ui.label("Banks").classes("page-title")
             ui.label(
                 "Upload the latest data from your bank account and update your dashboard."
             ).classes("text-sm text-muted")
@@ -632,9 +774,15 @@ def content() -> None:
 
     @ui.refreshable
     def page_body():
-        rules = load_rules()
+        rules = load_rules() or []
+        banks = _ensure_banks_for_rules(rules)
 
-        if not rules:
+        def _select(prefix: str):
+            selected_ref["value"] = prefix
+            page_body.refresh()
+
+        # ── Empty state ──────────────────────────────────────────────────────
+        if not banks:
             with ui.column().classes("w-full items-center justify-center py-24 gap-5"):
                 ui.icon("account_balance").classes("text-zinc-200 text-7xl")
                 ui.label("No banks configured yet") \
@@ -642,30 +790,79 @@ def content() -> None:
                 ui.label("Add your first bank to start uploading transactions.") \
                     .classes("text-sm text-zinc-400")
                 ui.button(
-                    "Add your first bank", icon="add_card",
-                    on_click=lambda: open_add_bank_wizard(on_done=page_body.refresh),
+                    "Add bank", icon="add_card",
+                    on_click=lambda: _open_create_bank_dialog(
+                        on_save=lambda b: open_add_bank_wizard(
+                            on_done=page_body.refresh,
+                            preselected_bank_slug=b.slug,
+                        )
+                    ),
                 ).props("unelevated no-caps") \
                  .classes("bg-zinc-800 text-white px-6 rounded-xl mt-2")
             return
 
-        def _select(prefix: str):
-            selected_ref["value"] = prefix
-            page_body.refresh()
+        # ── Callbacks ────────────────────────────────────────────────────────
+        def _edit_account(r: BankRule):
+            def on_save(updated: BankRule):
+                all_rules = load_rules()
+                idx = next(
+                    (i for i, x in enumerate(all_rules) if x.prefix == r.prefix), None
+                )
+                if idx is not None:
+                    all_rules[idx] = updated
+                else:
+                    all_rules.append(updated)
+                save_rules(all_rules)
+                notify("Saved: " + updated.bank_name, type="positive", position="top")
+                page_body.refresh()
+
+            def on_delete(deleted: BankRule):
+                all_rules = load_rules()
+                all_rules = [x for x in all_rules if x.prefix != deleted.prefix]
+                save_rules(all_rules)
+                notify("Deleted: " + deleted.bank_name, type="info", position="top")
+                page_body.refresh()
+
+            _open_edit_account_dialog(r, on_save=on_save, on_delete=on_delete)
+
+        def _edit_bank(b: BankConfig):
+            b_rules = [r for r in rules if _slugify(r.bank_name) == b.slug]
+
+            def on_save(updated: BankConfig):
+                all_banks = load_banks()
+                idx = next((i for i, x in enumerate(all_banks) if x.slug == b.slug), None)
+                if idx is not None:
+                    all_banks[idx] = updated
+                else:
+                    all_banks.append(updated)
+                save_banks(all_banks)
+                notify("Saved: " + updated.name, type="positive", position="top")
+                page_body.refresh()
+
+            def on_delete(deleted: BankConfig, affected_rules: list):
+                all_banks = load_banks()
+                all_banks = [x for x in all_banks if x.slug != deleted.slug]
+                save_banks(all_banks)
+                if affected_rules:
+                    dead_prefixes = {r.prefix for r in affected_rules}
+                    all_rules = load_rules()
+                    save_rules([r for r in all_rules if r.prefix not in dead_prefixes])
+                notify("Deleted: " + deleted.name, type="info", position="top")
+                page_body.refresh()
+
+            _open_bank_settings_dialog(b, on_save=on_save, on_delete=on_delete, bank_rules=b_rules)
 
         with ui.row().classes("w-full gap-5 items-start"):
 
-            # Sidebar
+            # ── Sidebar ──────────────────────────────────────────────────────
             with ui.column().classes(
-                "gap-1 shrink-0 w-52 bg-zinc-50 rounded-xl border border-zinc-100 p-2"
+                "gap-0 shrink-0 w-56 bg-zinc-50 rounded-xl border border-zinc-100 p-2"
             ):
-                ui.label("Banks").classes(
-                    "text-[11px] font-semibold text-zinc-400 uppercase "
-                    "tracking-wide px-2 pt-1 pb-0.5"
-                )
+                # Auto-detect entry
                 is_auto = selected_ref["value"] == "auto"
                 with ui.row().classes(
                     "w-full flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer "
-                    "transition-colors border " +
+                    "transition-colors border mb-1 " +
                     ("bg-zinc-800 border-zinc-700" if is_auto
                      else "bg-white border-zinc-100 hover:bg-zinc-50")
                 ).on("click", lambda: _select("auto")):
@@ -677,44 +874,78 @@ def content() -> None:
                         ("text-white" if is_auto else "text-zinc-700")
                     )
 
-                ui.separator().classes("my-1")
+                ui.separator().classes("mb-1")
 
-                def _edit(r: BankRule):
-                    def on_save(updated: BankRule):
-                        all_rules = load_rules()
-                        idx = next(
-                            (i for i, x in enumerate(all_rules)
-                             if x.bank_name == updated.bank_name or x.prefix == r.prefix),
-                            None
+                # Grouped by bank
+                for bank in banks:
+                    bank_rules = [r for r in rules if _slugify(r.bank_name) == bank.slug]
+
+                    # Bank row
+                    with ui.row().classes("w-full items-center gap-1 px-1 py-0.5"):
+                        ui.label(bank.name).classes(
+                            "text-[11px] font-semibold text-zinc-500 uppercase "
+                            "tracking-wide flex-1 truncate px-1"
                         )
-                        if idx is not None:
-                            all_rules[idx] = updated
-                        else:
-                            all_rules.append(updated)
-                        save_rules(all_rules)
-                        notify("Saved: " + updated.bank_name, type="positive", position="top")
-                        page_body.refresh()
+                        ui.button(
+                            icon="settings",
+                            on_click=lambda b=bank: _edit_bank(b)
+                        ).props("flat round dense size=xs") \
+                         .classes("text-zinc-300 hover:text-zinc-600 shrink-0")
 
-                    def on_delete(deleted: BankRule):
-                        all_rules = load_rules()
-                        all_rules = [x for x in all_rules if x.prefix != deleted.prefix]
-                        save_rules(all_rules)
-                        notify("Deleted: " + deleted.bank_name, type="info", position="top")
-                        page_body.refresh()
+                    # Account entries
+                    for rule in bank_rules:
+                        is_sel = selected_ref["value"] == rule.prefix
+                        _, acct_icon = ACCOUNT_COLORS.get(rule.account_type, ("", "account_balance"))
+                        alias = _bank_alias(rule)
 
-                    _open_edit_bank_dialog(r, on_save=on_save, on_delete=on_delete)
+                        with ui.row().classes(
+                            "w-full items-center gap-2 px-2 py-2 rounded-lg cursor-pointer "
+                            "transition-colors border min-w-0 pl-4 " +
+                            ("bg-zinc-800 border-zinc-700" if is_sel
+                             else "bg-white border-zinc-100 hover:bg-zinc-50")
+                        ).on("click", lambda r=rule: _select(r.prefix)):
+                            ui.icon(acct_icon).classes(
+                                "text-base shrink-0 " +
+                                ("text-white" if is_sel else "text-zinc-400")
+                            )
+                            ui.label(alias or rule.bank_name).classes(
+                                "text-sm truncate flex-1 " +
+                                ("text-white" if is_sel else "text-zinc-700")
+                            )
+                            ui.button(icon="settings") \
+                             .props("flat round dense size=sm " +
+                                    ("color=white" if is_sel else "color=grey-6")) \
+                             .classes("shrink-0 opacity-60 hover:opacity-100") \
+                             .on("click.stop", lambda e, r=rule: _edit_account(r))
 
-                for rule in rules:
-                    _bank_card(rule, selected_ref, _select, on_edit=_edit)
+                    # + Add Account
+                    ui.button(
+                        "Add account", icon="add",
+                        on_click=lambda b=bank: open_add_bank_wizard(
+                            on_done=page_body.refresh,
+                            preselected_bank_slug=b.slug,
+                        ),
+                    ).props("flat no-caps dense") \
+                     .classes("text-zinc-400 text-xs w-full justify-start pl-5 py-1")
+
+                    if bank != banks[-1]:
+                        ui.separator().classes("my-1")
+
                 ui.separator().classes("my-1")
 
+                # + Add Bank
                 ui.button(
                     "Add bank", icon="add",
-                    on_click=lambda: open_add_bank_wizard(on_done=page_body.refresh),
+                    on_click=lambda: _open_create_bank_dialog(
+                        on_save=lambda b: open_add_bank_wizard(
+                            on_done=page_body.refresh,
+                            preselected_bank_slug=b.slug,
+                        )
+                    ),
                 ).props("flat no-caps dense") \
                  .classes("text-zinc-500 text-xs w-full justify-start px-3")
 
-            # Upload area
+            # ── Upload area ──────────────────────────────────────────────────
             with ui.column().classes("flex-1 gap-4 min-w-0"):
                 with ui.row().classes("items-center gap-3"):
                     ui.label("Person:").classes("text-sm text-zinc-500 shrink-0")

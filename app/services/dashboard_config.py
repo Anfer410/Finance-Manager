@@ -264,6 +264,32 @@ def update_widget_config(widget_id: int, config: dict) -> None:
         """), {"wid": widget_id, "cfg": json.dumps(config)})
 
 
+def restore_widgets(dashboard_id: int, snapshot: list[dict]) -> None:
+    """Full replace of widgets from a snapshot, preserving all fields including instance_label."""
+    with _engine().begin() as conn:
+        conn.execute(text(f"""
+            DELETE FROM {_schema()}.app_dashboard_widgets WHERE dashboard_id = :did
+        """), {"did": dashboard_id})
+        for w in snapshot:
+            conn.execute(text(f"""
+                INSERT INTO {_schema()}.app_dashboard_widgets
+                    (dashboard_id, chart_id, position, col_span, row_span,
+                     col_start, row_start, config, instance_label)
+                VALUES (:did, :cid, :pos, :cs, :rs, :cst, :rst,
+                        CAST(:cfg AS jsonb), :lbl)
+            """), {
+                "did": dashboard_id,
+                "cid": w["chart_id"],
+                "pos": w["position"],
+                "cs":  w["col_span"],
+                "rs":  w["row_span"],
+                "cst": w["col_start"],
+                "rst": w["row_start"],
+                "cfg": json.dumps(w["config"]),
+                "lbl": w.get("instance_label"),
+            })
+
+
 def update_widget_label(widget_id: int, label: str | None) -> None:
     """Set or clear the custom instance label for a widget."""
     with _engine().begin() as conn:

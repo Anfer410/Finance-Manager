@@ -260,7 +260,10 @@ def content() -> None:
         else:
             _title = 'New Chart'
         title_lbl = ui.label(_title).classes('text-2xl font-bold text-zinc-900')
-        ui.button('Save', icon='save', on_click=_open_save_dialog).props('unelevated color=primary')
+        with ui.row().classes('items-center gap-2'):
+            ui.button('Cancel', on_click=lambda: ui.navigate.to('/charts')) \
+                .props('flat no-caps').classes('text-zinc-500')
+            ui.button('Save', icon='save', on_click=_open_save_dialog).props('unelevated color=primary')
 
     # ── Three-panel splitter layout ───────────────────────────────────────────
     with ui.splitter(value=20).classes('w-full flex-1 px-6 pb-6').props('disable') as outer_split:

@@ -15,6 +15,7 @@ from services.dashboard_config import (
     get_or_create_default, list_dashboards, create_dashboard,
     delete_dashboard, rename_dashboard,
     add_widget, update_widget_config, update_widget_label,
+    get_widgets, restore_widgets,
 )
 from services.dashboard_grid_layout import (
     set_col_span, set_row_span, apply_move,
@@ -58,6 +59,7 @@ def content() -> None:
         'category':            None,
         'edit_mode':           False,
         'active_dashboard_id': get_or_create_default(user_id),
+        'edit_snapshot':       None,   # widget snapshot taken when entering edit mode
     }
 
     # ── Drag-to-move/resize event bus ─────────────────────────────────────────
@@ -111,6 +113,9 @@ def content() -> None:
 
             edit_btn = ui.button('Edit Dashboard', icon='edit', on_click=lambda: _toggle_edit()) \
                 .props('flat no-caps').classes('text-zinc-500')
+            cancel_btn = ui.button('Cancel', icon='close', on_click=lambda: _cancel_edit()) \
+                .props('flat no-caps').classes('text-zinc-400')
+            cancel_btn.set_visibility(False)
 
     ui.element('div').classes('divider mb-2')
 
@@ -280,8 +285,25 @@ def content() -> None:
 
     def _toggle_edit() -> None:
         state['edit_mode'] = not state['edit_mode']
+        if state['edit_mode']:
+            state['edit_snapshot'] = get_widgets(state['active_dashboard_id'])
+        else:
+            state['edit_snapshot'] = None
         edit_btn.set_text('Done' if state['edit_mode'] else 'Edit Dashboard')
         edit_btn.props('icon=check_circle' if state['edit_mode'] else 'icon=edit')
+        cancel_btn.set_visibility(state['edit_mode'])
+        dashboard_tabs.refresh()
+        dashboard_grid.refresh(state['year'])
+        edit_fab.refresh()
+
+    def _cancel_edit() -> None:
+        if state['edit_snapshot'] is not None:
+            restore_widgets(state['active_dashboard_id'], state['edit_snapshot'])
+        state['edit_mode'] = False
+        state['edit_snapshot'] = None
+        edit_btn.set_text('Edit Dashboard')
+        edit_btn.props('icon=edit')
+        cancel_btn.set_visibility(False)
         dashboard_tabs.refresh()
         dashboard_grid.refresh(state['year'])
         edit_fab.refresh()

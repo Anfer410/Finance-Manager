@@ -132,6 +132,14 @@ def content() -> None:
             state['date_from']       = cfg.get('date_from', '')
             state['date_to']         = cfg.get('date_to', '')
             state['overlay_series']  = cfg.get('overlay_series', [])
+    else:
+        # ── Clone from a built-in widget (pre-fill chart type + name) ──────
+        clone_type = app.storage.user.pop('chart_builder_clone_type', None)
+        clone_name = app.storage.user.pop('chart_builder_clone_name', None)
+        if clone_type:
+            state['chart_type'] = clone_type
+        if clone_name:
+            state['chart_name'] = clone_name
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -245,9 +253,13 @@ def content() -> None:
 
     # ── Header row ────────────────────────────────────────────────────────────
     with ui.row().classes('w-full items-center justify-between mb-4 px-6 pt-6'):
-        title_lbl = ui.label(
-            'Edit Chart' if state['editing_id'] else 'New Chart'
-        ).classes('text-2xl font-bold text-zinc-900')
+        if state['editing_id']:
+            _title = 'Edit Chart'
+        elif state['chart_name']:
+            _title = f'New Chart — {state["chart_name"]}'
+        else:
+            _title = 'New Chart'
+        title_lbl = ui.label(_title).classes('text-2xl font-bold text-zinc-900')
         ui.button('Save', icon='save', on_click=_open_save_dialog).props('unelevated color=primary')
 
     # ── Three-panel splitter layout ───────────────────────────────────────────

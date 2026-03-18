@@ -801,8 +801,11 @@ def content() -> None:
         )
 
     def _add_widget_dialog() -> None:
-        # All widgets are always available — multiple copies of the same widget are allowed
-        available = list(REGISTRY)
+        from itertools import groupby
+        from services.custom_chart_repo import list_custom_charts
+
+        available     = list(REGISTRY)
+        custom_charts = list_custom_charts(user_id)
 
         with ui.dialog() as dlg, \
              ui.card().classes('w-[520px] rounded-2xl p-0 gap-0 overflow-hidden'):
@@ -811,28 +814,63 @@ def content() -> None:
                 ui.label('Add Widget').classes('text-base font-semibold text-zinc-800')
                 ui.button(icon='close', on_click=dlg.close).props('flat round dense').classes('text-zinc-400')
 
-            with ui.scroll_area().style('height:420px'):
-                with ui.column().classes('w-full px-4 py-3 gap-1'):
-                    from itertools import groupby
-                    for category, charts in groupby(available, key=lambda c: c.category):
-                        ui.label(category.title()) \
-                            .classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide mt-3 mb-1')
-                        for chart_def in charts:
-                            with ui.row().classes(
-                                'items-center justify-between py-2 px-3 rounded-lg '
-                                'hover:bg-zinc-50 w-full'
-                            ):
-                                with ui.row().classes('items-center gap-3'):
-                                    ui.icon(chart_def.icon) \
-                                        .classes('text-zinc-400').style('font-size:1.3rem')
-                                    with ui.column().classes('gap-0'):
-                                        ui.label(chart_def.title).classes('text-sm font-medium')
-                                        ui.label(chart_def.description).classes('text-xs text-muted')
+            with ui.tabs().classes('px-4 border-b border-zinc-100') as tabs:
+                tab_builtin = ui.tab('Built-in')
+                tab_custom  = ui.tab(f'Custom ({len(custom_charts)})')
+
+            with ui.tab_panels(tabs, value=tab_builtin).classes('w-full'):
+
+                with ui.tab_panel(tab_builtin):
+                    with ui.scroll_area().style('height:380px'):
+                        with ui.column().classes('w-full px-4 py-3 gap-1'):
+                            for category, charts in groupby(available, key=lambda c: c.category):
+                                ui.label(category.title()) \
+                                    .classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide mt-3 mb-1')
+                                for chart_def in charts:
+                                    with ui.row().classes(
+                                        'items-center justify-between py-2 px-3 rounded-lg '
+                                        'hover:bg-zinc-50 w-full'
+                                    ):
+                                        with ui.row().classes('items-center gap-3'):
+                                            ui.icon(chart_def.icon) \
+                                                .classes('text-zinc-400').style('font-size:1.3rem')
+                                            with ui.column().classes('gap-0'):
+                                                ui.label(chart_def.title).classes('text-sm font-medium')
+                                                ui.label(chart_def.description).classes('text-xs text-muted')
+                                        ui.button(
+                                            'Add',
+                                            on_click=lambda _, cd=chart_def: _do_add_widget(cd, dlg),
+                                        ).props('unelevated dense no-caps size=sm') \
+                                         .classes('bg-zinc-800 text-white px-3')
+
+                with ui.tab_panel(tab_custom):
+                    with ui.scroll_area().style('height:380px'):
+                        with ui.column().classes('w-full px-4 py-3 gap-1'):
+                            if not custom_charts:
+                                ui.label('No custom charts yet.') \
+                                    .classes('text-sm text-zinc-400 py-2')
                                 ui.button(
-                                    'Add',
-                                    on_click=lambda _, cd=chart_def: _do_add_widget(cd, dlg),
-                                ).props('unelevated dense no-caps size=sm') \
-                                 .classes('bg-zinc-800 text-white px-3')
+                                    'Create a chart',
+                                    icon='add',
+                                    on_click=lambda: ui.navigate.to('/chart-builder'),
+                                ).props('flat dense').classes('text-primary text-sm')
+                            else:
+                                for rec in custom_charts:
+                                    with ui.row().classes(
+                                        'items-center justify-between py-2 px-3 rounded-lg '
+                                        'hover:bg-zinc-50 w-full'
+                                    ):
+                                        with ui.row().classes('items-center gap-3'):
+                                            ui.icon('bar_chart') \
+                                                .classes('text-zinc-400').style('font-size:1.3rem')
+                                            with ui.column().classes('gap-0'):
+                                                ui.label(rec['name']).classes('text-sm font-medium')
+                                                ui.label(rec['chart_type']).classes('text-xs text-muted')
+                                        ui.button(
+                                            'Add',
+                                            on_click=lambda _, r=rec: _do_add_custom_widget(r, dlg),
+                                        ).props('unelevated dense no-caps size=sm') \
+                                         .classes('bg-zinc-800 text-white px-3')
 
         dlg.open()
 
@@ -842,6 +880,16 @@ def content() -> None:
             chart_def.id,
             col_span=chart_def.default_col_span,
             row_span=chart_def.default_row_span,
+        )
+        dashboard_grid.refresh(state['year'])
+        dlg.close()
+
+    def _do_add_custom_widget(rec, dlg) -> None:
+        add_widget(
+            state['active_dashboard_id'],
+            f"custom:{rec['id']}",
+            col_span=2,
+            row_span=1,
         )
         dashboard_grid.refresh(state['year'])
         dlg.close()

@@ -519,6 +519,11 @@ class UploadPipeline:
         # Archive uses the pre-rename df (original CSV column names).
         # Table is named raw_<prefix> (e.g. raw_wf_checking).
         # Dedup columns are resolved against the original column names.
+        from services.config_repo import load_archive_enabled
+        if not load_archive_enabled(family_id):
+            return UploadResult(bank_name=bank_name, inserted=inserted,
+                                skipped=skipped, total=total, error=None)
+
         if mapping is not None:
             # mapping.to_dict() maps role → original col name — use the original col names
             orig_dedup_cols = [

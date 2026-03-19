@@ -5,13 +5,14 @@ Single repository for all persisted configuration.
 
 All family-scoped config functions require a `family_id` parameter.
 Pass `auth.current_family_id()` from page/component context.
-`app_settings` is instance-level (SMTP, archive) and is NOT family-scoped.
+`app_settings` is instance-level (SMTP) and is NOT family-scoped.
 
 Table layout (all in the configured schema):
     app_config_bank_rules  — family_id PK, data JSONB  {rules: [...]}
     app_config_banks       — family_id PK, data JSONB  {banks: [...]}
     app_config_categories  — family_id PK, data JSONB  {categories: [...], rules: [...]}
     app_config_transaction — family_id PK, data JSONB  {transfer_patterns, employer_patterns, member_aliases}
+    app_config_archive     — family_id PK, archive_enabled BOOLEAN
     app_settings           — key TEXT PK, value JSONB  (instance-wide k/v)
 
 Public API
@@ -27,6 +28,9 @@ Public API
 
     load_transaction_cfg(family_id)  -> dict
     save_transaction_cfg(data, family_id)
+
+    load_archive_enabled(family_id)  -> bool
+    save_archive_enabled(family_id, enabled)
 
     load_app_settings()     -> dict   (instance-wide)
     save_app_settings(data)
@@ -153,6 +157,31 @@ def load_transaction_cfg(family_id: int) -> dict:
 
 def save_transaction_cfg(data: dict, family_id: int) -> None:
     _config_set("transaction", family_id, data)
+
+
+# ── Archive config (per-family) ───────────────────────────────────────────────
+
+def load_archive_enabled(family_id: int) -> bool:
+    """Returns True if raw archive is enabled for this family. Defaults to True."""
+    try:
+        sql = f"SELECT archive_enabled FROM {_schema()}.app_config_archive WHERE family_id = :fid"
+        with _engine().connect() as conn:
+            row = conn.execute(text(sql), {"fid": family_id}).fetchone()
+        return bool(row[0]) if row is not None else True
+    except Exception as e:
+        print(f"[config_repo] load_archive_enabled (family={family_id}) failed: {e}")
+        return True
+
+
+def save_archive_enabled(family_id: int, enabled: bool) -> None:
+    sql = f"""
+        INSERT INTO {_schema()}.app_config_archive (family_id, archive_enabled, updated_at)
+        VALUES (:fid, :enabled, NOW())
+        ON CONFLICT (family_id) DO UPDATE
+            SET archive_enabled = :enabled, updated_at = NOW()
+    """
+    with _engine().begin() as conn:
+        conn.execute(text(sql), {"fid": family_id, "enabled": enabled})
 
 
 # ── App settings (instance-wide, not family-scoped) ───────────────────────────

@@ -16,6 +16,7 @@ from datetime import datetime
 from services.notifications import notify
 from services.transaction_config import load_config, save_config
 from services.raw_table_manager import default_manager
+from services.config_repo import load_archive_enabled, save_archive_enabled
 from data.bank_rules import load_rules, save_rules, BankRule
 from data.category_rules import load_category_config, save_category_config, CategoryConfig, Category, CategoryRule
 
@@ -893,9 +894,10 @@ def content() -> None:
                 .props('align=left indicator-color=zinc-800 active-color=zinc-800') as tabs:
             tab_personal = ui.tab('Personal', icon='person')
             if is_head:
-                tab_uploads = ui.tab('Uploads', icon='folder_open')
-                tab_data    = ui.tab('Data',    icon='storage')
-                tab_users   = ui.tab('Users',   icon='group')
+                tab_uploads = ui.tab('Uploads',  icon='folder_open')
+                tab_data    = ui.tab('Data',     icon='storage')
+                tab_archive = ui.tab('Archive',  icon='inventory_2')
+                tab_users   = ui.tab('Users',    icon='group')
             if is_admin:
                 tab_family = ui.tab('Family', icon='corporate_fare')
 
@@ -918,9 +920,14 @@ def content() -> None:
                     with ui.column().classes('w-full gap-6'):
                         _finance_data_export_section()
                         _finance_data_import_section()
-                        _raw_export_section()
                         _export_import_section()
                         _refresh_views_section()
+
+                # ── Archive (head+) ────────────────────────────────────────────
+                with ui.tab_panel(tab_archive):
+                    with ui.column().classes('w-full gap-6'):
+                        _archive_toggle_section()
+                        _raw_export_section()
 
                 # ── Users (head+) ─────────────────────────────────────────────
                 with ui.tab_panel(tab_users):
@@ -1436,6 +1443,48 @@ def _finance_data_import_section() -> None:
                             .classes('bg-zinc-800 text-white rounded-lg px-4')
 
             import_ui()
+
+
+# ── Archive tab ────────────────────────────────────────────────────────────────
+
+def _archive_toggle_section() -> None:
+    fid     = auth.current_family_id()
+    enabled = load_archive_enabled(fid)
+    state   = {'enabled': enabled}
+
+    with _card('Raw data archive', 'inventory_2'):
+        _section_header('Raw data archive', 'inventory_2')
+        with ui.column().classes('px-6 py-5 gap-4 w-full'):
+            ui.label(
+                'When enabled, every upload preserves the original parsed CSV rows in a '
+                'dedicated raw_<account> table. These tables power the CSV export below and '
+                'can serve as an audit trail. Disabling stops new uploads from writing to '
+                'these tables — existing data is kept until you delete it.'
+            ).classes('text-xs text-zinc-400 max-w-prose')
+
+            @ui.refreshable
+            def _toggle_row() -> None:
+                current = load_archive_enabled(fid)
+                state['enabled'] = current
+                color = 'text-green-600' if current else 'text-zinc-400'
+                label = 'Enabled' if current else 'Disabled'
+                with ui.row().classes('items-center gap-4'):
+                    sw = ui.switch('Enable raw data archive', value=current)
+                    ui.label(label).classes(f'text-sm font-medium {color}')
+
+                    def _on_change(e):
+                        save_archive_enabled(fid, e.value)
+                        _toggle_row.refresh()
+                        notify(
+                            'Archive enabled — uploads will now be stored in raw tables.' if e.value
+                            else 'Archive disabled — new uploads will skip raw table storage.',
+                            type='positive' if e.value else 'warning',
+                            position='top',
+                        )
+
+                    sw.on_value_change(_on_change)
+
+            _toggle_row()
 
 
 # ── Raw data export ────────────────────────────────────────────────────────────

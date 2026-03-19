@@ -253,6 +253,21 @@ def _create_app_tables(conn, schema: str) -> None:
     """))
 
     conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.app_config_archive (
+            family_id       INTEGER     NOT NULL PRIMARY KEY
+                            REFERENCES {schema}.families(id),
+            archive_enabled BOOLEAN     NOT NULL DEFAULT TRUE,
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    # Seed existing families that have no archive config row yet
+    conn.execute(text(f"""
+        INSERT INTO {schema}.app_config_archive (family_id, archive_enabled)
+        SELECT id, TRUE FROM {schema}.families
+        ON CONFLICT (family_id) DO NOTHING
+    """))
+
+    conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS {schema}.app_dashboards (
             id          SERIAL PRIMARY KEY,
             user_id     INTEGER NOT NULL

@@ -1,34 +1,27 @@
 """
 data.db.py
 
-Single source of truth for database connectivity and app-level settings
-(archive path, archive enabled flag).
+Single source of truth for database connectivity.
 
 Every other module imports from here instead of calling read_secrets() directly
 for DB purposes.
 
 Usage:
-    from data.db import get_engine, get_schema, get_conn_tuple, get_archive_cfg
+    from data.db import get_engine, get_schema, get_conn_tuple
 
     engine = get_engine()
     schema = get_schema()
     conn   = get_conn_tuple()   # (user, password, host, port, dbname)
-    arc    = get_archive_cfg()  # ArchiveConfig(path=..., enabled=...)
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from functools import lru_cache
 from sqlalchemy import Engine, create_engine
 from services.helpers import env
 
 
-
 # ── Connection config (from env) ──────────────────────────────────────────────
-
-
-
 
 def get_conn_tuple() -> tuple[str, str, str, int, str]:
     """Return (user, password, host, port, dbname) from environment."""
@@ -59,43 +52,3 @@ def get_psycopg_dsn() -> str:
 def get_engine() -> Engine:
     """Cached SQLAlchemy engine — one per process."""
     return create_engine(get_url())
-
-
-# ── Archive config ─────────────────────────────────────────────────────────────
-
-@dataclass
-class ArchiveConfig:
-    path:    str  = ".archive"
-    enabled: bool = True
-
-    def to_dict(self) -> dict:
-        return {"path": self.path, "enabled": self.enabled}
-
-    @staticmethod
-    def from_dict(d: dict) -> "ArchiveConfig":
-        return ArchiveConfig(
-            path    = d.get("path",    ".archive"),
-            enabled = d.get("enabled", True),
-        )
-
-
-def get_archive_cfg() -> ArchiveConfig:
-    """
-    Returns archive config.  Priority:
-      1. DB (app_settings table, key='archive') — set via Settings UI
-      2. Environment variables (ARCHIVES_FOLDER, ARCHIVE_ENABLED)
-      3. Defaults
-    """
-    try:
-        from services.config_repo import load_app_settings
-        data = load_app_settings()
-        arc = data.get("archive")
-        if arc is not None:
-            return ArchiveConfig.from_dict(arc)
-    except Exception:
-        pass
-
-    return ArchiveConfig(
-        path    = env("ARCHIVES_FOLDER",  ".archive"),
-        enabled = env("ARCHIVE_ENABLED",  "true").lower() not in ("false", "0", "no"),
-    )

@@ -552,7 +552,7 @@ class UploadPipeline:
         # ── 6. Refresh views ──────────────────────────────────────────────────
         try:
             vm = default_view_manager()
-            vm.refresh(family_id)
+            vm.refresh()
         except Exception as ex:
             print(f"[UploadPipeline] view refresh failed: {ex}")
 

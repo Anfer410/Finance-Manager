@@ -1209,7 +1209,7 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                         source_file = state["filename"],
                     )
                     print(f"[Wizard] committed {inserted} rows from staged data")
-                    default_view_manager().refresh(fid)
+                    default_view_manager().refresh()
                 except Exception as ex:
                     print(f"[Wizard] staged push failed: {ex}")
 

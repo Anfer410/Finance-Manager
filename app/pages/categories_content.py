@@ -222,7 +222,7 @@ def _save(vm, cfg: CategoryConfig) -> None:
     fid = auth.current_family_id()
     save_category_config(cfg, fid)
     try:
-        vm.refresh(fid)
+        vm.refresh()
         notify('Saved & views rebuilt.', type='positive', position='top')
     except Exception as e:
         notify(f'Saved but view rebuild failed: {e}', type='warning', position='top')

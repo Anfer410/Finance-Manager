@@ -532,7 +532,7 @@ def _upload_manager_section() -> None:
                 ids = [int(v) for v in (chosen if isinstance(chosen, list) else [chosen])]
                 try:
                     reassign_persons(b['source_file'], b['account_key'], b['table_type'], ids, fid)
-                    ViewManager(get_engine(), schema=get_schema()).refresh(fid)
+                    ViewManager(get_engine(), schema=get_schema()).refresh()
                     notify('Person reassigned — views refreshed.', type='positive', position='top')
                     dlg.close()
                     on_change()
@@ -562,7 +562,7 @@ def _upload_manager_section() -> None:
             def do_delete():
                 try:
                     n = delete_batch(b['source_file'], b['account_key'], b['table_type'], fid)
-                    ViewManager(get_engine(), schema=get_schema()).refresh(fid)
+                    ViewManager(get_engine(), schema=get_schema()).refresh()
                     notify(f"Deleted {n} rows — views refreshed.", type='positive', position='top')
                     dlg.close()
                     on_change()
@@ -650,7 +650,7 @@ def _refresh_views_section() -> None:
                 try:
                     from services.view_manager import ViewManager
                     from data.db import get_engine, get_schema
-                    ViewManager(get_engine(), schema=get_schema()).refresh(auth.current_family_id())
+                    ViewManager(get_engine(), schema=get_schema()).refresh()
                     notify('Views refreshed.', type='positive', position='top')
                 except Exception as ex:
                     notify(f'Refresh failed: {ex}', type='negative', position='top')
@@ -878,71 +878,6 @@ def _create_family_dialog(on_change) -> None:
     dlg.open()
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
-
-def content() -> None:
-    is_head  = auth.is_family_head()
-    is_admin = auth.is_instance_admin()
-
-    with ui.column().classes('w-full max-w-4xl mx-auto px-4 py-6 gap-0'):
-        with ui.row().classes('items-center gap-3 mb-4'):
-            ui.icon('settings').classes('text-zinc-400 text-2xl')
-            ui.label('Settings').classes('text-2xl font-bold text-zinc-800')
-
-        # ── Tab bar ────────────────────────────────────────────────────────────
-        with ui.tabs().classes('w-full border-b border-zinc-100') \
-                .props('align=left indicator-color=zinc-800 active-color=zinc-800') as tabs:
-            tab_personal = ui.tab('Personal', icon='person')
-            if is_head:
-                tab_uploads = ui.tab('Uploads',  icon='folder_open')
-                tab_data    = ui.tab('Data',     icon='storage')
-                tab_archive = ui.tab('Archive',  icon='inventory_2')
-                tab_users   = ui.tab('Users',    icon='group')
-            if is_admin:
-                tab_family = ui.tab('Family', icon='corporate_fare')
-
-        # ── Tab panels ─────────────────────────────────────────────────────────
-        with ui.tab_panels(tabs, value=tab_personal).classes('w-full mt-6'):
-
-            # ── Personal ──────────────────────────────────────────────────────
-            with ui.tab_panel(tab_personal):
-                with ui.column().classes('w-full gap-6'):
-                    _profile_section()
-                    _employers_section()
-
-            # ── Uploads (head+) ───────────────────────────────────────────────
-            if is_head:
-                with ui.tab_panel(tab_uploads):
-                    _upload_manager_section()
-
-                # ── Data (head+) ──────────────────────────────────────────────
-                with ui.tab_panel(tab_data):
-                    with ui.column().classes('w-full gap-6'):
-                        _finance_data_export_section()
-                        _finance_data_import_section()
-                        _export_import_section()
-                        _refresh_views_section()
-
-                # ── Archive (head+) ────────────────────────────────────────────
-                with ui.tab_panel(tab_archive):
-                    with ui.column().classes('w-full gap-6'):
-                        _archive_toggle_section()
-                        _raw_export_section()
-
-                # ── Users (head+) ─────────────────────────────────────────────
-                with ui.tab_panel(tab_users):
-                    with ui.column().classes('w-full gap-6'):
-                        _family_members_section()
-                        if is_admin:
-                            _user_management_section()
-
-            # ── Family (admin only) ───────────────────────────────────────────
-            if is_admin:
-                with ui.tab_panel(tab_family):
-                    with ui.column().classes('w-full gap-6'):
-                        _all_families_section()
-
-
 # ── Data export / import ───────────────────────────────────────────────────────
 
 def _export_import_section() -> None:
@@ -1115,7 +1050,7 @@ def _export_import_section() -> None:
                             if imported:
                                 from services.view_manager import ViewManager
                                 from data.db import get_engine, get_schema
-                                ViewManager(get_engine(), schema=get_schema()).refresh(fid)
+                                ViewManager(get_engine(), schema=get_schema()).refresh()
                                 notify(f"Imported: {', '.join(imported)} — views refreshed.", type='positive', position='top')
                             else:
                                 notify('Nothing selected to import.', type='warning', position='top')
@@ -1584,3 +1519,76 @@ def _raw_export_section() -> None:
             ui.button('Download CSV', icon='download', on_click=_do_raw_download) \
                 .props('unelevated dense no-caps') \
                 .classes('bg-zinc-800 text-white rounded-lg px-3 self-start')
+            
+
+# ── Entry point ────────────────────────────────────────────────────────────────
+
+def content() -> None:
+    is_head  = auth.is_family_head()
+    is_admin = auth.is_instance_admin()
+
+    with ui.column().classes('w-full max-w-4xl mx-auto px-4 py-6 gap-0'):
+        with ui.row().classes('items-center gap-3 mb-4'):
+            ui.icon('settings').classes('text-zinc-400 text-2xl')
+            ui.label('Settings').classes('text-2xl font-bold text-zinc-800')
+
+        # ── Tab bar ────────────────────────────────────────────────────────────
+        with ui.tabs().classes('w-full border-b border-zinc-100') \
+                .props('align=left indicator-color=zinc-800 active-color=zinc-800') as tabs:
+            tab_personal = ui.tab('Personal', icon='person')
+            if is_head:
+                tab_users   = ui.tab('Users',    icon='group')
+            if is_admin:
+                tab_family = ui.tab('Family', icon='corporate_fare')
+            if is_head:
+                tab_uploads = ui.tab('Uploads',  icon='folder_open')
+                tab_data    = ui.tab('Data',     icon='storage')
+                tab_archive = ui.tab('Archive',  icon='inventory_2')
+            
+
+        # ── Tab panels ─────────────────────────────────────────────────────────
+        with ui.tab_panels(tabs, value=tab_personal).classes('w-full mt-6'):
+
+            # ── Personal ──────────────────────────────────────────────────────
+            with ui.tab_panel(tab_personal):
+                with ui.column().classes('w-full gap-6'):
+                    _profile_section()
+                    _employers_section()
+            
+            if is_head:
+                # ── Users (head+) ─────────────────────────────────────────────
+                with ui.tab_panel(tab_users):
+                    with ui.column().classes('w-full gap-6'):
+                        _family_members_section()
+                        if is_admin:
+                            _user_management_section()
+                
+                
+            if is_admin:
+                # ── Family (admin only) ───────────────────────────────────────────
+                with ui.tab_panel(tab_family):
+                    with ui.column().classes('w-full gap-6'):
+                        _all_families_section()
+            
+            if is_head:
+                # ── Uploads (head+) ───────────────────────────────────────────────    
+                with ui.tab_panel(tab_uploads):
+                    _upload_manager_section()
+
+                # ── Data (head+) ──────────────────────────────────────────────
+                with ui.tab_panel(tab_data):
+                    with ui.column().classes('w-full gap-6'):
+                        _finance_data_export_section()
+                        _finance_data_import_section()
+                        _export_import_section()
+                        _refresh_views_section()
+
+                # ── Archive (head+) ────────────────────────────────────────────
+                with ui.tab_panel(tab_archive):
+                    with ui.column().classes('w-full gap-6'):
+                        _archive_toggle_section()
+                        _raw_export_section()
+
+
+
+

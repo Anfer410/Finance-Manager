@@ -13,54 +13,105 @@ Views produced:
   v_income            — checking inflows (positive amount, transfers excluded)
   v_all_spend         — UNION ALL of v_credit_spend + v_debit_spend
 
-Because all rows are already normalised at upload time (account_key, date,
-description, debit/credit or amount, person), the views are simple WHERE
-filters + CASE expressions — no per-bank column sniffing needed.
+Multi-family design
+───────────────────
+Views are global SQL objects that cover ALL families in one pass.  Each
+account_key branch uses that family's own category rules and transaction
+config, so categorisation is always correct per-family.
+
+Call ViewManager.refresh() — no family_id argument — after any change that
+affects view output: bank rule edits, category edits, person reassignment,
+upload, delete, or import.  The method loads every family that has bank
+rules configured and rebuilds the combined views in one transaction.
 
 Raw tables remain in the DB as archive; this file no longer touches them.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sqlalchemy import Engine, text
+
 from data.bank_rules import load_rules, BankRule
-from services.transaction_config import load_config
-from data.category_rules import load_category_config
+from services.transaction_config import load_config, TransactionConfig
+from data.category_rules import load_category_config, CategoryConfig
+
 
 def _esc(s: str) -> str:
     return s.replace("'", "''")
 
 
+@dataclass
+class _FamilyViewData:
+    """All config needed to build view branches for one family."""
+    family_id: int
+    rules:     list[BankRule]
+    cfg:       TransactionConfig
+    cfg_cat:   CategoryConfig
+
+
 class ViewManager:
-    def __init__(self, engine: Engine , schema: str = "public"):
-        self.schema     = schema
-        self.engine     = engine
+    def __init__(self, engine: Engine, schema: str = "public"):
+        self.schema = schema
+        self.engine = engine
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
-    def refresh(self, family_id: int) -> None:
-        """Rebuild all views."""
+    def refresh(self) -> None:
+        """
+        Rebuild all views covering every family that has bank rules configured.
+
+        Loads rules + configs for all families in one pass so every family's
+        account_keys appear in the view UNION ALL branches, with per-family
+        category expressions.  No family_id argument needed.
+        """
+        family_data = self._load_all_family_data()
+
         with self.engine.begin() as conn:
             for v in ("v_transactions", "v_all_spend",
                       "v_income", "v_debit_spend",
                       "v_credit_spend", "v_credit_payments"):
                 conn.execute(text(f"DROP VIEW IF EXISTS {self.schema}.{v} CASCADE"))
 
-        rules   = load_rules(family_id)
-        cfg     = load_config(family_id)
-        cfg_cat = load_category_config(family_id)
-
-        self._build_credit_payments_view(rules)
-        self._build_credit_spend_view(rules, cfg_cat)
-        self._build_debit_spend_view(rules, cfg, cfg_cat)
-        self._build_income_view(rules, cfg)
+        self._build_credit_payments_view(family_data)
+        self._build_credit_spend_view(family_data)
+        self._build_debit_spend_view(family_data)
+        self._build_income_view(family_data)
         self._build_all_spend_view()
         self._build_legacy_transactions_view()
-        print("[ViewManager] views refreshed from consolidated tables")
+
+        fam_count   = len(family_data)
+        branch_count = sum(len(fd.rules) for fd in family_data)
+        print(f"[ViewManager] views refreshed — {fam_count} familie(s), {branch_count} account_key(s)")
+
+    # ── Internal data loading ──────────────────────────────────────────────────
+
+    def _load_all_family_ids(self) -> list[int]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(f"SELECT id FROM {self.schema}.families ORDER BY id")
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def _load_all_family_data(self) -> list[_FamilyViewData]:
+        """Load rules + configs for every family that has bank rules configured."""
+        result: list[_FamilyViewData] = []
+        for fid in self._load_all_family_ids():
+            rules = load_rules(fid)
+            if not rules:
+                continue  # no bank rules → nothing to put in views
+            result.append(_FamilyViewData(
+                family_id = fid,
+                rules     = rules,
+                cfg       = load_config(fid),
+                cfg_cat   = load_category_config(fid),
+            ))
+        return result
 
     # ── Category / cost_type expressions ──────────────────────────────────────
 
-    def _category_case_expr(self, cfg_cat) -> tuple[str, str]:
+    def _category_case_expr(self, cfg_cat: CategoryConfig) -> tuple[str, str]:
         """
         Build CASE WHEN expressions for category + cost_type against
         the 'description' column (already normalised at upload time).
@@ -112,31 +163,32 @@ class ViewManager:
 
     # ── View builders ──────────────────────────────────────────────────────────
 
-    def _build_credit_payments_view(self, rules: list[BankRule]) -> None:
+    def _build_credit_payments_view(self, family_data: list[_FamilyViewData]) -> None:
         """
         Payment rows received on credit cards.
         credit > 0 AND description matches payment_description.
         """
         branches = []
-        for rule in rules:
-            if rule.account_type != "credit":
-                continue
-            pay_filter = self._payment_where(rule)
-            if not pay_filter:
-                continue
+        for fd in family_data:
+            for rule in fd.rules:
+                if rule.account_type != "credit":
+                    continue
+                pay_filter = self._payment_where(rule)
+                if not pay_filter:
+                    continue
 
-            ak = _esc(rule.prefix)
-            branches.append(
-                f"    SELECT person, transaction_date, description,\n"
-                f"           credit AS amount,\n"
-                f"           '{ak}'::TEXT AS bank,\n"
-                f"           family_id\n"
-                f"    FROM {self.schema}.transactions_credit\n"
-                f"    WHERE account_key = '{ak}'\n"
-                f"      AND credit > 0\n"
-                f"      AND credit != 'NaN'::numeric\n"
-                f"      AND {pay_filter}"
-            )
+                ak = _esc(rule.prefix)
+                branches.append(
+                    f"    SELECT person, transaction_date, description,\n"
+                    f"           credit AS amount,\n"
+                    f"           '{ak}'::TEXT AS bank,\n"
+                    f"           family_id\n"
+                    f"    FROM {self.schema}.transactions_credit\n"
+                    f"    WHERE account_key = '{ak}'\n"
+                    f"      AND credit > 0\n"
+                    f"      AND credit != 'NaN'::numeric\n"
+                    f"      AND {pay_filter}"
+                )
 
         self._create_view(
             "v_credit_payments", branches,
@@ -147,38 +199,39 @@ class ViewManager:
             ),
         )
 
-    def _build_credit_spend_view(self, rules: list[BankRule], cfg_cat) -> None:
+    def _build_credit_spend_view(self, family_data: list[_FamilyViewData]) -> None:
         """
         Real purchases on credit cards (debit > 0, payment rows excluded).
+        Each family's branches use that family's category rules.
         """
-        cat_expr, ctype_expr = self._category_case_expr(cfg_cat)
         branches = []
+        for fd in family_data:
+            cat_expr, ctype_expr = self._category_case_expr(fd.cfg_cat)
+            for rule in fd.rules:
+                if rule.account_type != "credit":
+                    continue
 
-        for rule in rules:
-            if rule.account_type != "credit":
-                continue
+                ak         = _esc(rule.prefix)
+                pay_filter = self._payment_where(rule)
+                bank_label = rule.bank_name.replace("'", "''")
 
-            ak         = _esc(rule.prefix)
-            pay_filter = self._payment_where(rule)
-            bank_label = rule.bank_name.replace("'", "''")
-
-            excl = f"\n      AND NOT {pay_filter}" if pay_filter else ""
-            branches.append(
-                f"    SELECT person,\n"
-                f"           transaction_date,\n"
-                f"           description,\n"
-                f"           debit AS amount,\n"
-                f"           '{bank_label}'::TEXT AS bank,\n"
-                f"           ({cat_expr}) AS category,\n"
-                f"           ({ctype_expr}) AS cost_type,\n"
-                f"           account_key AS source_bank,\n"
-                f"           family_id\n"
-                f"    FROM {self.schema}.transactions_credit\n"
-                f"    WHERE account_key = '{ak}'\n"
-                f"      AND debit > 0\n"
-                f"      AND debit != 'NaN'::numeric"
-                f"{excl}"
-            )
+                excl = f"\n      AND NOT {pay_filter}" if pay_filter else ""
+                branches.append(
+                    f"    SELECT person,\n"
+                    f"           transaction_date,\n"
+                    f"           description,\n"
+                    f"           debit AS amount,\n"
+                    f"           '{bank_label}'::TEXT AS bank,\n"
+                    f"           ({cat_expr}) AS category,\n"
+                    f"           ({ctype_expr}) AS cost_type,\n"
+                    f"           account_key AS source_bank,\n"
+                    f"           family_id\n"
+                    f"    FROM {self.schema}.transactions_credit\n"
+                    f"    WHERE account_key = '{ak}'\n"
+                    f"      AND debit > 0\n"
+                    f"      AND debit != 'NaN'::numeric"
+                    f"{excl}"
+                )
 
         self._create_view(
             "v_credit_spend", branches,
@@ -191,85 +244,81 @@ class ViewManager:
             ),
         )
 
-    def _build_debit_spend_view(
-        self, rules: list[BankRule], cfg, cfg_cat
-    ) -> None:
+    def _build_debit_spend_view(self, family_data: list[_FamilyViewData]) -> None:
         """
-        Checking outflows:
-          amount < 0 (negative = outflow in checking convention)
-          EXCLUDING:
-            1. Transfer patterns
-            2. Employer income patterns
-            3. Checking-side credit payment patterns (e.g. 'CAPITAL ONE')
-            4. Amount+date reconciliation against v_credit_payments
+        Checking outflows (amount < 0), per-family exclusions:
+          1. That family's transfer patterns
+          2. That family's employer income patterns
+          3. That family's credit card checking-side payment patterns
+          4. Amount+date reconciliation against v_credit_payments (family-scoped)
         """
-        cat_expr, ctype_expr = self._category_case_expr(cfg_cat)
-
-        # Collect checking_payment_pattern from all credit rules
-        credit_rules = [r for r in rules if r.account_type == "credit"]
-        checking_payment_patterns = [
-            r.checking_payment_pattern
-            for r in credit_rules
-            if r.checking_payment_pattern
-        ]
-
         branches = []
-        for rule in rules:
-            if rule.account_type != "checking":
-                continue
+        for fd in family_data:
+            cat_expr, ctype_expr = self._category_case_expr(fd.cfg_cat)
 
-            ak         = _esc(rule.prefix)
-            bank_label = rule.bank_name.replace("'", "''")
+            # Checking-side credit payment patterns for THIS family only
+            credit_rules = [r for r in fd.rules if r.account_type == "credit"]
+            checking_payment_patterns = [
+                r.checking_payment_pattern
+                for r in credit_rules
+                if r.checking_payment_pattern
+            ]
 
-            # Build exclusion clauses
-            excls = []
+            for rule in fd.rules:
+                if rule.account_type != "checking":
+                    continue
 
-            # 1. Transfer patterns
-            for p in cfg.transfer_patterns:
-                excls.append(f"      AND description NOT ILIKE '%{_esc(p)}%'")
+                ak         = _esc(rule.prefix)
+                bank_label = rule.bank_name.replace("'", "''")
 
-            # 2. Employer patterns
-            for p in cfg.employer_pattern_strings:
-                excls.append(f"      AND description NOT ILIKE '%{_esc(p)}%'")
+                excls = []
 
-            # 3. Checking-side credit payment patterns
-            if checking_payment_patterns:
-                desc_or = " OR ".join(
-                    f"description ILIKE '%{_esc(p)}%'"
-                    for p in checking_payment_patterns
+                # 1. Transfer patterns (this family's)
+                for p in fd.cfg.transfer_patterns:
+                    excls.append(f"      AND description NOT ILIKE '%{_esc(p)}%'")
+
+                # 2. Employer patterns (this family's)
+                for p in fd.cfg.employer_pattern_strings:
+                    excls.append(f"      AND description NOT ILIKE '%{_esc(p)}%'")
+
+                # 3. Checking-side credit payment patterns (this family's)
+                if checking_payment_patterns:
+                    desc_or = " OR ".join(
+                        f"description ILIKE '%{_esc(p)}%'"
+                        for p in checking_payment_patterns
+                    )
+                    excls.append(f"      AND NOT ({desc_or})")
+
+                # 4. Amount+date reconciliation against v_credit_payments (family-scoped)
+                excls.append(
+                    f"      AND NOT EXISTS (\n"
+                    f"          SELECT 1 FROM {self.schema}.v_credit_payments cp\n"
+                    f"          WHERE ABS(t.amount) = cp.amount\n"
+                    f"            AND ABS(t.amount) > 50\n"
+                    f"            AND t.transaction_date\n"
+                    f"                BETWEEN cp.transaction_date - 3\n"
+                    f"                    AND cp.transaction_date + 3\n"
+                    f"            AND t.family_id = cp.family_id\n"
+                    f"      )"
                 )
-                excls.append(f"      AND NOT ({desc_or})")
 
-            # 4. Amount+date reconciliation against v_credit_payments
-            excls.append(
-                f"      AND NOT EXISTS (\n"
-                f"          SELECT 1 FROM {self.schema}.v_credit_payments cp\n"
-                f"          WHERE ABS(t.amount) = cp.amount\n"
-                f"            AND ABS(t.amount) > 50\n"
-                f"            AND t.transaction_date\n"
-                f"                BETWEEN cp.transaction_date - 3\n"
-                f"                    AND cp.transaction_date + 3\n"
-                f"            AND t.family_id = cp.family_id\n"
-                f"      )"
-            )
+                excl_sql = "\n".join(excls)
 
-            excl_sql = "\n".join(excls)
-
-            branches.append(
-                f"    SELECT person,\n"
-                f"           transaction_date,\n"
-                f"           description,\n"
-                f"           ABS(amount) AS amount,\n"
-                f"           '{bank_label}'::TEXT AS bank,\n"
-                f"           ({cat_expr}) AS category,\n"
-                f"           ({ctype_expr}) AS cost_type,\n"
-                f"           account_key AS source_bank,\n"
-                f"           t.family_id\n"
-                f"    FROM {self.schema}.transactions_debit t\n"
-                f"    WHERE account_key = '{ak}'\n"
-                f"      AND amount < 0\n"
-                f"{excl_sql}"
-            )
+                branches.append(
+                    f"    SELECT person,\n"
+                    f"           transaction_date,\n"
+                    f"           description,\n"
+                    f"           ABS(amount) AS amount,\n"
+                    f"           '{bank_label}'::TEXT AS bank,\n"
+                    f"           ({cat_expr}) AS category,\n"
+                    f"           ({ctype_expr}) AS cost_type,\n"
+                    f"           account_key AS source_bank,\n"
+                    f"           t.family_id\n"
+                    f"    FROM {self.schema}.transactions_debit t\n"
+                    f"    WHERE account_key = '{ak}'\n"
+                    f"      AND amount < 0\n"
+                    f"{excl_sql}"
+                )
 
         self._create_view(
             "v_debit_spend", branches,
@@ -282,33 +331,34 @@ class ViewManager:
             ),
         )
 
-    def _build_income_view(self, rules: list[BankRule], cfg) -> None:
-        """Positive checking inflows, transfer patterns excluded."""
+    def _build_income_view(self, family_data: list[_FamilyViewData]) -> None:
+        """Positive checking inflows, each family's transfer patterns excluded."""
         branches = []
-        for rule in rules:
-            if rule.account_type != "checking":
-                continue
+        for fd in family_data:
+            for rule in fd.rules:
+                if rule.account_type != "checking":
+                    continue
 
-            ak         = _esc(rule.prefix)
-            bank_label = rule.bank_name.replace("'", "''")
+                ak         = _esc(rule.prefix)
+                bank_label = rule.bank_name.replace("'", "''")
 
-            transfer_excl = "\n".join(
-                f"      AND description NOT ILIKE '%{_esc(p)}%'"
-                for p in cfg.transfer_patterns
-            )
+                transfer_excl = "\n".join(
+                    f"      AND description NOT ILIKE '%{_esc(p)}%'"
+                    for p in fd.cfg.transfer_patterns
+                )
 
-            branches.append(
-                f"    SELECT person,\n"
-                f"           transaction_date,\n"
-                f"           description,\n"
-                f"           amount,\n"
-                f"           '{bank_label}'::TEXT AS bank,\n"
-                f"           family_id\n"
-                f"    FROM {self.schema}.transactions_debit\n"
-                f"    WHERE account_key = '{ak}'\n"
-                f"      AND amount > 0\n"
-                + (f"\n{transfer_excl}" if transfer_excl else "")
-            )
+                branches.append(
+                    f"    SELECT person,\n"
+                    f"           transaction_date,\n"
+                    f"           description,\n"
+                    f"           amount,\n"
+                    f"           '{bank_label}'::TEXT AS bank,\n"
+                    f"           family_id\n"
+                    f"    FROM {self.schema}.transactions_debit\n"
+                    f"    WHERE account_key = '{ak}'\n"
+                    f"      AND amount > 0\n"
+                    + (f"\n{transfer_excl}" if transfer_excl else "")
+                )
 
         self._create_view(
             "v_income", branches,

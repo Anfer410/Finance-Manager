@@ -226,63 +226,16 @@ def create_demo(force: bool = False) -> None:
         for uname, uid in user_ids.items():
             print(f"[demo]   user {uname!r:20s} id={uid}")
 
-    # 10. Rebuild views — combine all demo families' rules into one pass so every
-    #     family's account_keys appear in the views (views are shared/global).
+    # 10. Rebuild views — ViewManager.refresh() loads all families automatically.
     print("[demo]   rebuilding views …")
-    _refresh_combined_views([fid1, fid2])
+    from services.view_manager import default_view_manager
+    default_view_manager().refresh()
 
     # 11. Write sample CSVs
     print("[demo]   writing sample CSVs …")
     _write_sample_csvs(user_ids)
 
     print("[demo] Done. Log in with demo_admin / demo")
-
-
-def _refresh_combined_views(family_ids: list[int]) -> None:
-    """
-    Rebuild views combining bank rules from all given families.
-
-    Views are global SQL objects — they contain a UNION ALL branch per
-    account_key. If we refresh with only one family's rules the other
-    family's transactions become invisible. This helper merges all rules
-    into one pass so every family's account_keys appear in the views.
-    """
-    from data.bank_rules import load_rules, BankRule
-    from services.transaction_config import load_config
-    from data.category_rules import load_category_config
-    from services.view_manager import default_view_manager
-
-    vm = default_view_manager()
-
-    # Collect rules from all families; dedupe by prefix so no UNION ALL duplicates
-    all_rules: list[BankRule] = []
-    seen_prefixes: set[str] = set()
-    for fid in family_ids:
-        for rule in load_rules(fid):
-            if rule.prefix not in seen_prefixes:
-                seen_prefixes.add(rule.prefix)
-                all_rules.append(rule)
-
-    # Use fid of the first family for TransactionConfig / CategoryConfig
-    cfg     = load_config(family_ids[0])
-    cfg_cat = load_category_config(family_ids[0])
-
-    # Drop all views first (same as ViewManager.refresh does)
-    from data.db import get_engine, get_schema
-    from sqlalchemy import text
-    with get_engine().begin() as conn:
-        for v in ("v_transactions", "v_all_spend",
-                  "v_income", "v_debit_spend",
-                  "v_credit_spend", "v_credit_payments"):
-            conn.execute(text(f"DROP VIEW IF EXISTS {get_schema()}.{v} CASCADE"))
-
-    vm._build_credit_payments_view(all_rules)
-    vm._build_credit_spend_view(all_rules, cfg_cat)
-    vm._build_debit_spend_view(all_rules, cfg, cfg_cat)
-    vm._build_income_view(all_rules, cfg)
-    vm._build_all_spend_view()
-    vm._build_legacy_transactions_view()
-    print(f"[demo] views rebuilt for {len(family_ids)} families, {len(all_rules)} account_keys")
 
 
 def destroy_demo(force: bool = False) -> None:
@@ -343,10 +296,9 @@ def destroy_demo(force: bool = False) -> None:
 
     # Rebuild views with remaining data (family 1 = Default Family)
     print("[demo]   rebuilding views …")
-    from services.view_manager import default_view_manager
-    vm = default_view_manager()
     try:
-        vm.refresh(1)
+        from services.view_manager import default_view_manager
+        default_view_manager().refresh()
     except Exception as e:
         print(f"[demo]   view refresh warning: {e}")
 

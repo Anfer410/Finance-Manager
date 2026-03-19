@@ -1,8 +1,10 @@
-FROM python:3.13 AS build
+FROM python:3.13-slim AS deps
+WORKDIR /build
 COPY app/requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-FROM build AS app
+FROM deps AS app
 WORKDIR /app
 COPY app /app
-ENTRYPOINT [ "python", "main.py" ]
+ENV APP_ENV=prod
+ENTRYPOINT ["python", "main.py"]

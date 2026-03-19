@@ -1,0 +1,15 @@
+app/.venv
+app/__pycache__
+app/**/__pycache__
+app/**/*.pyc
+app/**/*.pyo
+.git
+.gitignore
+.gitlab-ci.yml
+.claude
+.pytest_cache
+tests/
+docs/
+demo/
+memory/
+*.md

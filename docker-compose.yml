@@ -1,23 +1,37 @@
-
 services:
   db:
     image: postgres:18
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-finance-manager}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password} # TODO: Change this
-      POSTGRES_PORT: 5432
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       TZ: ${TZ:-UTC}
     ports:
       - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-finance-manager}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   app:
     build: .
     environment:
+      APP_ENV: prod
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ${POSTGRES_DB:-finance-manager}
-      DB_USER: ${POSTGRES_USER:-psqlroot}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}  # TODO: Change this
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      STORAGE_SECRET: ${STORAGE_SECRET:?STORAGE_SECRET is required}
       TZ: ${TZ:-UTC}
     ports:
       - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:

@@ -1,6 +1,85 @@
 # CHANGELOG
 
 
+## v2.1.0 (2026-03-19)
+
+### Bug Fixes
+
+- Loans accessible to all users; fix demo bank config and view refresh
+  ([`78926ae`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/78926aec3c7f2b3324007717924f8c8cdec467fd))
+
+- loans_content.py / loan_planning_content.py: wrong guard was is_instance_admin() — changed to
+  is_authenticated() so all family members can access loans and loan planning pages - db_demo: store
+  BankConfig dicts (not bare strings) in app_config_banks so BankConfig.from_dict() succeeds for
+  non-admin users - db_demo: combined view refresh across both demo families so Family 2
+  account_keys appear in global views
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+- Scope app_loans and loan widgets to family_id
+  ([`266da2e`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/266da2ed9dc5578b6e8af13ac8b882dedec529e2))
+
+app_loans had no family_id column — all families saw all loans.
+
+- Migration: add family_id to app_loans, backfill existing rows to family 1 - loan_service: add
+  family_id param to load_loans, save_loan, delete_loan, match_payments, get_monthly_spend_income,
+  get_baseline - loans_content / loan_planning_content: pass auth.current_family_id() through all
+  service calls - RenderContext: add family_id field, resolved via auth.current_family_id() in
+  build() so all widgets get it automatically - registry.py / settings_ui.py: update all 6 loan
+  widget call sites to use ctx.family_id
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Features
+
+- Add demo data
+  ([`f09ffdb`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/f09ffdbe5a29d675e1b18394b12ee44564ecf18b))
+
+- Add demo data provisioning script (db_demo.py)
+  ([`47039cb`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/47039cba871e5327dc2e41597262755d1d227d44))
+
+Two demo families with 3 years of realistic transaction history, pre-configured bank rules, loans,
+  and per-family archive config. Includes 2026 Q1 sample CSVs for manual upload testing.
+
+Run `python db_demo.py` to provision, `--destroy` to remove.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+- Gates to enable settings just for admins
+  ([`615fe5b`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/615fe5ba58fef2d16b1e0443d442d819a4c2d9a8))
+
+- Per-family raw archive toggle
+  ([`97ffe8c`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/97ffe8cf3821a6692299eac6f5afe47d07e43e2f))
+
+- New app_config_archive table (family_id PK, archive_enabled BOOLEAN) seeded TRUE for all existing
+  families on migration - config_repo: load_archive_enabled() / save_archive_enabled() -
+  upload_pipeline: gate step 5 (raw upsert) on load_archive_enabled(family_id); returns early with
+  normal result if disabled — upload still succeeds - upload_manager: no changes needed, already
+  guards all raw ops with _raw_table_exists() so stale tables from before disabling are still
+  cleaned up on reassign/delete - settings: new Archive tab (head+) with enable/disable toggle and
+  raw CSV export; raw export section moved here from Data tab - data/db.py: remove dead
+  ArchiveConfig dataclass and get_archive_cfg() (the enabled flag was never actually checked by the
+  pipeline)
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Refactoring
+
+- Viewmanager.refresh() loads all families automatically
+  ([`37bd50a`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/37bd50a69d874cae2035e134c7ca1ecceed79fca))
+
+Views now cover all families in one combined pass. Each family's account_key branches use that
+  family's own category rules and transaction config, so per-family categorisation is correct. No
+  family_id argument needed — callers just call refresh() and every family is included.
+
+- view_manager: refresh() queries all families with bank rules, builds per-family _FamilyViewData,
+  passes to each _build_*_view method - Each view builder iterates by family then by rule, using
+  per-family cfg_cat/cfg for category expressions and exclusion patterns - All 8 call sites updated
+  to drop the family_id argument - db_demo: removed _refresh_combined_views() helper (now redundant)
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+
 ## v2.0.0 (2026-03-19)
 
 ### Documentation

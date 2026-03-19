@@ -150,6 +150,34 @@ python -m py_compile app/pages/<file>.py
 python -m py_compile app/services/<file>.py
 ```
 
+## Testing
+
+Integration tests live in `tests/`. They spin up a throwaway Postgres container on port **5434** (no collision with dev on 5432), run full migrations, then roll back each test in a transaction.
+
+```bash
+# Run all tests (must be run from app/ so the venv and app imports resolve)
+cd app && .venv/bin/pytest ../tests/ -v
+
+# Run a single file
+cd app && .venv/bin/pytest ../tests/test_transaction_scoping.py -v
+```
+
+**Infrastructure** (`tests/conftest.py`):
+- `pg_engine` (session-scoped) — starts `tests/docker-compose.yml`, runs migrations, yields engine; tears down on session end
+- `db_conn` (function-scoped) — connection inside an open transaction, auto-rolled-back after each test
+- `schema` fixture returns `"finance"`
+
+**Test files**:
+| File | What it covers |
+|------|----------------|
+| `test_infra.py` | DB connection + schema sanity |
+| `test_migrations.py` | All migration functions run cleanly |
+| `test_auth.py` | User creation, login, session helpers |
+| `test_config_repo.py` | Per-family config read/write |
+| `test_transaction_scoping.py` | family_id stamping, view passthrough, dashboard isolation |
+| `test_upload_pipeline.py` | CSV ingestion into consolidated + raw tables |
+| `test_finance_dashboard_data.py` | Dashboard query functions |
+
 ## Key Dependencies
 
 - `nicegui` — UI framework (replaces HTML/JS)

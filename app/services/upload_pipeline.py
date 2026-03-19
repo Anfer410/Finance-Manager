@@ -521,8 +521,8 @@ class UploadPipeline:
         # Dedup columns are resolved against the original column names.
         from services.config_repo import load_archive_enabled
         if not load_archive_enabled(family_id):
-            return UploadResult(bank_name=bank_name, inserted=inserted,
-                                skipped=skipped, total=total, error=None)
+            return UploadResult(bank_name=bank_name, inserted=consolidated_inserted,
+                                skipped=total - consolidated_inserted, total=total, error=None)
 
         if mapping is not None:
             # mapping.to_dict() maps role → original col name — use the original col names

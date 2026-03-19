@@ -130,6 +130,13 @@ def pg_engine():
                 ON CONFLICT (id) DO NOTHING
             """), {"id": fid, "name": name})
 
+        # Advance the SERIAL sequence past the highest manually-inserted id so
+        # that INSERT … RETURNING id (e.g. create_family) doesn't collide.
+        conn.execute(text(
+            "SELECT setval('finance.families_id_seq', "
+            "(SELECT MAX(id) FROM finance.families))"
+        ))
+
 
     yield engine
 

@@ -176,9 +176,17 @@ cd app && .venv/bin/pytest ../tests/test_transaction_scoping.py -v
 | `test_config_repo.py` | Per-family config read/write |
 | `test_transaction_scoping.py` | family_id stamping, view passthrough, dashboard isolation |
 | `test_upload_pipeline.py` | CSV ingestion into consolidated + raw tables |
-| `test_finance_dashboard_data.py` | Dashboard query functions |
+| `test_finance_dashboard_data.py` | Dashboard query functions (mocked `_q`) |
+| `test_finance_dashboard_data_db.py` | Dashboard query functions against real DB (get_years, KPI, monthly series) |
 | `test_custom_chart_query.py` | Unit tests for custom chart query builder (no DB — mocked) |
+| `test_custom_chart_query_db.py` | Custom chart query execution against real DB + views |
 | `test_custom_chart_renderer.py` | Unit tests for custom chart renderer (no DB — NiceGUI mocked) |
+| `test_family_service.py` | Family + member CRUD, role management, users-without-family |
+| `test_loan_service.py` | Loan amortization unit tests + DB CRUD |
+| `test_dashboard_config.py` | Dashboard + widget CRUD, auto-positioning, find_free_position |
+| `test_dashboard_grid_layout.py` | Grid layout: compact, cascade, move, resize (DB mocked) |
+| `test_upload_manager.py` | Upload batch list/reassign/delete + _sanitize/_raw_join_clause |
+| `test_upload_pipeline_run.py` | UploadPipeline.run() against real DB |
 
 ## Key Dependencies
 

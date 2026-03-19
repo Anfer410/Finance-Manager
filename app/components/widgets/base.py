@@ -100,6 +100,9 @@ class RenderContext:
     # Loan context (resolved from config.loan_id)
     loan_id:         int | None  = None
 
+    # Multi-tenancy
+    family_id:       int | None  = None
+
     @classmethod
     def build(
         cls,
@@ -161,6 +164,12 @@ class RenderContext:
         if loan_id is not None:
             loan_id = int(loan_id)
 
+        try:
+            import services.auth as _auth
+            family_id = _auth.current_family_id()
+        except Exception:
+            family_id = None
+
         return cls(
             year=year,
             persons=persons,
@@ -171,6 +180,7 @@ class RenderContext:
             date_to=date_to,
             trailing_months=trailing_months,
             loan_id=loan_id,
+            family_id=family_id,
         )
 
 

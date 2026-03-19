@@ -25,20 +25,22 @@ def content() -> None:
         ui.navigate.to("/")
         return
 
+    family_id = auth.current_family_id()
+
     with ui.column().classes("w-full px-4 py-6 gap-6"):
         with ui.row().classes("items-center gap-3 mb-2"):
             ui.icon("calculate").classes("text-zinc-400 text-2xl")
             ui.label("Loan Planning").classes("text-2xl font-bold text-zinc-800")
 
-        _baseline_section()
-        _calculator_section()
-        _extra_payment_section()
+        _baseline_section(family_id=family_id)
+        _calculator_section(family_id=family_id)
+        _extra_payment_section(family_id=family_id)
 
 
 # ── Financial baseline ────────────────────────────────────────────────────────
 
-def _baseline_section(months: int = 18) -> None:
-    baseline = get_baseline(months=months)
+def _baseline_section(months: int = 18, family_id: int | None = None) -> None:
+    baseline = get_baseline(months=months, family_id=family_id)
 
     dti      = baseline["dti"]
     headroom = baseline["headroom"]
@@ -106,7 +108,7 @@ def _baseline_section(months: int = 18) -> None:
 
 # ── New loan calculator ───────────────────────────────────────────────────────
 
-def _calculator_section() -> None:
+def _calculator_section(family_id: int | None = None) -> None:
     result_state: dict = {}
 
     with ui.card().classes("w-full rounded-2xl shadow-none border border-zinc-100 p-0 gap-0"):
@@ -189,7 +191,7 @@ def _calculator_section() -> None:
                 except (TypeError, ValueError):
                     return
 
-                baseline = get_baseline(months=12)
+                baseline = get_baseline(months=12, family_id=family_id)
                 calc     = calculate_loan(amount, rate, term)
                 new_monthly_debt = baseline["monthly_debt"] + calc["monthly_payment"]
                 new_dti = round(new_monthly_debt / baseline["avg_income"] * 100, 1) \
@@ -205,8 +207,8 @@ def _calculator_section() -> None:
 
 # ── Extra payment scenario ────────────────────────────────────────────────────
 
-def _extra_payment_section() -> None:
-    loans = load_loans()
+def _extra_payment_section(family_id: int | None = None) -> None:
+    loans = load_loans(family_id) if family_id is not None else []
     scenario_state: dict = {}
 
     with ui.card().classes("w-full rounded-2xl shadow-none border border-zinc-100 p-0 gap-0"):

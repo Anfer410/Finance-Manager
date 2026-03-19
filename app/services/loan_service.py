@@ -116,7 +116,7 @@ class LoanStats:
 
 # ── DB CRUD ───────────────────────────────────────────────────────────────────
 
-def load_loans() -> list[LoanRecord]:
+def load_loans(family_id: int) -> list[LoanRecord]:
     schema = _schema()
     try:
         rows = _q(f"""
@@ -128,16 +128,16 @@ def load_loans() -> list[LoanRecord]:
                    lender, notes, is_active,
                    COALESCE(monthly_insurance, 0) AS monthly_insurance
             FROM {schema}.app_loans
-            WHERE is_active = TRUE
+            WHERE is_active = TRUE AND family_id = :fid
             ORDER BY id
-        """)
+        """, fid=family_id)
         return [_row_to_loan(r) for r in rows]
     except Exception as e:
         print(f"[loan_service] load_loans failed: {e}")
         return []
 
 
-def save_loan(loan: LoanRecord) -> int:
+def save_loan(loan: LoanRecord, family_id: int) -> int:
     schema = _schema()
     data = {
         "name":                         loan.name,
@@ -159,6 +159,7 @@ def save_loan(loan: LoanRecord) -> int:
         "lender":                       loan.lender or "",
         "notes":                        loan.notes or "",
         "is_active":                    True,
+        "family_id":                    family_id,
     }
     with _engine().begin() as conn:
         if loan.id is None:
@@ -169,14 +170,14 @@ def save_loan(loan: LoanRecord) -> int:
                      monthly_payment, monthly_insurance, current_balance, balance_as_of,
                      arm_adjustment_period_months, arm_rate_cap, arm_lifetime_cap,
                      payment_description_pattern, payment_account_key,
-                     lender, notes, is_active, updated_at)
+                     lender, notes, is_active, family_id, updated_at)
                 VALUES
                     (:name, :loan_type, :rate_type, :interest_rate,
                      :original_principal, :term_months, :start_date,
                      :monthly_payment, :monthly_insurance, :current_balance, :balance_as_of,
                      :arm_adjustment_period_months, :arm_rate_cap, :arm_lifetime_cap,
                      :payment_description_pattern, :payment_account_key,
-                     :lender, :notes, :is_active, NOW())
+                     :lender, :notes, :is_active, :family_id, NOW())
                 RETURNING id
             """), data)
             return result.fetchone()[0]
@@ -196,17 +197,17 @@ def save_loan(loan: LoanRecord) -> int:
                     payment_description_pattern = :payment_description_pattern,
                     payment_account_key = :payment_account_key,
                     lender = :lender, notes = :notes, updated_at = NOW()
-                WHERE id = :id
+                WHERE id = :id AND family_id = :family_id
             """), data)
             return loan.id
 
 
-def delete_loan(loan_id: int) -> None:
+def delete_loan(loan_id: int, family_id: int) -> None:
     schema = _schema()
     with _engine().begin() as conn:
         conn.execute(
-            text(f"UPDATE {schema}.app_loans SET is_active = FALSE, updated_at = NOW() WHERE id = :id"),
-            {"id": loan_id},
+            text(f"UPDATE {schema}.app_loans SET is_active = FALSE, updated_at = NOW() WHERE id = :id AND family_id = :fid"),
+            {"id": loan_id, "fid": family_id},
         )
 
 
@@ -333,7 +334,7 @@ def calculate_loan(amount: float, annual_rate: float, term_months: int) -> dict:
 
 # ── Transaction matching ──────────────────────────────────────────────────────
 
-def match_payments(loan: LoanRecord, limit: int = 24) -> list[dict]:
+def match_payments(loan: LoanRecord, limit: int = 24, family_id: int | None = None) -> list[dict]:
     """Finds actual payment transactions matching this loan's description pattern."""
     if not loan.payment_description_pattern:
         return []
@@ -345,6 +346,10 @@ def match_payments(loan: LoanRecord, limit: int = 24) -> list[dict]:
     if loan.payment_account_key:
         where.append("account_key = :ak")
         params["ak"] = loan.payment_account_key
+
+    if family_id is not None:
+        where.append("family_id = :fid")
+        params["fid"] = family_id
 
     try:
         rows = _q(f"""
@@ -365,27 +370,29 @@ def match_payments(loan: LoanRecord, limit: int = 24) -> list[dict]:
 
 # ── 36-month spend / income series ───────────────────────────────────────────
 
-def get_monthly_spend_income(months: int = 36) -> dict:
+def get_monthly_spend_income(months: int = 36, family_id: int | None = None) -> dict:
     """Monthly spend + income for the last N months with rolling surplus."""
     schema = _schema()
     today  = date.today()
     start  = _add_months(today.replace(day=1), -(months - 1))
 
+    fid_clause = "AND family_id = :fid" if family_id is not None else ""
+
     spend_rows  = _q(f"""
         SELECT DATE_TRUNC('month', transaction_date)::DATE AS mo,
                COALESCE(SUM(amount), 0)
         FROM {schema}.v_all_spend
-        WHERE transaction_date >= :start
+        WHERE transaction_date >= :start {fid_clause}
         GROUP BY mo ORDER BY mo
-    """, start=start)
+    """, start=start, **({} if family_id is None else {"fid": family_id}))
 
     income_rows = _q(f"""
         SELECT DATE_TRUNC('month', transaction_date)::DATE AS mo,
                COALESCE(SUM(amount), 0)
         FROM {schema}.v_income
-        WHERE transaction_date >= :start
+        WHERE transaction_date >= :start {fid_clause}
         GROUP BY mo ORDER BY mo
-    """, start=start)
+    """, start=start, **({} if family_id is None else {"fid": family_id}))
 
     # Build ordered month list
     month_dates: list[date] = []
@@ -416,19 +423,23 @@ def get_monthly_spend_income(months: int = 36) -> dict:
 
 # ── Financial baseline ────────────────────────────────────────────────────────
 
-def get_baseline(months: int = 12) -> dict:
+def get_baseline(months: int = 12, family_id: int | None = None) -> dict:
     """Avg monthly income/spend + current debt load for trailing N months."""
     schema = _schema()
     start  = _add_months(date.today().replace(day=1), -(months - 1))
 
-    spend_rows  = _q(f"SELECT COALESCE(SUM(amount),0) FROM {schema}.v_all_spend WHERE transaction_date >= :s", s=start)
-    income_rows = _q(f"SELECT COALESCE(SUM(amount),0) FROM {schema}.v_income     WHERE transaction_date >= :s", s=start)
+    fid_clause = "AND family_id = :fid" if family_id is not None else ""
+    fid_param  = {"fid": family_id} if family_id is not None else {}
+
+    spend_rows  = _q(f"SELECT COALESCE(SUM(amount),0) FROM {schema}.v_all_spend WHERE transaction_date >= :s {fid_clause}", s=start, **fid_param)
+    income_rows = _q(f"SELECT COALESCE(SUM(amount),0) FROM {schema}.v_income     WHERE transaction_date >= :s {fid_clause}", s=start, **fid_param)
 
     avg_spend   = round(float(spend_rows[0][0])  / months, 2) if spend_rows  else 0.0
     avg_income  = round(float(income_rows[0][0]) / months, 2) if income_rows else 0.0
     avg_surplus = round(avg_income - avg_spend, 2)
 
-    monthly_debt = round(sum(l.monthly_payment for l in load_loans()), 2)
+    loans_for_family = load_loans(family_id) if family_id is not None else []
+    monthly_debt = round(sum(l.monthly_payment for l in loans_for_family), 2)
     dti          = round(monthly_debt / avg_income * 100, 1) if avg_income > 0 else 0.0
     headroom     = round(avg_surplus - monthly_debt, 2)
 

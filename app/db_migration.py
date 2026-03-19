@@ -347,6 +347,15 @@ def _create_app_tables(conn, schema: str) -> None:
         ADD COLUMN IF NOT EXISTS monthly_insurance NUMERIC(12,2) NOT NULL DEFAULT 0
     """))
 
+    # Add family_id to app_loans — backfill existing rows to the default family
+    conn.execute(text(f"""
+        ALTER TABLE {schema}.app_loans
+        ADD COLUMN IF NOT EXISTS family_id INTEGER REFERENCES {schema}.families(id)
+    """))
+    conn.execute(text(f"""
+        UPDATE {schema}.app_loans SET family_id = 1 WHERE family_id IS NULL
+    """))
+
     conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS {schema}.app_custom_charts (
             id           SERIAL PRIMARY KEY,

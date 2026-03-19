@@ -409,8 +409,8 @@ class _LoanKPI(KPIWidget):
         from nicegui import ui
         from services.loan_service import load_loans, get_baseline
 
-        loans    = load_loans()
-        baseline = get_baseline(months=12)
+        loans    = load_loans(ctx.family_id)
+        baseline = get_baseline(months=12, family_id=ctx.family_id)
 
         total_balance = sum(l.current_balance for l in loans)
         total_monthly = sum(l.monthly_payment  for l in loans)
@@ -469,7 +469,7 @@ class _LoanBalances(AreaLineChartWidget):
             'personal': '#f43f5e', 'heloc': '#3b82f6', 'other': '#8b5cf6',
         }
 
-        all_loans = load_loans()
+        all_loans = load_loans(ctx.family_id)
         # Filter to specific loan if loan_id set
         if ctx.loan_id is not None:
             loans = [l for l in all_loans if l.id == ctx.loan_id]
@@ -556,7 +556,7 @@ class _LoanDetailKPI(KPIWidget):
         from nicegui import ui
         from services.loan_service import load_loans, compute_stats
 
-        loans = load_loans()
+        loans = load_loans(ctx.family_id)
         if not loans:
             ui.label('No loans configured.').classes('text-sm text-muted py-4')
             return
@@ -604,7 +604,7 @@ class _LoanAmortization(AreaLineChartWidget):
         from nicegui import ui
         from services.loan_service import load_loans, compute_stats
 
-        loans = load_loans()
+        loans = load_loans(ctx.family_id)
         if not loans:
             ui.label('No loans configured.').classes('text-sm text-muted py-4')
             return
@@ -699,7 +699,7 @@ class _FinancialBaseline(KPIWidget):
         from services.loan_service import get_baseline
 
         months   = int(ctx.config.get('months', 18))
-        baseline = get_baseline(months=months)
+        baseline = get_baseline(months=months, family_id=ctx.family_id)
 
         dti      = baseline['dti']
         headroom = baseline['headroom']

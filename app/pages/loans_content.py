@@ -42,22 +42,24 @@ def content() -> None:
         ui.navigate.to("/")
         return
 
+    family_id = auth.current_family_id()
+
     with ui.column().classes("w-full px-4 py-6 gap-6"):
         with ui.row().classes("items-center gap-3 mb-2"):
             ui.icon("account_balance_wallet").classes("text-zinc-400 text-2xl")
             ui.label("Loans & Mortgages").classes("text-2xl font-bold text-zinc-800")
 
-        _baseline_section()
-        _overview_chart()
+        _baseline_section(family_id=family_id)
+        _overview_chart(family_id)
 
         @ui.refreshable
         def loan_list() -> None:
-            loans = load_loans()
+            loans = load_loans(family_id)
             with ui.row().classes("items-center justify-between w-full"):
                 ui.label(f"{len(loans)} loan{'s' if len(loans) != 1 else ''}") \
                     .classes("text-sm text-zinc-400")
                 ui.button("Add loan", icon="add",
-                          on_click=lambda: _loan_dialog(None, loan_list.refresh)) \
+                          on_click=lambda: _loan_dialog(None, loan_list.refresh, family_id)) \
                     .props("unelevated no-caps") \
                     .classes("bg-zinc-800 text-white rounded-lg px-4")
 
@@ -73,14 +75,14 @@ def content() -> None:
                     ).classes("text-xs text-zinc-300 text-center max-w-xs")
             else:
                 for loan in loans:
-                    _loan_card(loan, loan_list.refresh)
+                    _loan_card(loan, loan_list.refresh, family_id)
 
         loan_list()
 
 
 # ── 36-month overview chart ───────────────────────────────────────────────────
 
-def _overview_chart() -> None:
+def _overview_chart(family_id: int | None = None) -> None:
     series   = get_year_over_year_monthly_spend_series()
     has_data = any(v for v in series["spend"] + series["income"] if v)
 
@@ -101,9 +103,9 @@ def _overview_chart() -> None:
 
 # ── Loan card ─────────────────────────────────────────────────────────────────
 
-def _loan_card(loan: LoanRecord, on_refresh) -> None:
+def _loan_card(loan: LoanRecord, on_refresh, family_id: int | None = None) -> None:
     stats    = compute_stats(loan)
-    payments = match_payments(loan, limit=12)
+    payments = match_payments(loan, limit=12, family_id=family_id)
     color    = _TYPE_COLOR.get(loan.loan_type, "#8b5cf6")
     icon     = _TYPE_ICON.get(loan.loan_type, "payments")
     yr       = stats.months_remaining // 12
@@ -130,10 +132,10 @@ def _loan_card(loan: LoanRecord, on_refresh) -> None:
 
             ui.space()
             ui.button(icon="edit",
-                      on_click=lambda l=loan: _loan_dialog(l, on_refresh)) \
+                      on_click=lambda l=loan: _loan_dialog(l, on_refresh, family_id)) \
                 .props("flat round dense").classes("text-zinc-400")
             ui.button(icon="delete_outline",
-                      on_click=lambda l=loan: _confirm_delete(l, on_refresh)) \
+                      on_click=lambda l=loan: _confirm_delete(l, on_refresh, family_id)) \
                 .props("flat round dense").classes("text-red-300")
 
         # ── KPI metrics ──────────────────────────────────────────────────────
@@ -326,7 +328,7 @@ def _amortization_table(amort) -> None:
 
 # ── Dialogs ───────────────────────────────────────────────────────────────────
 
-def _confirm_delete(loan: LoanRecord, on_refresh) -> None:
+def _confirm_delete(loan: LoanRecord, on_refresh, family_id: int | None = None) -> None:
     with ui.dialog() as dlg, ui.card().classes("w-80 rounded-2xl p-6 gap-4"):
         ui.label(f'Remove "{loan.name}"?') \
             .classes("text-base font-semibold text-zinc-800")
@@ -336,7 +338,7 @@ def _confirm_delete(loan: LoanRecord, on_refresh) -> None:
             ui.button("Cancel", on_click=dlg.close).props("flat no-caps").classes("text-zinc-500")
 
             def _do():
-                delete_loan(loan.id)
+                delete_loan(loan.id, family_id)
                 dlg.close()
                 on_refresh()
 
@@ -346,7 +348,7 @@ def _confirm_delete(loan: LoanRecord, on_refresh) -> None:
     dlg.open()
 
 
-def _loan_dialog(loan: LoanRecord | None, on_refresh) -> None:
+def _loan_dialog(loan: LoanRecord | None, on_refresh, family_id: int | None = None) -> None:
     """Add / edit loan dialog."""
     state = {"error": ""}
 
@@ -537,7 +539,7 @@ def _loan_dialog(loan: LoanRecord | None, on_refresh) -> None:
                 lender                      = lender_in.value.strip(),
                 notes                       = notes_in.value.strip(),
             )
-            save_loan(new_loan)
+            save_loan(new_loan, family_id)
             dlg.close()
             on_refresh()
 

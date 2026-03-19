@@ -55,7 +55,8 @@ def open_widget_settings_dialog(
     def _get_loans() -> list:
         try:
             from services.loan_service import load_loans
-            return load_loans()
+            import services.auth as _auth
+            return load_loans(_auth.current_family_id())
         except Exception:
             return []
 

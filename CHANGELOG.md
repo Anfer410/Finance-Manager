@@ -1,6 +1,49 @@
 # CHANGELOG
 
 
+## v2.0.0 (2026-03-19)
+
+### Documentation
+
+- Add testing section to CLAUDE.md
+  ([`76ba828`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/76ba8284e5e8e7258b29cc319f862fe952e16e14))
+
+Documents the integration test setup, how to run tests, conftest fixtures, and the full test file
+  inventory.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Features
+
+- Multi-tenancy, family hierarchy, settings overhaul, upload manager
+  ([`e529d3a`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/e529d3a8e32e6b5ba0ffde295a69b59d434bd6f9))
+
+BREAKING CHANGE: Requires a clean database. All transaction queries are now scoped by family_id. The
+  auth session, user model, and DB schema have changed significantly — existing sessions and data
+  are incompatible.
+
+Key changes: - Multi-tenancy: family_id stamped on all transactions; dashboard queries scoped via
+  _family_filter() - Family hierarchy: families table, family_memberships, instance admin / family
+  head / member roles; is_family_head() includes instance admins - Settings page: consolidated into
+  tabbed layout (Personal / Uploads / Data / Users / Family); removed separate /family and /users
+  nav items - Upload Manager: new Uploads tab to list batches, reassign person[], or delete an
+  upload from both consolidated and raw archive tables - EmployerPattern ownership: head-owned
+  patterns protected from members - User management: family assignment in create and edit dialogs;
+  family column in user list - Dashboard defaults: hardcoded reference layout replaces auto-packed
+  seed; non-KPI widgets default to row_span=2 - Config import now auto-refreshes views on success -
+  Stale session guard: redirects to /login if DB user no longer exists - Chart builder: graceful
+  empty-DB handling - New services: family_service, upload_manager, dashboard_grid_layout -
+  Integration test suite with docker-compose postgres fixture
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Breaking Changes
+
+- Requires a clean database. All transaction queries are now scoped by family_id. The auth session,
+  user model, and DB schema have changed significantly — existing sessions and data are
+  incompatible.
+
+
 ## v1.7.1 (2026-03-18)
 
 ### Bug Fixes

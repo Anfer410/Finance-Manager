@@ -177,6 +177,8 @@ cd app && .venv/bin/pytest ../tests/test_transaction_scoping.py -v
 | `test_transaction_scoping.py` | family_id stamping, view passthrough, dashboard isolation |
 | `test_upload_pipeline.py` | CSV ingestion into consolidated + raw tables |
 | `test_finance_dashboard_data.py` | Dashboard query functions |
+| `test_custom_chart_query.py` | Unit tests for custom chart query builder (no DB — mocked) |
+| `test_custom_chart_renderer.py` | Unit tests for custom chart renderer (no DB — NiceGUI mocked) |
 
 ## Key Dependencies
 

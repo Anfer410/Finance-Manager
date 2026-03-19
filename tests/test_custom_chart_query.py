@@ -6,15 +6,10 @@ Unit tests for services/custom_chart_query.py
 
 from __future__ import annotations
 
-import sys
-import os
 from datetime import date
 from unittest.mock import MagicMock, patch, call
 
 import pytest
-
-# Ensure app/ is on the path when running from repo root
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import services.custom_chart_query as cq
 

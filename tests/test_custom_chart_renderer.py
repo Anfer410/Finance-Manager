@@ -8,13 +8,9 @@ NiceGUI UI calls are mocked so tests run outside a browser/event-loop context.
 from __future__ import annotations
 
 import sys
-import os
 from unittest.mock import MagicMock, patch, call
 
 import pytest
-
-# Ensure app/ is on the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 
 # Stub out nicegui.ui before importing the renderer so the module-level import

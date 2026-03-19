@@ -31,6 +31,14 @@ if APP_DIR not in sys.path:
 
 SCHEMA = "finance"
 
+# Minimal bank rules covering all account_keys used in view-dependent tests.
+# Patched into ViewManager so it doesn't need a working data.db connection.
+from data.bank_rules import BankRule as _BankRule
+_TEST_RULES = [
+    _BankRule(bank_name=ak, prefix=ak, account_type="checking")
+    for ak in ("ck_f1", "ck_f2", "ck_years", "ck_tt", "ck_wk")
+]
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -150,14 +158,20 @@ class TestFamilyIdStamping:
 
     def test_uploaded_by_stored(self, pg_engine, db_conn):
         _ensure_partition(db_conn, 2024, "transactions_debit")
+        # Create a real user within this transaction so the FK constraint passes.
+        uid = db_conn.execute(text(f"""
+            INSERT INTO {SCHEMA}.app_users (username, display_name, person_name, password_hash)
+            VALUES ('uploader_test_user', 'Uploader', 'uploader', 'hash')
+            RETURNING id
+        """)).fetchone()[0]
         _insert_debit(db_conn, family_id=1, year=2024,
-                      description="uploader test", uploaded_by=99)
+                      description="uploader test", uploaded_by=uid)
         row = db_conn.execute(text(f"""
             SELECT uploaded_by FROM {SCHEMA}.transactions_debit
             WHERE description = 'uploader test'
         """)).fetchone()
         assert row is not None
-        assert row[0] == 99
+        assert row[0] == uid
 
     def test_uploaded_by_null_when_not_provided(self, pg_engine, db_conn):
         _ensure_partition(db_conn, 2024, "transactions_debit")
@@ -183,9 +197,8 @@ class TestViewFamilyIdPassthrough:
         """Build minimal views for the test family against the test engine."""
         from services.view_manager import ViewManager
 
-        # Patch config loaders to return empty config (no bank rules / categories)
         with (
-            patch("services.view_manager.load_rules", return_value=[]),
+            patch("services.view_manager.load_rules", return_value=_TEST_RULES),
             patch("services.view_manager.load_config") as mock_cfg,
             patch("services.view_manager.load_category_config") as mock_cat,
         ):
@@ -195,7 +208,7 @@ class TestViewFamilyIdPassthrough:
             mock_cat.return_value  = CategoryConfig()
 
             vm = ViewManager(pg_engine, schema=SCHEMA)
-            vm.refresh(family_id)
+            vm.refresh()
 
     def test_v_all_spend_has_family_id_column(self, pg_engine, db_conn):
         self._rebuild_views(pg_engine)
@@ -225,7 +238,7 @@ class TestDashboardFamilyIsolation:
     def _setup_views(self, pg_engine) -> None:
         """Build views (empty — no bank rules needed for direct-insert tests)."""
         with (
-            patch("services.view_manager.load_rules", return_value=[]),
+            patch("services.view_manager.load_rules", return_value=_TEST_RULES),
             patch("services.view_manager.load_config") as mc,
             patch("services.view_manager.load_category_config") as mcat,
         ):
@@ -234,126 +247,122 @@ class TestDashboardFamilyIsolation:
             mc.return_value   = TransactionConfig()
             mcat.return_value = CategoryConfig()
             from services.view_manager import ViewManager
-            ViewManager(pg_engine, schema=SCHEMA).refresh(1)
+            ViewManager(pg_engine, schema=SCHEMA).refresh()
 
-    def _seed(self, db_conn) -> None:
-        """
-        Seed debit and credit rows for two families.
-        Family 1: amount=-200 (debit outflow)
-        Family 2: amount=-500 (debit outflow)
-        """
-        _ensure_partition(db_conn, 2024, "transactions_debit")
-        _ensure_partition(db_conn, 2024, "transactions_credit")
+    def _insert(self, pg_engine, sql, params=None):
+        """Commit a row directly via pg_engine (bypasses db_conn rollback)."""
+        with pg_engine.begin() as conn:
+            conn.execute(text(sql), params or {})
 
-        # Family 1 debit outflow
-        db_conn.execute(text(f"""
-            INSERT INTO {SCHEMA}.transactions_debit
-                (account_key, transaction_date, description, amount,
-                 person, source_file, family_id)
-            VALUES ('ck_f1', '2024-06-15', 'Family1 groceries', -200,
-                    ARRAY[]::integer[], 'f1.csv', 1)
-            ON CONFLICT DO NOTHING
-        """))
-        # Family 2 debit outflow
-        db_conn.execute(text(f"""
-            INSERT INTO {SCHEMA}.transactions_debit
-                (account_key, transaction_date, description, amount,
-                 person, source_file, family_id)
-            VALUES ('ck_f2', '2024-06-15', 'Family2 rent', -500,
-                    ARRAY[]::integer[], 'f2.csv', 2)
-            ON CONFLICT DO NOTHING
-        """))
-        db_conn.execute(text("COMMIT"))
+    def _cleanup(self, pg_engine, account_keys):
+        """Delete test rows by account_key so each test starts clean."""
+        with pg_engine.begin() as conn:
+            for ak in account_keys:
+                conn.execute(text(
+                    f"DELETE FROM {SCHEMA}.transactions_debit  WHERE account_key = :ak"
+                ), {"ak": ak})
+                conn.execute(text(
+                    f"DELETE FROM {SCHEMA}.transactions_credit WHERE account_key = :ak"
+                ), {"ak": ak})
 
-    def test_get_years_scoped_to_family(self, pg_engine, db_conn):
+    def test_get_years_scoped_to_family(self, pg_engine):
         """
         Insert 2023 rows for family 1 and 2025 rows for family 2.
         get_years() for family 1 should return 2023, not 2025.
         """
-        _ensure_partition(db_conn, 2023, "transactions_debit")
-        _ensure_partition(db_conn, 2025, "transactions_debit")
+        ak = "ck_years"
+        self._cleanup(pg_engine, [ak])
+        try:
+            with pg_engine.begin() as conn:
+                _ensure_partition(conn, 2023, "transactions_debit")
+                _ensure_partition(conn, 2025, "transactions_debit")
+                conn.execute(text(f"""
+                    INSERT INTO {SCHEMA}.transactions_debit
+                        (account_key, transaction_date, description, amount,
+                         person, source_file, family_id)
+                    VALUES
+                        (:ak, '2023-03-01', 'fam1 row', -10, ARRAY[]::integer[], 'x.csv', 1),
+                        (:ak, '2025-03-01', 'fam2 row', -20, ARRAY[]::integer[], 'x.csv', 2)
+                """), {"ak": ak})
 
-        db_conn.execute(text(f"""
-            INSERT INTO {SCHEMA}.transactions_debit
-                (account_key, transaction_date, description, amount,
-                 person, source_file, family_id)
-            VALUES
-                ('ck_years', '2023-03-01', 'fam1 row', -10, ARRAY[]::integer[], 'x.csv', 1),
-                ('ck_years', '2025-03-01', 'fam2 row', -20, ARRAY[]::integer[], 'x.csv', 2)
-            ON CONFLICT DO NOTHING
-        """))
-        db_conn.execute(text("COMMIT"))
+            self._setup_views(pg_engine)
+            fdd = _fdd(pg_engine)
 
-        self._setup_views(pg_engine)
-        fdd = _fdd(pg_engine)
+            with patch.object(fdd.auth, "current_family_id", return_value=1):
+                years_f1 = fdd.get_years()
+            with patch.object(fdd.auth, "current_family_id", return_value=2):
+                years_f2 = fdd.get_years()
 
-        with patch.object(fdd.auth, "current_family_id", return_value=1):
-            years_f1 = fdd.get_years()
-        with patch.object(fdd.auth, "current_family_id", return_value=2):
-            years_f2 = fdd.get_years()
+            assert 2023 in years_f1
+            assert 2025 not in years_f1
+            assert 2025 in years_f2
+            assert 2023 not in years_f2
+        finally:
+            self._cleanup(pg_engine, [ak])
 
-        assert 2023 in years_f1
-        assert 2025 not in years_f1
-        assert 2025 in years_f2
-        assert 2023 not in years_f2
+    def test_gettransactions_table_scoped_to_family(self, pg_engine):
+        """Transactions table for family 1 should not include family 2 rows."""
+        ak = "ck_tt"
+        self._cleanup(pg_engine, [ak])
+        try:
+            with pg_engine.begin() as conn:
+                _ensure_partition(conn, 2024, "transactions_debit")
+                conn.execute(text(f"""
+                    INSERT INTO {SCHEMA}.transactions_debit
+                        (account_key, transaction_date, description, amount,
+                         person, source_file, family_id)
+                    VALUES
+                        (:ak, '2024-07-01', 'FamilyOne txn', -111, ARRAY[]::integer[], 'a.csv', 1),
+                        (:ak, '2024-07-02', 'FamilyTwo txn', -222, ARRAY[]::integer[], 'b.csv', 2)
+                """), {"ak": ak})
 
-    def test_gettransactions_table_scoped_to_family(self, pg_engine, db_conn):
-        """
-        Transactions table for family 1 should not include family 2 rows.
-        """
-        _ensure_partition(db_conn, 2024, "transactions_debit")
-        db_conn.execute(text(f"""
-            INSERT INTO {SCHEMA}.transactions_debit
-                (account_key, transaction_date, description, amount,
-                 person, source_file, family_id)
-            VALUES
-                ('ck_tt', '2024-07-01', 'FamilyOne txn', -111, ARRAY[]::integer[], 'a.csv', 1),
-                ('ck_tt', '2024-07-02', 'FamilyTwo txn', -222, ARRAY[]::integer[], 'b.csv', 2)
-            ON CONFLICT DO NOTHING
-        """))
-        db_conn.execute(text("COMMIT"))
+            self._setup_views(pg_engine)
+            fdd = _fdd(pg_engine)
 
-        self._setup_views(pg_engine)
-        fdd = _fdd(pg_engine)
+            with patch.object(fdd.auth, "current_family_id", return_value=1):
+                rows_f1 = fdd.gettransactions_table(year=2024)
+            with patch.object(fdd.auth, "current_family_id", return_value=2):
+                rows_f2 = fdd.gettransactions_table(year=2024)
 
-        with patch.object(fdd.auth, "current_family_id", return_value=1):
-            rows_f1 = fdd.gettransactions_table(year=2024)
-        with patch.object(fdd.auth, "current_family_id", return_value=2):
-            rows_f2 = fdd.gettransactions_table(year=2024)
+            descs_f1 = [r["description"] for r in rows_f1]
+            descs_f2 = [r["description"] for r in rows_f2]
 
-        descs_f1 = [r["description"] for r in rows_f1]
-        descs_f2 = [r["description"] for r in rows_f2]
+            assert "FamilyOne txn" in descs_f1
+            assert "FamilyTwo txn" not in descs_f1
+            assert "FamilyTwo txn" in descs_f2
+            assert "FamilyOne txn" not in descs_f2
+        finally:
+            self._cleanup(pg_engine, [ak])
 
-        assert "FamilyOne txn" in descs_f1
-        assert "FamilyTwo txn" not in descs_f1
-        assert "FamilyTwo txn" in descs_f2
-        assert "FamilyOne txn" not in descs_f2
+    def test_get_weekly_transactions_scoped_to_family(self, pg_engine):
+        ak = "ck_wk"
+        self._cleanup(pg_engine, [ak])
+        try:
+            with pg_engine.begin() as conn:
+                _ensure_partition(conn, 2024, "transactions_debit")
+                conn.execute(text(f"""
+                    INSERT INTO {SCHEMA}.transactions_debit
+                        (account_key, transaction_date, description, amount,
+                         person, source_file, family_id)
+                    VALUES
+                        (:ak, '2024-08-05', 'WeeklyF1', -77, ARRAY[]::integer[], 'a.csv', 1),
+                        (:ak, '2024-08-06', 'WeeklyF2', -88, ARRAY[]::integer[], 'b.csv', 2)
+                """), {"ak": ak})
 
-    def test_get_weekly_transactions_scoped_to_family(self, pg_engine, db_conn):
-        _ensure_partition(db_conn, 2024, "transactions_debit")
-        db_conn.execute(text(f"""
-            INSERT INTO {SCHEMA}.transactions_debit
-                (account_key, transaction_date, description, amount,
-                 person, source_file, family_id)
-            VALUES
-                ('ck_wk', '2024-08-05', 'WeeklyF1', -77, ARRAY[]::integer[], 'a.csv', 1),
-                ('ck_wk', '2024-08-06', 'WeeklyF2', -88, ARRAY[]::integer[], 'b.csv', 2)
-            ON CONFLICT DO NOTHING
-        """))
-        db_conn.execute(text("COMMIT"))
+            self._setup_views(pg_engine)
+            fdd = _fdd(pg_engine)
 
-        self._setup_views(pg_engine)
-        fdd = _fdd(pg_engine)
+            with patch.object(fdd.auth, "current_family_id", return_value=1):
+                result_f1 = fdd.get_weekly_transactions(year=2024)
+            with patch.object(fdd.auth, "current_family_id", return_value=2):
+                result_f2 = fdd.get_weekly_transactions(year=2024)
 
-        with patch.object(fdd.auth, "current_family_id", return_value=1):
-            result_f1 = fdd.get_weekly_transactions(year=2024)
-        with patch.object(fdd.auth, "current_family_id", return_value=2):
-            result_f2 = fdd.get_weekly_transactions(year=2024)
+            all_descs_f1 = [t["description"] for txns in result_f1["by_week"].values() for t in txns]
+            all_descs_f2 = [t["description"] for txns in result_f2["by_week"].values() for t in txns]
 
-        all_descs_f1 = [t["description"] for txns in result_f1["by_week"].values() for t in txns]
-        all_descs_f2 = [t["description"] for txns in result_f2["by_week"].values() for t in txns]
-
-        assert "WeeklyF1" in all_descs_f1
-        assert "WeeklyF2" not in all_descs_f1
-        assert "WeeklyF2" in all_descs_f2
-        assert "WeeklyF1" not in all_descs_f2
+            assert "WeeklyF1" in all_descs_f1
+            assert "WeeklyF2" not in all_descs_f1
+            assert "WeeklyF2" in all_descs_f2
+            assert "WeeklyF1" not in all_descs_f2
+        finally:
+            self._cleanup(pg_engine, [ak])

@@ -249,14 +249,15 @@ class TestCreateUser:
         finally:
             self._cleanup(pg_engine, schema, "new_member")
 
-    def test_create_defaults_to_family_1(self, pg_engine, schema):
+    def test_create_with_no_family_has_no_membership(self, pg_engine, schema):
         from services import auth as _auth
         _auth._ENGINE = pg_engine
         _auth._SCHEMA = schema
 
         try:
             user = _auth.create_user("default_fam_user", "pass1234", "Default Fam", "defaultfam")
-            assert user.family_id == 1
+            assert user.family_id is None
+            assert user.family_role is None
         finally:
             self._cleanup(pg_engine, schema, "default_fam_user")
 

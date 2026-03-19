@@ -8,16 +8,17 @@ NiceGUI UI calls are mocked so tests run outside a browser/event-loop context.
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 
-# Stub out nicegui.ui before importing the renderer so the module-level import
-# of `from nicegui import ui` resolves to our mock namespace.
-_ui_mock = MagicMock()
-sys.modules.setdefault('nicegui', MagicMock(ui=_ui_mock))
-sys.modules.setdefault('nicegui.ui', _ui_mock)
+# Ensure nicegui can be imported even without a running event loop.
+# We stub just enough for the module-level import to resolve.
+if 'nicegui' not in sys.modules:
+    sys.modules['nicegui'] = MagicMock()
+if 'nicegui.ui' not in sys.modules:
+    sys.modules['nicegui.ui'] = MagicMock()
 
 import components.custom_chart_renderer as renderer
 
@@ -26,10 +27,11 @@ import components.custom_chart_renderer as renderer
 # helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _reset_mocks():
-    _ui_mock.reset_mock()
-    _ui_mock.echart.return_value = MagicMock()
-    _ui_mock.label.return_value  = MagicMock()
+def _ui_mock():
+    m = MagicMock()
+    m.echart.return_value = MagicMock()
+    m.label.return_value  = MagicMock()
+    return m
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -37,11 +39,11 @@ def _reset_mocks():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_empty_data_shows_no_data_label():
-    _reset_mocks()
-    with patch('nicegui.ui', _ui_mock):
+    ui = _ui_mock()
+    with patch.object(renderer, 'ui', ui):
         renderer.render_custom_chart({'chart_type': 'bar'}, {'x': [], 'series': {}})
-    _ui_mock.label.assert_called_once()
-    _ui_mock.echart.assert_not_called()
+    ui.label.assert_called_once()
+    ui.echart.assert_not_called()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,18 +51,17 @@ def test_empty_data_shows_no_data_label():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_bar_chart_creates_echart():
-    _reset_mocks()
+    ui = _ui_mock()
     data = {'x': ['Jan 2024', 'Feb 2024'], 'series': {'amount': [100.0, 200.0]}}
     config = {'chart_type': 'bar', 'label_format': 'dollar', 'show_legend': True}
 
-    with patch('nicegui.ui', _ui_mock):
+    with patch.object(renderer, 'ui', ui):
         renderer.render_custom_chart(config, data)
 
-    _ui_mock.echart.assert_called_once()
-    opts = _ui_mock.echart.call_args[0][0]
-    series = opts['series']
-    assert len(series) == 1
-    assert series[0]['type'] == 'bar'
+    ui.echart.assert_called_once()
+    opts = ui.echart.call_args[0][0]
+    assert len(opts['series']) == 1
+    assert opts['series'][0]['type'] == 'bar'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -68,18 +69,17 @@ def test_bar_chart_creates_echart():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_donut_chart_creates_echart():
-    _reset_mocks()
+    ui = _ui_mock()
     data = {'x': ['Food', 'Gas'], 'series': {'amount': [50.0, 30.0]}}
     config = {'chart_type': 'donut', 'show_legend': True}
 
-    with patch('nicegui.ui', _ui_mock):
+    with patch.object(renderer, 'ui', ui):
         renderer.render_custom_chart(config, data)
 
-    _ui_mock.echart.assert_called_once()
-    opts = _ui_mock.echart.call_args[0][0]
-    series = opts['series']
-    assert len(series) == 1
-    assert series[0]['type'] == 'pie'
+    ui.echart.assert_called_once()
+    opts = ui.echart.call_args[0][0]
+    assert len(opts['series']) == 1
+    assert opts['series'][0]['type'] == 'pie'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,20 +87,17 @@ def test_donut_chart_creates_echart():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_line_chart_multiple_series():
-    _reset_mocks()
+    ui = _ui_mock()
     data = {
         'x': ['Jan 2024', 'Feb 2024'],
-        'series': {
-            'Food': [50.0, 60.0],
-            'Gas':  [30.0, 40.0],
-        },
+        'series': {'Food': [50.0, 60.0], 'Gas': [30.0, 40.0]},
     }
     config = {'chart_type': 'line', 'show_legend': True}
 
-    with patch('nicegui.ui', _ui_mock):
+    with patch.object(renderer, 'ui', ui):
         renderer.render_custom_chart(config, data)
 
-    opts = _ui_mock.echart.call_args[0][0]
+    opts = ui.echart.call_args[0][0]
     assert len(opts['series']) == 2
     for s in opts['series']:
         assert s['type'] == 'line'
@@ -111,17 +108,15 @@ def test_line_chart_multiple_series():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_label_format_dollar():
-    _reset_mocks()
+    ui = _ui_mock()
     data = {'x': ['Jan 2024'], 'series': {'amount': [100.0]}}
     config = {'chart_type': 'bar', 'label_format': 'dollar', 'show_legend': False}
 
-    with patch('nicegui.ui', _ui_mock):
+    with patch.object(renderer, 'ui', ui):
         renderer.render_custom_chart(config, data)
 
-    opts = _ui_mock.echart.call_args[0][0]
-    series = opts['series']
-    assert 'label' in series[0]
-    fmt_str = series[0]['label'].get(':formatter', '')
+    opts = ui.echart.call_args[0][0]
+    fmt_str = opts['series'][0]['label'].get(':formatter', '')
     assert '$' in fmt_str
 
 
@@ -130,13 +125,12 @@ def test_label_format_dollar():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_label_format_none():
-    _reset_mocks()
+    ui = _ui_mock()
     data = {'x': ['Jan 2024'], 'series': {'amount': [100.0]}}
     config = {'chart_type': 'bar', 'label_format': None, 'show_legend': False}
 
-    with patch('nicegui.ui', _ui_mock):
+    with patch.object(renderer, 'ui', ui):
         renderer.render_custom_chart(config, data)
 
-    opts = _ui_mock.echart.call_args[0][0]
-    series = opts['series']
-    assert 'label' not in series[0]
+    opts = ui.echart.call_args[0][0]
+    assert 'label' not in opts['series'][0]

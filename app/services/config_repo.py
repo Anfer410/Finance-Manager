@@ -90,7 +90,14 @@ def _settings_get() -> dict:
             rows = conn.execute(text(sql)).fetchall()
         result = {}
         for key, val in rows:
-            result[key] = val if isinstance(val, (dict, list)) else json.loads(val)
+            # psycopg3 already deserializes JSONB to Python objects;
+            # only call json.loads if we received a raw string (psycopg2 compat).
+            if isinstance(val, str):
+                try:
+                    val = json.loads(val)
+                except json.JSONDecodeError:
+                    pass
+            result[key] = val
         return result
     except Exception as e:
         print(f"[config_repo] read app_settings failed: {e}")

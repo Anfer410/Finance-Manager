@@ -122,6 +122,15 @@ def pg_engine():
         dm_module._create_transaction_tables(conn, "finance")
         dm_module._migrate_configs_if_needed(conn, "finance")
 
+        # Seed additional families used by isolation + scoping tests.
+        for fid, name in [(2, 'Test Family 2'), (7, 'Test Family 7'), (42, 'Test Family 42')]:
+            conn.execute(text("""
+                INSERT INTO finance.families (id, name, created_at)
+                VALUES (:id, :name, NOW())
+                ON CONFLICT (id) DO NOTHING
+            """), {"id": fid, "name": name})
+
+
     yield engine
 
     engine.dispose()

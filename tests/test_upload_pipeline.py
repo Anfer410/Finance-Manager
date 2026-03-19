@@ -20,8 +20,11 @@ APP_DIR = os.path.join(os.path.dirname(__file__), "..", "app")
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
-# Stub modules that would hit the DB or filesystem at import time
-for _mod in ("data.db", "services.raw_table_manager", "services.view_manager", "db_migration"):
+# Stub modules that would hit the DB or filesystem at import time.
+# Only stub what upload_pipeline.py actually imports at module level.
+# view_manager and raw_table_manager are lazy imports (inside functions)
+# and must NOT be stubbed here — other test files need the real modules.
+for _mod in ("data.db", "db_migration"):
     sys.modules.setdefault(_mod, MagicMock())
 
 import pandas as pd

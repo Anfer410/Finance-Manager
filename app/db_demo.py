@@ -14,6 +14,9 @@ Usage
     # Same thing
     python db_demo.py --clean
 
+    # Force recreation of the data 
+    python db_demo.py --force
+
 Sentinel
 ────────
 A key "demo_installed" is stored in app_settings with metadata about what
@@ -153,6 +156,10 @@ def create_demo(force: bool = False) -> None:
             print("[demo] Demo data already installed. Use --force to reinstall or --destroy to remove.")
             return
 
+    # Ensure all tables exist (idempotent)
+    from db_migration import run_migrations
+    run_migrations()
+
     # Force re-provision: destroy existing demo data first
     if force:
         destroy_demo(force=True)
@@ -169,11 +176,14 @@ def create_demo(force: bool = False) -> None:
         uid_user4  = user_ids["demo_user_4"]
         uid_user5  = user_ids["demo_user_5"]
 
-        # 2. Families
+        # 2. Advance sequences past any explicitly-inserted IDs (e.g. Default Family id=1)
+        _reset_sequences(conn, schema)
+
+        # 3. Families
         fid1 = _create_family(conn, schema, "Demo Family 1", uid_admin)
         fid2 = _create_family(conn, schema, "Demo Family 2", uid_user3)
 
-        # 3. Memberships
+        # 4. Memberships
         _add_member(conn, schema, fid1, uid_admin,  "head")
         _add_member(conn, schema, fid1, uid_user1,  "member")
         _add_member(conn, schema, fid1, uid_user2,  "member")
@@ -185,12 +195,12 @@ def create_demo(force: bool = False) -> None:
         _setup_family_config(conn, schema, fid1, _fam1_bank_rules(uid_admin, uid_user1, uid_user2))
         _setup_family_config(conn, schema, fid2, _fam2_bank_rules(uid_user3, uid_user4, uid_user5))
 
-        # 5. Archive toggle (enabled for both demo families)
+        # 5. Archive toggle (disabled for demo — no raw tables seeded)
         for fid in (fid1, fid2):
             conn.execute(text(f"""
                 INSERT INTO {schema}.app_config_archive (family_id, archive_enabled, updated_at)
-                VALUES (:fid, TRUE, NOW())
-                ON CONFLICT (family_id) DO UPDATE SET archive_enabled = TRUE, updated_at = NOW()
+                VALUES (:fid, FALSE, NOW())
+                ON CONFLICT (family_id) DO UPDATE SET archive_enabled = FALSE, updated_at = NOW()
             """), {"fid": fid})
 
         # 6. Transactions
@@ -216,18 +226,63 @@ def create_demo(force: bool = False) -> None:
         for uname, uid in user_ids.items():
             print(f"[demo]   user {uname!r:20s} id={uid}")
 
-    # 10. Rebuild views — fam2 first, then fam1 so admin sees correct data on login
+    # 10. Rebuild views — combine all demo families' rules into one pass so every
+    #     family's account_keys appear in the views (views are shared/global).
     print("[demo]   rebuilding views …")
-    from services.view_manager import default_view_manager
-    vm = default_view_manager()
-    vm.refresh(fid2)
-    vm.refresh(fid1)
+    _refresh_combined_views([fid1, fid2])
 
     # 11. Write sample CSVs
     print("[demo]   writing sample CSVs …")
     _write_sample_csvs(user_ids)
 
     print("[demo] Done. Log in with demo_admin / demo")
+
+
+def _refresh_combined_views(family_ids: list[int]) -> None:
+    """
+    Rebuild views combining bank rules from all given families.
+
+    Views are global SQL objects — they contain a UNION ALL branch per
+    account_key. If we refresh with only one family's rules the other
+    family's transactions become invisible. This helper merges all rules
+    into one pass so every family's account_keys appear in the views.
+    """
+    from data.bank_rules import load_rules, BankRule
+    from services.transaction_config import load_config
+    from data.category_rules import load_category_config
+    from services.view_manager import default_view_manager
+
+    vm = default_view_manager()
+
+    # Collect rules from all families; dedupe by prefix so no UNION ALL duplicates
+    all_rules: list[BankRule] = []
+    seen_prefixes: set[str] = set()
+    for fid in family_ids:
+        for rule in load_rules(fid):
+            if rule.prefix not in seen_prefixes:
+                seen_prefixes.add(rule.prefix)
+                all_rules.append(rule)
+
+    # Use fid of the first family for TransactionConfig / CategoryConfig
+    cfg     = load_config(family_ids[0])
+    cfg_cat = load_category_config(family_ids[0])
+
+    # Drop all views first (same as ViewManager.refresh does)
+    from data.db import get_engine, get_schema
+    from sqlalchemy import text
+    with get_engine().begin() as conn:
+        for v in ("v_transactions", "v_all_spend",
+                  "v_income", "v_debit_spend",
+                  "v_credit_spend", "v_credit_payments"):
+            conn.execute(text(f"DROP VIEW IF EXISTS {get_schema()}.{v} CASCADE"))
+
+    vm._build_credit_payments_view(all_rules)
+    vm._build_credit_spend_view(all_rules, cfg_cat)
+    vm._build_debit_spend_view(all_rules, cfg, cfg_cat)
+    vm._build_income_view(all_rules, cfg)
+    vm._build_all_spend_view()
+    vm._build_legacy_transactions_view()
+    print(f"[demo] views rebuilt for {len(family_ids)} families, {len(all_rules)} account_keys")
 
 
 def destroy_demo(force: bool = False) -> None:
@@ -350,6 +405,18 @@ def _create_users(conn, schema: str) -> dict[str, int]:
 
 # ── Family helpers ─────────────────────────────────────────────────────────────
 
+def _reset_sequences(conn, schema: str) -> None:
+    """Advance SERIAL sequences past any rows inserted with explicit IDs (e.g. Default Family id=1)."""
+    for table, col in [("families", "id"), ("app_users", "id")]:
+        conn.execute(text(f"""
+            SELECT setval(
+                pg_get_serial_sequence('{schema}.{table}', '{col}'),
+                COALESCE((SELECT MAX({col}) FROM {schema}.{table}), 1),
+                TRUE
+            )
+        """))
+
+
 def _create_family(conn, schema: str, name: str, created_by: int) -> int:
     row = conn.execute(text(f"""
         INSERT INTO {schema}.families (name, created_by, created_at)
@@ -376,9 +443,8 @@ def _add_member(conn, schema: str, family_id: int, user_id: int, role: str) -> N
 # ── Config ────────────────────────────────────────────────────────────────────
 
 def _setup_family_config(conn, schema: str, family_id: int, bank_rules: list[dict]) -> None:
-    """Save bank rules + copy category/transaction config from family 1 defaults."""
+    """Save bank rules + demo category/transaction config for a demo family."""
     import json as _json
-    from data.category_rules import DEFAULT_CATEGORIES, DEFAULT_RULES
     from services.transaction_config import TransactionConfig
 
     def _upsert_config(table_suffix: str, data: dict) -> None:
@@ -389,10 +455,105 @@ def _setup_family_config(conn, schema: str, family_id: int, bank_rules: list[dic
                 SET data = CAST(:data AS jsonb), updated_at = NOW()
         """), {"fid": family_id, "data": _json.dumps(data)})
 
-    _upsert_config("bank_rules", {"rules": bank_rules})
-    _upsert_config("banks",      {"banks": [r["bank_name"] for r in bank_rules]})
-    _upsert_config("categories", {"categories": DEFAULT_CATEGORIES, "rules": DEFAULT_RULES})
-    _upsert_config("transaction", TransactionConfig().to_dict())
+    txn_cfg = TransactionConfig(
+        transfer_patterns=[
+            "ONLINE PAYMENT", "AUTOPAY", "AUTOMATIC PAYMENT",
+            "TRANSFER TO CHECKING", "TRANSFER FROM SAVINGS",
+        ],
+        employer_patterns=[],
+        member_aliases={},
+    )
+    # Build BankConfig dicts (not bare strings) — load_banks() calls BankConfig.from_dict()
+    from data.bank_config import BankConfig
+    seen_names: set[str] = set()
+    bank_configs: list[dict] = []
+    for r in bank_rules:
+        name = r["bank_name"]
+        if name not in seen_names:
+            seen_names.add(name)
+            bank_configs.append(BankConfig.from_name(name).to_dict())
+
+    _upsert_config("bank_rules",  {"rules": bank_rules})
+    _upsert_config("banks",       {"banks": bank_configs})
+    _upsert_config("categories",  _demo_categories())
+    _upsert_config("transaction", txn_cfg.to_dict())
+
+
+def _demo_categories() -> dict:
+    """Category list + rules tuned to match all demo transaction descriptions."""
+    categories = [
+        {"name": "Groceries",      "cost_type": "variable", "color": "#4ade80"},
+        {"name": "Restaurants",    "cost_type": "variable", "color": "#fb923c"},
+        {"name": "Gas/Automotive", "cost_type": "variable", "color": "#f87171"},
+        {"name": "Health",         "cost_type": "variable", "color": "#34d399"},
+        {"name": "Merchandise",    "cost_type": "variable", "color": "#a78bfa"},
+        {"name": "Amazon",         "cost_type": "variable", "color": "#fbbf24"},
+        {"name": "Subscriptions",  "cost_type": "fixed",    "color": "#e879f9"},
+        {"name": "Home",           "cost_type": "fixed",    "color": "#60a5fa"},
+        {"name": "Auto Loan",      "cost_type": "fixed",    "color": "#f97316"},
+        {"name": "Utilities",      "cost_type": "fixed",    "color": "#818cf8"},
+        {"name": "Childcare",      "cost_type": "variable", "color": "#6ee7b7"},
+        {"name": "Other",          "cost_type": "variable", "color": "#d1d5db"},
+    ]
+
+    p = 10  # priority step helper
+    rules = [
+        # ── Mortgage / home loan (debit outflow) ─────────────────────────────
+        {"pattern": "HOME LOAN",          "is_regex": False, "category": "Home",           "priority": p},
+        # ── Auto loans ────────────────────────────────────────────────────────
+        {"pattern": "AUTO LOAN",          "is_regex": False, "category": "Auto Loan",      "priority": p},
+        # ── Groceries ─────────────────────────────────────────────────────────
+        {"pattern": "WHOLE FOODS",        "is_regex": False, "category": "Groceries",      "priority": p * 2},
+        {"pattern": "TRADER JOE",         "is_regex": False, "category": "Groceries",      "priority": p * 2},
+        {"pattern": "KROGER",             "is_regex": False, "category": "Groceries",      "priority": p * 2},
+        {"pattern": "SAFEWAY",            "is_regex": False, "category": "Groceries",      "priority": p * 2},
+        {"pattern": "ALDI",               "is_regex": False, "category": "Groceries",      "priority": p * 2},
+        {"pattern": "COSTCO",             "is_regex": False, "category": "Groceries",      "priority": p * 2},
+        # ── Restaurants ───────────────────────────────────────────────────────
+        {"pattern": "CHIPOTLE",           "is_regex": False, "category": "Restaurants",    "priority": p * 3},
+        {"pattern": "MCDONALD",           "is_regex": False, "category": "Restaurants",    "priority": p * 3},
+        {"pattern": "STARBUCKS",          "is_regex": False, "category": "Restaurants",    "priority": p * 3},
+        {"pattern": "PANERA",             "is_regex": False, "category": "Restaurants",    "priority": p * 3},
+        {"pattern": "PIZZA HUT",          "is_regex": False, "category": "Restaurants",    "priority": p * 3},
+        {"pattern": "SUBWAY",             "is_regex": False, "category": "Restaurants",    "priority": p * 3},
+        {"pattern": "LOCAL BISTRO",       "is_regex": False, "category": "Restaurants",    "priority": p * 3},
+        {"pattern": "BISTRO",             "is_regex": False, "category": "Restaurants",    "priority": p * 3},
+        # ── Gas stations ──────────────────────────────────────────────────────
+        {"pattern": "SHELL",              "is_regex": False, "category": "Gas/Automotive", "priority": p * 4},
+        {"pattern": "CHEVRON",            "is_regex": False, "category": "Gas/Automotive", "priority": p * 4},
+        {"pattern": "BP GAS",             "is_regex": False, "category": "Gas/Automotive", "priority": p * 4},
+        {"pattern": "MOBIL",              "is_regex": False, "category": "Gas/Automotive", "priority": p * 4},
+        # ── Utilities (electric, water, internet, gas utility) ────────────────
+        {"pattern": "ELECTRIC BILL",      "is_regex": False, "category": "Utilities",      "priority": p * 5},
+        {"pattern": "WATER BILL",         "is_regex": False, "category": "Utilities",      "priority": p * 5},
+        {"pattern": "INTERNET SERVICE",   "is_regex": False, "category": "Utilities",      "priority": p * 5},
+        {"pattern": "GAS UTILITY",        "is_regex": False, "category": "Utilities",      "priority": p * 5},
+        # ── Subscriptions (streaming / cloud) ─────────────────────────────────
+        {"pattern": "NETFLIX",            "is_regex": False, "category": "Subscriptions",  "priority": p * 6},
+        {"pattern": "SPOTIFY",            "is_regex": False, "category": "Subscriptions",  "priority": p * 6},
+        {"pattern": "AMAZON PRIME",       "is_regex": False, "category": "Subscriptions",  "priority": p * 6},
+        {"pattern": "APPLE ICLOUD",       "is_regex": False, "category": "Subscriptions",  "priority": p * 6},
+        {"pattern": "HULU",               "is_regex": False, "category": "Subscriptions",  "priority": p * 6},
+        # ── Amazon (purchases, not Prime) ─────────────────────────────────────
+        {"pattern": "AMAZON",             "is_regex": False, "category": "Amazon",         "priority": p * 7},
+        # ── Merchandise (big-box, home improvement) ───────────────────────────
+        {"pattern": "TARGET",             "is_regex": False, "category": "Merchandise",    "priority": p * 8},
+        {"pattern": "WALMART",            "is_regex": False, "category": "Merchandise",    "priority": p * 8},
+        {"pattern": "HOME DEPOT",         "is_regex": False, "category": "Merchandise",    "priority": p * 8},
+        {"pattern": "BEST BUY",           "is_regex": False, "category": "Merchandise",    "priority": p * 8},
+        # ── Health (pharmacy, doctor, dental, vision) ─────────────────────────
+        {"pattern": "PHARMACY",           "is_regex": False, "category": "Health",         "priority": p * 9},
+        {"pattern": "CVS",                "is_regex": False, "category": "Health",         "priority": p * 9},
+        {"pattern": "DOCTOR",             "is_regex": False, "category": "Health",         "priority": p * 9},
+        {"pattern": "DENTAL",             "is_regex": False, "category": "Health",         "priority": p * 9},
+        {"pattern": "VISION",             "is_regex": False, "category": "Health",         "priority": p * 9},
+        # ── Childcare / kids ──────────────────────────────────────────────────
+        {"pattern": "SCHOOL SUPPLIES",    "is_regex": False, "category": "Childcare",      "priority": p * 10},
+        {"pattern": "SPORTS EQUIPMENT",   "is_regex": False, "category": "Childcare",      "priority": p * 10},
+        {"pattern": "TOY STORE",          "is_regex": False, "category": "Childcare",      "priority": p * 10},
+        {"pattern": "KIDS CLOTH",         "is_regex": False, "category": "Childcare",      "priority": p * 10},
+    ]
+    return {"categories": categories, "rules": rules}
 
 
 def _fam1_bank_rules(uid_admin: int, uid_user1: int, uid_user2: int) -> list[dict]:

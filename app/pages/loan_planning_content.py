@@ -21,8 +21,8 @@ from services.loan_service import (
 
 def content() -> None:
     import services.auth as auth
-    if not auth.is_instance_admin():
-        ui.navigate.to("/")
+    if not auth.is_authenticated():
+        ui.navigate.to("/login")
         return
 
     family_id = auth.current_family_id()

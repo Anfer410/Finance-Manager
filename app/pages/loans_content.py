@@ -58,10 +58,11 @@ def content() -> None:
             with ui.row().classes("items-center justify-between w-full"):
                 ui.label(f"{len(loans)} loan{'s' if len(loans) != 1 else ''}") \
                     .classes("text-sm text-zinc-400")
-                ui.button("Add loan", icon="add",
-                          on_click=lambda: _loan_dialog(None, loan_list.refresh, family_id)) \
-                    .props("unelevated no-caps") \
-                    .classes("bg-zinc-800 text-white rounded-lg px-4")
+                if auth.is_family_head():
+                    ui.button("Add loan", icon="add",
+                        on_click=lambda: _loan_dialog(None, loan_list.refresh, family_id)) \
+                        .props("unelevated no-caps") \
+                        .classes("bg-zinc-800 text-white rounded-lg px-4")
 
             if not loans:
                 with ui.card().classes(
@@ -131,12 +132,14 @@ def _loan_card(loan: LoanRecord, on_refresh, family_id: int | None = None) -> No
                 ui.label(f"· {loan.lender}").classes("text-xs text-zinc-300")
 
             ui.space()
-            ui.button(icon="edit",
+            import services.auth as auth
+            if auth.is_family_head():
+                ui.button(icon="edit",
                       on_click=lambda l=loan: _loan_dialog(l, on_refresh, family_id)) \
-                .props("flat round dense").classes("text-zinc-400")
-            ui.button(icon="delete_outline",
+                    .props("flat round dense").classes("text-zinc-400")
+                ui.button(icon="delete_outline",
                       on_click=lambda l=loan: _confirm_delete(l, on_refresh, family_id)) \
-                .props("flat round dense").classes("text-red-300")
+                    .props("flat round dense").classes("text-red-300")
 
         # ── KPI metrics ──────────────────────────────────────────────────────
         with ui.row().classes("gap-0 px-6 py-5 flex-wrap border-b border-zinc-50"):

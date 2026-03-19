@@ -752,9 +752,11 @@ def content() -> None:
     person_ref   = {"value": None}
     selected_ref = {"value": "auto"}   # "auto" or rule.prefix
 
-    if auth.is_instance_admin():
-        all_users_list = auth.get_all_users()
-        active_users   = [u for u in all_users_list if u.is_active]
+    if auth.is_family_head(): # display only users that are part of family
+        import services.family_service as fam
+        fam_id = auth.get_user_by_id(auth.current_user_id()).family_id
+        fam_members = fam.get_family_members(fam_id)
+        active_users = [auth.get_user_by_id(u.user_id) for u in fam_members if u.is_active]
     else:
         cur = auth.get_user_by_id(auth.current_user_id())
         active_users = [cur] if cur else []

@@ -1450,7 +1450,12 @@ def _raw_export_section() -> None:
             rules_by_prefix = {r.prefix: r for r in (load_rules(auth.current_family_id()) or [])}
 
             try:
-                all_users = auth.get_all_users()
+                if auth.is_instance_admin():
+                    all_users = auth.get_all_users()
+                else:
+                    import services.family_service as fam
+                    family_users = fam.get_family_members(auth.current_family_id())                    
+                    all_users = [auth.get_user_by_id(u.user_id) for u in family_users]
             except Exception:
                 all_users = []
 
@@ -1542,8 +1547,10 @@ def content() -> None:
                 tab_family = ui.tab('Family', icon='corporate_fare')
             if is_head:
                 tab_uploads = ui.tab('Uploads',  icon='folder_open')
-                tab_data    = ui.tab('Data',     icon='storage')
+                tab_data    = ui.tab('Import/Export',     icon='move_down')
                 tab_archive = ui.tab('Archive',  icon='inventory_2')
+
+            tab_database    = ui.tab('Database', icon='storage')
             
 
         # ── Tab panels ─────────────────────────────────────────────────────────
@@ -1581,7 +1588,7 @@ def content() -> None:
                         _finance_data_export_section()
                         _finance_data_import_section()
                         _export_import_section()
-                        _refresh_views_section()
+                        
 
                 # ── Archive (head+) ────────────────────────────────────────────
                 with ui.tab_panel(tab_archive):
@@ -1589,6 +1596,8 @@ def content() -> None:
                         _archive_toggle_section()
                         _raw_export_section()
 
-
-
+            
+            with ui.tab_panel(tab_database):
+                with ui.column().classes('w-full gap-6'):
+                    _refresh_views_section()
 

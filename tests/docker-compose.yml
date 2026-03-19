@@ -1,0 +1,11 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: finance_test
+    ports:
+      - "5434:5432"   # 5434 to avoid collision with the dev instance on 5432/5433
+    tmpfs:
+      - /var/lib/postgresql   # in-memory — fast and leaves no disk state (pg18: data lives here)

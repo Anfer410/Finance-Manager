@@ -75,10 +75,10 @@ DEFAULT_RULES: list[BankRule] = []
 
 
 # ── Persistent rule store ─────────────────────────────────────────────────────
-def load_rules() -> list[BankRule]:
+def load_rules(family_id: int) -> list[BankRule]:
     try:
         from services.config_repo import load_bank_rules
-        raw = load_bank_rules()
+        raw = load_bank_rules(family_id)
         if raw:
             rules = [BankRule.from_dict(r) for r in raw]
             default_by_name = {r.bank_name: r for r in DEFAULT_RULES}
@@ -95,13 +95,13 @@ def load_rules() -> list[BankRule]:
             return rules
     except Exception as e:
         print(f"[bank_rules] DB load failed ({e})")
+    return []
 
 
-
-def save_rules(rules: list[BankRule]) -> None:
+def save_rules(rules: list[BankRule], family_id: int) -> None:
     try:
         from services.config_repo import save_bank_rules
-        save_bank_rules([r.to_dict() for r in rules])
+        save_bank_rules([r.to_dict() for r in rules], family_id)
         return
     except Exception as e:
         print(f"[bank_rules] DB save failed ({e})")
@@ -111,11 +111,11 @@ def save_rules(rules: list[BankRule]) -> None:
 # ── Matcher ───────────────────────────────────────────────────────────────────
 
 class RuleMatcher:
-    def __init__(self, rules: Optional[list[BankRule]] = None):
+    def __init__(self, rules: list[BankRule]):
         self._rules = rules
 
     def _get_rules(self) -> list[BankRule]:
-        return self._rules if self._rules is not None else load_rules()
+        return self._rules
 
     def _matches(self, rule: BankRule, filename: str) -> bool:
         v, p = filename.lower(), rule.match_value.lower()
@@ -138,4 +138,3 @@ class RuleMatcher:
         return None
 
 
-_matcher = RuleMatcher()

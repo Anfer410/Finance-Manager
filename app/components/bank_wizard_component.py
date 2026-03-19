@@ -308,7 +308,7 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
 
     # ── Step 1: account details (bank selector + alias) ────────────────────────
     def _step1():
-        banks = load_banks()
+        banks = load_banks(auth.current_family_id())
         bank_slugs  = [b.slug for b in banks]
         bank_labels = {b.slug: b.name for b in banks}
 
@@ -714,7 +714,7 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
         all_users    = auth.get_all_users()
         active_users = [u for u in all_users if u.is_active]
         user_opt_map: dict[str, int] = {
-            f"{u.display_name}  ({u.person_name})": u.id
+            f"{u.display_name}": u.id
             for u in active_users
         }
         user_opt_labels = list(user_opt_map.keys())
@@ -831,7 +831,7 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
             with override_container:
                 for u in active_users:
                     chk = ui.checkbox(
-                        f"{u.person_name}  ({u.display_name})",
+                        f"{u.display_name}",
                         value=(u.id in override_ids),
                     )
                     chk.on("update:model-value",
@@ -1145,7 +1145,7 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                     ui.label("Member aliases:") \
                         .classes("text-xs text-zinc-400 font-semibold uppercase tracking-wide")
                     all_users    = auth.get_all_users()
-                    uid_to_label = {u.id: f"{u.display_name} ({u.person_name})" for u in all_users}
+                    uid_to_label = {u.id: f"{u.display_name}" for u in all_users}
                     with ui.column().classes("gap-0.5"):
                         for raw_val, uid in d["member_aliases"].items():
                             ui.label(
@@ -1176,7 +1176,8 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                 dedup_columns            = m.dedup_columns(acct),
             )
 
-            rules = load_rules()
+            fid = auth.current_family_id()
+            rules = load_rules(fid)
             if any(r.prefix == rule.prefix for r in rules):
                 notify(
                     'An account with alias "' + rule.prefix + '" already exists. '
@@ -1185,14 +1186,14 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                 )
                 return
             rules.append(rule)
-            save_rules(rules)
+            save_rules(rules, fid)
 
             # Ensure BankConfig entity exists (create if new bank)
-            banks = load_banks()
+            banks = load_banks(fid)
             if not any(b.slug == _re.sub(r"[^a-z0-9]+", "_", d["bank_name"].lower()).strip("_")
                        for b in banks):
                 banks.append(BankConfig.from_name(d["bank_name"]))
-                save_banks(banks)
+                save_banks(banks, fid)
 
             # Push staged CSV data to consolidated tables
             if state.get("staged_df") is not None:
@@ -1208,7 +1209,7 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                         source_file = state["filename"],
                     )
                     print(f"[Wizard] committed {inserted} rows from staged data")
-                    default_view_manager().refresh()
+                    default_view_manager().refresh(fid)
                 except Exception as ex:
                     print(f"[Wizard] staged push failed: {ex}")
 

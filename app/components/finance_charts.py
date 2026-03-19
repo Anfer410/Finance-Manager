@@ -1,5 +1,6 @@
 from nicegui import ui
 from styles.dashboards import GRID, TT_AXIS, LEGEND, C_SPEND, C_INCOME, C_PAYROLL, C_NET_POS, C_NET_NEG, BANK_COLORS, legend_pos, grid_for_legend
+import services.auth as auth
 
 # ── KPI card ──────────────────────────────────────────────────────────────────
 
@@ -351,7 +352,7 @@ def weekly_transactions_chart(series: dict, on_category_click=None, active_categ
 
     import json
     from data.category_rules import load_category_config
-    cfg_cat   = load_category_config()
+    cfg_cat   = load_category_config(auth.current_family_id())
     color_map = {c.name: c.color for c in cfg_cat.categories}
 
     weeks   = series["weeks"]
@@ -469,7 +470,7 @@ def transactions_table(rows: list[dict]) -> None:
     This function just renders the static table for the given rows.
     """
     from data.category_rules import load_category_config
-    cfg_cat   = load_category_config()
+    cfg_cat   = load_category_config(auth.current_family_id())
     color_map = {c.name: c.color for c in cfg_cat.categories}
 
     total_spend = sum(r["amount"] for r in rows)

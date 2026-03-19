@@ -12,6 +12,12 @@ CONFIG_FILE = Path("transaction_config.json")
 
 
 @dataclass
+class EmployerPattern:
+    pattern:  str
+    added_by: int | None = None   # None = added by a Family Head (protected from members)
+
+
+@dataclass
 class TransactionConfig:
     # Inter-account transfer exclusions
     transfer_patterns: list[str] = field(default_factory=lambda: [
@@ -25,29 +31,53 @@ class TransactionConfig:
         "CITI CARD",
     ])
 
-    # Employer / payroll description patterns
-    employer_patterns: list[str] = field(default_factory=list)
+    # Employer / payroll description patterns — each carries who added it.
+    # added_by=None  → Family Head entry, members cannot edit/remove it.
+    # added_by=<id>  → Member-owned entry, only that member (or a Head) can remove it.
+    employer_patterns: list[EmployerPattern] = field(default_factory=list)
 
     # Global member name → person alias map.
-    # Used by view_manager to resolve person from member_name columns.
-    # Key: substring to match in the member_name column (case-insensitive)
-    # Value: person alias (e.g. "andy", "jess")
-    # Example: {"JOHN": "andy", "ANNA": "jess"}
     member_aliases: dict[str, str] = field(default_factory=dict)
 
+    @property
+    def employer_pattern_strings(self) -> list[str]:
+        """Plain list of pattern strings — used by view_manager and dashboard queries."""
+        return [ep.pattern for ep in self.employer_patterns]
+
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {
+            "transfer_patterns": self.transfer_patterns,
+            "employer_patterns": [
+                {"pattern": ep.pattern, "added_by": ep.added_by}
+                for ep in self.employer_patterns
+            ],
+            "member_aliases": self.member_aliases,
+        }
 
     @staticmethod
     def from_dict(d: dict) -> "TransactionConfig":
-        known = {f for f in TransactionConfig.__dataclass_fields__}
-        return TransactionConfig(**{k: v for k, v in d.items() if k in known})
+        raw_ep = d.get("employer_patterns", [])
+        employer_patterns = []
+        for item in raw_ep:
+            if isinstance(item, str):
+                # Backward compat: plain string → Head-owned
+                employer_patterns.append(EmployerPattern(pattern=item, added_by=None))
+            elif isinstance(item, dict):
+                employer_patterns.append(EmployerPattern(
+                    pattern=item.get("pattern", ""),
+                    added_by=item.get("added_by"),
+                ))
+        return TransactionConfig(
+            transfer_patterns=d.get("transfer_patterns", TransactionConfig.__dataclass_fields__["transfer_patterns"].default_factory()),
+            employer_patterns=employer_patterns,
+            member_aliases=d.get("member_aliases", {}),
+        )
 
 
-def load_config() -> TransactionConfig:
+def load_config(family_id: int) -> TransactionConfig:
     try:
         from services.config_repo import load_transaction_cfg
-        data = load_transaction_cfg()
+        data = load_transaction_cfg(family_id)
         if data:
             return TransactionConfig.from_dict(data)
     except Exception as e:
@@ -58,10 +88,10 @@ def load_config() -> TransactionConfig:
     return TransactionConfig()
 
 
-def save_config(cfg: TransactionConfig) -> None:
+def save_config(cfg: TransactionConfig, family_id: int) -> None:
     try:
         from services.config_repo import save_transaction_cfg
-        save_transaction_cfg(cfg.to_dict())
+        save_transaction_cfg(cfg.to_dict(), family_id)
         return
     except Exception as e:
         print(f"[transaction_config] DB save failed ({e}), falling back to file")

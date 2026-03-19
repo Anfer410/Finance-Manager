@@ -332,17 +332,28 @@ def content() -> None:
                             col_opts = {c: c for c in cols}
                             col_opts_none = {'': 'None', **col_opts}
 
+                            def _valid(val, opts):
+                                """Return val if it's a valid option key, else first key or None."""
+                                if val in opts:
+                                    return val
+                                return next(iter(opts), None)
+
+                            if not col_opts:
+                                ui.label('No columns available — upload data first.') \
+                                    .classes('text-sm text-zinc-400 py-4')
+                                return
+
                             with ui.column().classes('w-full gap-3'):
                                 ui.select(
                                     col_opts,
-                                    value=state.get('x_column'),
+                                    value=_valid(state.get('x_column'), col_opts),
                                     label='X Axis',
                                     on_change=lambda e: _update_state_refresh('x_column', e.value),
                                 ).classes('w-full')
 
                                 ui.select(
                                     col_opts,
-                                    value=state.get('y_column'),
+                                    value=_valid(state.get('y_column'), col_opts),
                                     label='Y Axis',
                                     on_change=lambda e: _update_state('y_column', e.value),
                                 ).classes('w-full')
@@ -356,7 +367,7 @@ def content() -> None:
 
                                 ui.select(
                                     col_opts_none,
-                                    value=state.get('series_column') or '',
+                                    value=_valid(state.get('series_column') or '', col_opts_none),
                                     label='Series Column (optional)',
                                     on_change=lambda e: _update_state(
                                         'series_column', e.value or None

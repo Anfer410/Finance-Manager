@@ -274,7 +274,7 @@ def _open_edit_account_dialog(rule: BankRule, on_save, on_delete):
     all_users    = auth.get_all_users()
     active_users = [u for u in all_users if u.is_active]
     user_opt_map: dict[str, int] = {
-        f"{u.display_name}  ({u.person_name})": u.id
+        f"{u.display_name}": u.id
         for u in active_users
     }
     user_opt_labels = list(user_opt_map.keys())
@@ -473,7 +473,7 @@ def _open_edit_account_dialog(rule: BankRule, on_save, on_delete):
             with override_container:
                 for u in active_users:
                     chk = ui.checkbox(
-                        f"{u.person_name}  ({u.display_name})",
+                        f"{u.display_name}",
                         value=(u.id in override_ids),
                     )
                     chk.on("update:model-value",
@@ -705,14 +705,14 @@ def _open_create_bank_dialog(on_save):
         if not name:
             notify("Bank name is required.", type="warning", position="top")
             return
-        banks = load_banks()
+        banks = load_banks(auth.current_family_id())
         slug  = _slugify(name)
         if any(b.slug == slug for b in banks):
             notify(f'A bank named "{name}" already exists.', type="warning", position="top")
             return
         new_bank = BankConfig.from_name(name)
         banks.append(new_bank)
-        save_banks(banks)
+        save_banks(banks, auth.current_family_id())
         notify(f"Bank \"{name}\" created.", type="positive", position="top")
         dlg.close()
         on_save(new_bank)
@@ -732,7 +732,7 @@ def _get_bank_for_rule(rule: BankRule, banks: list[BankConfig]) -> BankConfig | 
 
 def _ensure_banks_for_rules(rules: list[BankRule]) -> list[BankConfig]:
     """Load banks; auto-create BankConfig entries for any banks implied by rules."""
-    banks = load_banks()
+    banks = load_banks(auth.current_family_id())
     changed = False
     for rule in rules:
         slug = _slugify(rule.bank_name)
@@ -740,7 +740,7 @@ def _ensure_banks_for_rules(rules: list[BankRule]) -> list[BankConfig]:
             banks.append(BankConfig.from_name(rule.bank_name))
             changed = True
     if changed:
-        save_banks(banks)
+        save_banks(banks, auth.current_family_id())
     return banks
 
 
@@ -752,14 +752,14 @@ def content() -> None:
     person_ref   = {"value": None}
     selected_ref = {"value": "auto"}   # "auto" or rule.prefix
 
-    if auth.is_admin():
+    if auth.is_instance_admin():
         all_users_list = auth.get_all_users()
         active_users   = [u for u in all_users_list if u.is_active]
     else:
         cur = auth.get_user_by_id(auth.current_user_id())
         active_users = [cur] if cur else []
 
-    person_options  = {u.id: u.person_name for u in active_users}
+    person_options  = {u.id: u.display_name for u in active_users}
     default_user_id = auth.current_user_id() or (active_users[0].id if active_users else None)
     person_ref["value"] = default_user_id
 
@@ -774,7 +774,7 @@ def content() -> None:
 
     @ui.refreshable
     def page_body():
-        rules = load_rules() or []
+        rules = load_rules(auth.current_family_id()) or []
         banks = _ensure_banks_for_rules(rules)
 
         def _select(prefix: str):
@@ -804,7 +804,8 @@ def content() -> None:
         # ── Callbacks ────────────────────────────────────────────────────────
         def _edit_account(r: BankRule):
             def on_save(updated: BankRule):
-                all_rules = load_rules()
+                fid = auth.current_family_id()
+                all_rules = load_rules(fid)
                 idx = next(
                     (i for i, x in enumerate(all_rules) if x.prefix == r.prefix), None
                 )
@@ -812,14 +813,15 @@ def content() -> None:
                     all_rules[idx] = updated
                 else:
                     all_rules.append(updated)
-                save_rules(all_rules)
+                save_rules(all_rules, fid)
                 notify("Saved: " + updated.bank_name, type="positive", position="top")
                 page_body.refresh()
 
             def on_delete(deleted: BankRule):
-                all_rules = load_rules()
+                fid = auth.current_family_id()
+                all_rules = load_rules(fid)
                 all_rules = [x for x in all_rules if x.prefix != deleted.prefix]
-                save_rules(all_rules)
+                save_rules(all_rules, fid)
                 notify("Deleted: " + deleted.bank_name, type="info", position="top")
                 page_body.refresh()
 
@@ -829,24 +831,26 @@ def content() -> None:
             b_rules = [r for r in rules if _slugify(r.bank_name) == b.slug]
 
             def on_save(updated: BankConfig):
-                all_banks = load_banks()
+                fid = auth.current_family_id()
+                all_banks = load_banks(fid)
                 idx = next((i for i, x in enumerate(all_banks) if x.slug == b.slug), None)
                 if idx is not None:
                     all_banks[idx] = updated
                 else:
                     all_banks.append(updated)
-                save_banks(all_banks)
+                save_banks(all_banks, fid)
                 notify("Saved: " + updated.name, type="positive", position="top")
                 page_body.refresh()
 
             def on_delete(deleted: BankConfig, affected_rules: list):
-                all_banks = load_banks()
+                fid = auth.current_family_id()
+                all_banks = load_banks(fid)
                 all_banks = [x for x in all_banks if x.slug != deleted.slug]
-                save_banks(all_banks)
+                save_banks(all_banks, fid)
                 if affected_rules:
                     dead_prefixes = {r.prefix for r in affected_rules}
-                    all_rules = load_rules()
-                    save_rules([r for r in all_rules if r.prefix not in dead_prefixes])
+                    all_rules = load_rules(fid)
+                    save_rules([r for r in all_rules if r.prefix not in dead_prefixes], fid)
                 notify("Deleted: " + deleted.name, type="info", position="top")
                 page_body.refresh()
 
@@ -986,7 +990,7 @@ def content() -> None:
                                 ui.label(active_rule.prefix).classes("font-mono")
 
                         if active_rule.person_override is not None:
-                            _uid_name = {u.id: u.person_name for u in active_users}
+                            _uid_name = {u.id: u.display_name for u in active_users}
                             _names = ", ".join(
                                 _uid_name.get(uid, f"#{uid}")
                                 for uid in (active_rule.person_override or [])

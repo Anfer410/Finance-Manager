@@ -214,10 +214,10 @@ class CategoryConfig:
 
 # ── Persistence ───────────────────────────────────────────────────────────────
 
-def load_category_config() -> CategoryConfig:
+def load_category_config(family_id: int) -> CategoryConfig:
     try:
         from services.config_repo import load_categories
-        data = load_categories()
+        data = load_categories(family_id)
         if data:
             cfg = CategoryConfig.from_dict(data)
             # Backfill any missing default categories
@@ -239,10 +239,10 @@ def load_category_config() -> CategoryConfig:
     )
 
 
-def save_category_config(cfg: CategoryConfig) -> None:
+def save_category_config(cfg: CategoryConfig, family_id: int) -> None:
     try:
         from services.config_repo import save_categories
-        save_categories(cfg.to_dict())
+        save_categories(cfg.to_dict(), family_id)
         return
     except Exception as e:
         print(f"[category_rules] DB save failed ({e}), falling back to file")

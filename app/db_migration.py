@@ -42,14 +42,107 @@ def run_migrations() -> None:
         engine = get_engine()
         schema = get_schema()
         with engine.begin() as conn:
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+            _create_family_tables(conn, schema)       # families first (FK target)
             _create_app_tables(conn, schema)
-            _migrate_widget_positions(conn, schema)   # <-- add this
+            _migrate_widget_positions(conn, schema)
             _create_transaction_tables(conn, schema)
             _migrate_configs_if_needed(conn, schema)
         print("[migration] Startup migrations complete.")
     except Exception as ex:
         print(f"[migration] WARNING: startup migration failed: {ex}")
         # Don't crash the app — DB might already be fully set up
+
+
+# ── Family tables ─────────────────────────────────────────────────────────────
+
+def _create_family_tables(conn, schema: str) -> None:
+    """Core multi-tenancy tables.  Created before app_users so FKs resolve."""
+
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.families (
+            id         SERIAL PRIMARY KEY,
+            name       TEXT        NOT NULL,
+            created_by INTEGER,    -- FK to app_users added after that table exists
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.family_memberships (
+            id          SERIAL PRIMARY KEY,
+            family_id   INTEGER     NOT NULL REFERENCES {schema}.families(id),
+            user_id     INTEGER     NOT NULL,  -- FK to app_users added after that table exists
+            family_role TEXT        NOT NULL   CHECK (family_role IN ('member', 'head')),
+            joined_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            left_at     TIMESTAMPTZ            -- NULL = currently active member
+        )
+    """))
+
+    conn.execute(text(f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_family_memberships_active
+        ON {schema}.family_memberships (user_id)
+        WHERE left_at IS NULL
+    """))
+
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.user_bank_permissions (
+            user_id     INTEGER NOT NULL,  -- FK added after app_users exists
+            family_id   INTEGER NOT NULL REFERENCES {schema}.families(id),
+            account_key TEXT    NOT NULL,
+            can_upload  BOOLEAN NOT NULL DEFAULT TRUE,
+            PRIMARY KEY (user_id, family_id, account_key)
+        )
+    """))
+
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.password_reset_tokens (
+            id         SERIAL PRIMARY KEY,
+            user_id    INTEGER     NOT NULL,  -- FK added after app_users exists
+            token_hash TEXT        NOT NULL UNIQUE,
+            expires_at TIMESTAMPTZ NOT NULL,
+            used_at    TIMESTAMPTZ
+        )
+    """))
+
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.invitations (
+            id          SERIAL PRIMARY KEY,
+            token_hash  TEXT        NOT NULL UNIQUE,
+            invited_by  INTEGER     NOT NULL,  -- FK added after app_users exists
+            family_id   INTEGER     NOT NULL REFERENCES {schema}.families(id),
+            family_role TEXT        NOT NULL DEFAULT 'member',
+            email       TEXT        NOT NULL,
+            expires_at  TIMESTAMPTZ NOT NULL,
+            accepted_at TIMESTAMPTZ
+        )
+    """))
+
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.dashboard_templates (
+            id           SERIAL PRIMARY KEY,
+            name         TEXT        NOT NULL,
+            description  TEXT        NOT NULL DEFAULT '',
+            created_by   INTEGER,    -- FK added after app_users exists
+            is_published BOOLEAN     NOT NULL DEFAULT FALSE,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.dashboard_template_widgets (
+            id          SERIAL PRIMARY KEY,
+            template_id INTEGER  NOT NULL
+                        REFERENCES {schema}.dashboard_templates(id) ON DELETE CASCADE,
+            chart_id    TEXT     NOT NULL,
+            col_start   SMALLINT NOT NULL,
+            row_start   SMALLINT NOT NULL,
+            col_span    SMALLINT NOT NULL,
+            row_span    SMALLINT NOT NULL,
+            config      JSONB    NOT NULL DEFAULT '{{}}'
+        )
+    """))
 
 
 # ── App tables ────────────────────────────────────────────────────────────────
@@ -59,16 +152,74 @@ def _create_app_tables(conn, schema: str) -> None:
 
     conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS {schema}.app_users (
-            id            SERIAL PRIMARY KEY,
-            username      TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            display_name  TEXT NOT NULL,
-            person_name   TEXT NOT NULL,
-            role          TEXT NOT NULL DEFAULT 'user'
-                         CHECK (role IN ('admin', 'user')),
-            is_active     BOOLEAN NOT NULL DEFAULT TRUE,
-            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            id                   SERIAL PRIMARY KEY,
+            username             TEXT UNIQUE NOT NULL,
+            password_hash        TEXT NOT NULL,
+            display_name         TEXT NOT NULL,
+            person_name          TEXT NOT NULL,
+            role                 TEXT NOT NULL DEFAULT 'user'
+                                 CHECK (role IN ('admin', 'user')),
+            is_active            BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            email                TEXT UNIQUE,
+            must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+            is_instance_admin    BOOLEAN NOT NULL DEFAULT FALSE
         )
+    """))
+
+    # Idempotent additions for existing installs
+    conn.execute(text(f"ALTER TABLE {schema}.app_users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE"))
+    conn.execute(text(f"ALTER TABLE {schema}.app_users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE"))
+    conn.execute(text(f"ALTER TABLE {schema}.app_users ADD COLUMN IF NOT EXISTS is_instance_admin BOOLEAN NOT NULL DEFAULT FALSE"))
+
+    # Add deferred FKs from family tables back to app_users (now that the table exists)
+    conn.execute(text(f"""
+        DO $$ BEGIN
+            ALTER TABLE {schema}.families
+                ADD CONSTRAINT fk_families_created_by
+                FOREIGN KEY (created_by) REFERENCES {schema}.app_users(id);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+    """))
+    conn.execute(text(f"""
+        DO $$ BEGIN
+            ALTER TABLE {schema}.family_memberships
+                ADD CONSTRAINT fk_family_memberships_user_id
+                FOREIGN KEY (user_id) REFERENCES {schema}.app_users(id);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+    """))
+    conn.execute(text(f"""
+        DO $$ BEGIN
+            ALTER TABLE {schema}.user_bank_permissions
+                ADD CONSTRAINT fk_user_bank_permissions_user_id
+                FOREIGN KEY (user_id) REFERENCES {schema}.app_users(id);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+    """))
+    conn.execute(text(f"""
+        DO $$ BEGIN
+            ALTER TABLE {schema}.password_reset_tokens
+                ADD CONSTRAINT fk_password_reset_tokens_user_id
+                FOREIGN KEY (user_id) REFERENCES {schema}.app_users(id) ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+    """))
+    conn.execute(text(f"""
+        DO $$ BEGIN
+            ALTER TABLE {schema}.invitations
+                ADD CONSTRAINT fk_invitations_invited_by
+                FOREIGN KEY (invited_by) REFERENCES {schema}.app_users(id);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+    """))
+    conn.execute(text(f"""
+        DO $$ BEGIN
+            ALTER TABLE {schema}.dashboard_templates
+                ADD CONSTRAINT fk_dashboard_templates_created_by
+                FOREIGN KEY (created_by) REFERENCES {schema}.app_users(id);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
     """))
 
     conn.execute(text(f"""
@@ -83,12 +234,15 @@ def _create_app_tables(conn, schema: str) -> None:
     for cfg_name in ("bank_rules", "banks", "categories", "transaction"):
         conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS {schema}.app_config_{cfg_name} (
-                id         INT PRIMARY KEY DEFAULT 1
-                           CHECK (id = 1),
-                data       JSONB NOT NULL,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                family_id  INTEGER     NOT NULL
+                           REFERENCES {schema}.families(id),
+                data       JSONB       NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (family_id)
             )
         """))
+        # Idempotent addition for existing installs that have the old singleton schema
+        conn.execute(text(f"ALTER TABLE {schema}.app_config_{cfg_name} ADD COLUMN IF NOT EXISTS family_id INTEGER REFERENCES {schema}.families(id)"))
 
     conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS {schema}.app_settings (
@@ -293,7 +447,9 @@ def _create_transaction_tables(conn, schema: str) -> None:
             amount           NUMERIC(14,2) NOT NULL DEFAULT 0,
             person           INTEGER[]     NOT NULL DEFAULT ARRAY[]::INTEGER[],
             source_file      TEXT          NOT NULL DEFAULT '',
-            inserted_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+            inserted_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+            family_id        INTEGER       REFERENCES {schema}.families(id),
+            uploaded_by      INTEGER       REFERENCES {schema}.app_users(id)
         ) PARTITION BY RANGE (transaction_date)
     """))
 
@@ -307,9 +463,16 @@ def _create_transaction_tables(conn, schema: str) -> None:
             credit           NUMERIC(14,2) NOT NULL DEFAULT 0,
             person           INTEGER[]     NOT NULL DEFAULT ARRAY[]::INTEGER[],
             source_file      TEXT          NOT NULL DEFAULT '',
-            inserted_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+            inserted_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+            family_id        INTEGER       REFERENCES {schema}.families(id),
+            uploaded_by      INTEGER       REFERENCES {schema}.app_users(id)
         ) PARTITION BY RANGE (transaction_date)
     """))
+
+    # Idempotent additions for existing installs
+    for tbl in ("transactions_debit", "transactions_credit"):
+        conn.execute(text(f"ALTER TABLE {schema}.{tbl} ADD COLUMN IF NOT EXISTS family_id INTEGER REFERENCES {schema}.families(id)"))
+        conn.execute(text(f"ALTER TABLE {schema}.{tbl} ADD COLUMN IF NOT EXISTS uploaded_by INTEGER REFERENCES {schema}.app_users(id)"))
 
     # Pre-create partitions: past 5 years + next 2
     current_year = date.today().year
@@ -371,19 +534,29 @@ def _migrate_configs_if_needed(conn, schema: str) -> None:
     _seed_if_empty(conn, schema, "transaction", _default_transaction)
 
 
+def _ensure_default_family(conn, schema: str) -> None:
+    """Create the default family (id=1) if it doesn't exist yet."""
+    conn.execute(text(f"""
+        INSERT INTO {schema}.families (id, name, created_at)
+        VALUES (1, 'Default Family', NOW())
+        ON CONFLICT (id) DO NOTHING
+    """))
+
+
 def _seed_if_empty(conn, schema: str, name: str, loader) -> None:
+    _ensure_default_family(conn, schema)
     existing = conn.execute(
-        text(f"SELECT 1 FROM {schema}.app_config_{name} WHERE id = 1")
+        text(f"SELECT 1 FROM {schema}.app_config_{name} WHERE family_id = 1")
     ).fetchone()
     if existing:
         return
     data = loader()
     conn.execute(text(f"""
-        INSERT INTO {schema}.app_config_{name} (id, data, updated_at)
+        INSERT INTO {schema}.app_config_{name} (family_id, data, updated_at)
         VALUES (1, CAST(:data AS jsonb), NOW())
-        ON CONFLICT (id) DO NOTHING
+        ON CONFLICT (family_id) DO NOTHING
     """), {"data": json.dumps(data)})
-    print(f"[migration] Seeded app_config_{name}")
+    print(f"[migration] Seeded app_config_{name} for default family")
 
 
 def _default_bank_rules() -> dict:
@@ -440,8 +613,8 @@ def create_admin(
 
         result = conn.execute(text(f"""
             INSERT INTO {schema}.app_users
-                (username, password_hash, display_name, person_name, role)
-            VALUES (:u, :ph, :dn, :pn, 'admin')
+                (username, password_hash, display_name, person_name, role, is_instance_admin)
+            VALUES (:u, :ph, :dn, :pn, 'admin', TRUE)
             RETURNING id
         """), {
             "u":  username,
@@ -455,6 +628,20 @@ def create_admin(
             INSERT INTO {schema}.app_user_prefs (user_id, selected_persons)
             VALUES (:uid, '[]')
             ON CONFLICT (user_id) DO NOTHING
+        """), {"uid": user_id})
+
+        # Ensure default family exists and add admin as family head
+        conn.execute(text(f"""
+            INSERT INTO {schema}.families (id, name, created_by, created_at)
+            VALUES (1, 'Default Family', :uid, NOW())
+            ON CONFLICT (id) DO NOTHING
+        """), {"uid": user_id})
+
+        conn.execute(text(f"""
+            INSERT INTO {schema}.family_memberships
+                (family_id, user_id, family_role, joined_at)
+            VALUES (1, :uid, 'head', NOW())
+            ON CONFLICT DO NOTHING
         """), {"uid": user_id})
 
     print(f"[migration] Admin user '{username}' created (id={user_id}).")

@@ -36,10 +36,10 @@ class BankConfig:
         return BankConfig(name=name, slug=_slugify(name))
 
 
-def load_banks() -> list[BankConfig]:
+def load_banks(family_id: int) -> list[BankConfig]:
     try:
         from services.config_repo import load_banks as _load
-        raw = _load()
+        raw = _load(family_id)
         if raw:
             return [BankConfig.from_dict(b) for b in raw]
     except Exception as e:
@@ -47,9 +47,9 @@ def load_banks() -> list[BankConfig]:
     return []
 
 
-def save_banks(banks: list[BankConfig]) -> None:
+def save_banks(banks: list[BankConfig], family_id: int) -> None:
     try:
         from services.config_repo import save_banks as _save
-        _save([b.to_dict() for b in banks])
+        _save([b.to_dict() for b in banks], family_id)
     except Exception as e:
         print(f"[bank_config] save failed ({e})")

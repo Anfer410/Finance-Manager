@@ -18,6 +18,8 @@ import pages.loans_content
 import pages.loan_planning_content
 import pages.charts_content
 import pages.chart_builder_content
+import pages.family_content
+import pages.users_content
 import services.auth as auth
 
 from services.helpers import env
@@ -38,8 +40,12 @@ app.add_static_files('/assets', 'assets')
 def with_base_layout(route_handler):
     @wraps(route_handler)
     def wrapper(*args, **kwargs):
-        # Auth guard — redirect to login if not authenticated
+        # Auth guard — redirect to login if not authenticated or session is stale
         if not auth.is_authenticated():
+            ui.navigate.to("/login")
+            return
+        if not auth.get_user_by_id(auth.current_user_id()):
+            auth.logout()
             ui.navigate.to("/login")
             return
 
@@ -84,6 +90,8 @@ def root():
         '/loan-planning':  loan_planning,
         '/charts':         charts_gallery,
         '/chart-builder':  chart_builder,
+        '/family':         family,
+        '/users':          users,
     })
 
 
@@ -96,7 +104,7 @@ def upload():
 
 def categories():
     # Admin only
-    if not auth.is_admin():
+    if not auth.is_instance_admin():
         ui.navigate.to("/")
         return
     pages.categories_content.content()
@@ -115,6 +123,18 @@ def charts_gallery():
 
 def chart_builder():
     pages.chart_builder_content.content()
+
+def family():
+    if not (auth.is_family_head() or auth.is_instance_admin()):
+        ui.navigate.to("/")
+        return
+    pages.family_content.content()
+
+def users():
+    if not auth.is_instance_admin():
+        ui.navigate.to("/")
+        return
+    pages.users_content.content()
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

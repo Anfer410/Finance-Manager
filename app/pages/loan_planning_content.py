@@ -21,7 +21,7 @@ from services.loan_service import (
 
 def content() -> None:
     import services.auth as auth
-    if not auth.is_admin():
+    if not auth.is_instance_admin():
         ui.navigate.to("/")
         return
 

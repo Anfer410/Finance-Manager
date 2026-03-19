@@ -221,7 +221,8 @@ def get_source_columns(source: str) -> list[str]:
             ORDER  BY ordinal_position
         """), {"schema": schema, "tname": source}).fetchall()
     cols = [r[0] for r in rows]
-    _col_cache[source] = cols
+    if cols:  # don't cache empty — view may not exist yet
+        _col_cache[source] = cols
     return cols
 
 

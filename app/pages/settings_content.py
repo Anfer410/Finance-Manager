@@ -55,7 +55,7 @@ def _profile_section() -> None:
                 .props('outlined dense').classes('w-full max-w-sm')
 
             ui.label(f'Username: {user.username}').classes('text-sm text-zinc-400')
-            ui.label(f'Role: {"Admin" if user.role == "admin" else "Member"}').classes('text-sm text-zinc-400')
+            ui.label(f'Role: {"Instance Admin" if user.is_instance_admin else ("Family Head" if user.family_role == "head" else "Member")}').classes('text-sm text-zinc-400')
 
             ui.separator().classes('my-1')
             ui.label('Change password').classes('text-sm font-medium text-zinc-600')
@@ -108,10 +108,10 @@ def _profile_section() -> None:
 
 # ── User management (admin only) ──────────────────────────────────────────────
 
-def _user_row(u: auth.AuthUser, on_change) -> None:
+def _user_row(u: auth.AuthUser, on_change, family_name: str | None = None) -> None:
     """One row in the user table — inline edit on click."""
 
-    role_color  = 'bg-zinc-800 text-white' if u.role == 'admin' else 'bg-blue-50 text-blue-700'
+    role_color   = 'bg-zinc-800 text-white' if u.is_instance_admin else ('bg-amber-100 text-amber-700' if u.family_role == 'head' else 'bg-blue-50 text-blue-700')
     active_color = 'text-green-600' if u.is_active else 'text-zinc-300'
 
     with ui.row().classes('items-center px-6 py-3 gap-4 border-b border-zinc-50 hover:bg-zinc-50 w-full'):
@@ -123,11 +123,15 @@ def _user_row(u: auth.AuthUser, on_change) -> None:
             ui.label(u.display_name).classes('text-sm font-medium text-zinc-800')
             ui.label(f'@{u.username}').classes('text-xs text-zinc-400')
 
-        # Person tag
-        ui.label(u.person_name).classes('text-xs bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-mono')
+        # Family
+        if family_name:
+            ui.label(family_name).classes('text-xs text-zinc-500 min-w-24')
+        else:
+            ui.label('—').classes('text-xs text-zinc-300 min-w-24')
 
         # Role badge
-        ui.label(u.role.capitalize()).classes(f'text-xs px-2 py-0.5 rounded-full font-medium {role_color}')
+        role_label = 'Admin' if u.is_instance_admin else ('Head' if u.family_role == 'head' else 'Member')
+        ui.label(role_label).classes(f'text-xs px-2 py-0.5 rounded-full font-medium {role_color}')
 
         ui.space()
 
@@ -137,24 +141,31 @@ def _user_row(u: auth.AuthUser, on_change) -> None:
 
 
 def _edit_user_dialog(u: auth.AuthUser, on_change) -> None:
-    state = {"error": ""}
+    from services.family_service import get_all_families, add_user_to_family, remove_member, update_member_role
+    state    = {"error": ""}
+    families = get_all_families()
+    fam_opts = {'': '— unassigned —', **{str(f.id): f.name for f in families}}
 
     with ui.dialog() as dlg, ui.card().classes('w-96 rounded-2xl p-6 gap-4'):
         with ui.row().classes('items-center justify-between w-full mb-2'):
             ui.label(f'Edit — {u.username}').classes('text-base font-semibold text-zinc-800')
             ui.button(icon='close', on_click=dlg.close).props('flat round dense').classes('text-zinc-400')
 
-        display_input  = ui.input(label='Display name', value=u.display_name).props('outlined dense').classes('w-full')
-        person_input = ui.input(label='Person name', value=u.person_name) \
+        display_input = ui.input(label='Display name', value=u.display_name) \
             .props('outlined dense').classes('w-full')
-        ui.label('Lowercase identifier used to tag their transactions.') \
-            .classes('text-xs text-zinc-400 -mt-3 mb-1')
-        role_select    = ui.select(
-            label='Role',
-            options={'admin': 'Admin', 'user': 'Member'},
-            value=u.role,
+        active_toggle = ui.switch('Account active', value=u.is_active).classes('text-sm text-zinc-600')
+
+        ui.separator()
+        ui.label('Family').classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide')
+        family_select = ui.select(
+            label='Family', options=fam_opts,
+            value=str(u.family_id) if u.family_id else '',
         ).props('outlined dense').classes('w-full')
-        active_toggle  = ui.switch('Account active', value=u.is_active).classes('text-sm text-zinc-600')
+        role_select = ui.select(
+            label='Family role',
+            options={'member': 'Member', 'head': 'Family Head'},
+            value=u.family_role or 'member',
+        ).props('outlined dense').classes('w-full')
 
         ui.separator()
         ui.label('Reset password (optional)').classes('text-xs text-zinc-400')
@@ -174,9 +185,7 @@ def _edit_user_dialog(u: auth.AuthUser, on_change) -> None:
             dn = display_input.value.strip()
             if dn:
                 updates["display_name"] = dn
-            updates["person_name"] = person_input.value.strip().lower() or u.person_name
-            updates["role"]        = role_select.value
-            updates["is_active"]   = active_toggle.value
+            updates["is_active"] = active_toggle.value
             pw = new_pw.value
             if pw:
                 if pw != conf_pw.value:
@@ -189,6 +198,17 @@ def _edit_user_dialog(u: auth.AuthUser, on_change) -> None:
                     return
                 updates["password"] = pw
             auth.update_user(u.id, **updates)
+
+            # Family assignment
+            new_fid = int(family_select.value) if family_select.value else None
+            if new_fid != u.family_id:
+                if u.family_id:
+                    remove_member(u.id, u.family_id)
+                if new_fid:
+                    add_user_to_family(u.id, new_fid, role_select.value)
+            elif u.family_id and role_select.value != (u.family_role or 'member'):
+                update_member_role(u.id, u.family_id, role_select.value)
+
             dlg.close()
             on_change()
 
@@ -201,7 +221,10 @@ def _edit_user_dialog(u: auth.AuthUser, on_change) -> None:
 
 
 def _add_user_dialog(on_change) -> None:
-    state = {"error": ""}
+    from services.family_service import get_all_families
+    state    = {"error": ""}
+    families = get_all_families()
+    fam_opts = {'': '— no family —', **{str(f.id): f.name for f in families}}
 
     with ui.dialog() as dlg, ui.card().classes('w-96 rounded-2xl p-6 gap-4'):
         with ui.row().classes('items-center justify-between w-full mb-2'):
@@ -218,19 +241,16 @@ def _add_user_dialog(on_change) -> None:
             .props('outlined dense').classes('w-full')
         ui.label('Shown in the header and user list.').classes('text-xs text-zinc-400 -mt-3 mb-1')
 
-        # ── Data access
-        ui.label('Data access').classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide mt-2')
-        person_input = ui.input(label='Person name', placeholder='e.g. jessica') \
+        # ── Family
+        ui.label('Family').classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide mt-2')
+        family_select = ui.select(label='Family', options=fam_opts, value='') \
             .props('outlined dense').classes('w-full')
-        ui.label('Lowercase identifier used to tag their transactions. Set once, keep it consistent.') \
-            .classes('text-xs text-zinc-400 -mt-3 mb-1')
-
         role_select = ui.select(
-            label='Role',
-            options={'admin': 'Admin', 'user': 'Member'},
-            value='user',
+            label='Family role',
+            options={'member': 'Member', 'head': 'Family Head'},
+            value='member',
         ).props('outlined dense').classes('w-full')
-        ui.label('Admin sees all data and manages settings. Member sees only their own.') \
+        ui.label('Family Head can manage settings and members.') \
             .classes('text-xs text-zinc-400 -mt-3 mb-1')
 
         # ── Password
@@ -269,17 +289,13 @@ def _add_user_dialog(on_change) -> None:
                 state["error"] = f"Username '{username}' is already taken."
                 dialog_feedback.refresh()
                 return
-            person = person_input.value.strip().lower()
-            if not person:
-                state["error"] = "Person name is required."
-                dialog_feedback.refresh()
-                return
+            fid = int(family_select.value) if family_select.value else None
             auth.create_user(
                 username=username,
                 password=pw,
                 display_name=display,
-                person_name=person,
-                role=role_select.value,
+                family_id=fid,
+                family_role=role_select.value,
             )
             dlg.close()
             on_change()
@@ -293,16 +309,11 @@ def _add_user_dialog(on_change) -> None:
 
 
 def _user_management_section() -> None:
-    # Pull persons from transaction data for the person selector
-    try:
-        from data.finance_dashboard_data import get_persons
-        all_persons = get_persons()
-    except Exception:
-        all_persons = []
-
     @ui.refreshable
     def user_table() -> None:
-        users = auth.get_all_users()
+        from services.family_service import get_all_families
+        users      = auth.get_all_users()
+        fam_by_id  = {f.id: f.name for f in get_all_families()}
         with _card('User Management', 'group'):
             _section_header('User Management', 'group')
 
@@ -310,7 +321,7 @@ def _user_management_section() -> None:
             with ui.row().classes('items-center px-6 py-2 gap-4 w-full'):
                 ui.label('').classes('text-xs w-3')   # status dot column
                 ui.label('User').classes('text-xs font-medium text-zinc-400 uppercase tracking-wide min-w-32')
-                ui.label('Person').classes('text-xs font-medium text-zinc-400 uppercase tracking-wide')
+                ui.label('Family').classes('text-xs font-medium text-zinc-400 uppercase tracking-wide min-w-24')
                 ui.label('Role').classes('text-xs font-medium text-zinc-400 uppercase tracking-wide')
                 ui.space()
                 ui.button('Add user', icon='person_add',
@@ -324,7 +335,8 @@ def _user_management_section() -> None:
                 ui.label('No users yet.').classes('text-sm text-zinc-400 px-6 py-4')
             else:
                 for u in users:
-                    _user_row(u, on_change=user_table.refresh)
+                    _user_row(u, on_change=user_table.refresh,
+                              family_name=fam_by_id.get(u.family_id) if u.family_id else None)
 
             # Legend
             with ui.row().classes('px-6 py-3 gap-4'):
@@ -338,7 +350,7 @@ def _user_management_section() -> None:
 
 
 def _aliases_section() -> None:
-    cfg = load_config()
+    cfg = load_config(auth.current_family_id())
 
     with _card('Member name aliases', 'swap_horiz'):
         _section_header('Member name aliases', 'swap_horiz')
@@ -386,23 +398,32 @@ def _aliases_section() -> None:
                         alias_name_in.set_value('')
                         alias_value_in.set_value('')
                         render_alias_chips.refresh()
-                        save_config(cfg)
+                        save_config(cfg, auth.current_family_id())
 
                 ui.button('Add', icon='add', on_click=_add_alias) \
                     .props('unelevated dense no-caps').classes('bg-zinc-800 text-white rounded-lg')
 
 
 def _employers_section() -> None:
-    cfg = load_config()
+    """
+    Employer patterns with ownership model:
+    - Family Head / Admin: can add (head-owned, added_by=None) and remove any pattern.
+    - Member: can add their own patterns (added_by=user_id) and remove only their own.
+    Head-owned patterns show a lock icon and cannot be removed by members.
+    """
+    from services.transaction_config import EmployerPattern
+    fid        = auth.current_family_id()
+    uid        = auth.current_user_id()
+    is_head    = auth.is_family_head()
+    cfg        = load_config(fid)
 
     with _card('Employers', 'business'):
         _section_header('Employers', 'business')
         with ui.column().classes('px-6 py-5 gap-4 w-full'):
 
             ui.label(
-                'Payroll description substrings used to identify income transactions. '
-                'Any debit transaction whose description contains one of these patterns '
-                'is treated as a payroll deposit (e.g. "ACME CORP PAYROLL").'
+                'Payroll description substrings used to identify your income transactions. '
+                'Family Head patterns apply to everyone. Your personal patterns are only visible to you.'
             ).classes('text-xs text-zinc-400')
 
             @ui.refreshable
@@ -410,22 +431,39 @@ def _employers_section() -> None:
                 if not cfg.employer_patterns:
                     ui.label('No employers configured.').classes('text-xs text-zinc-400')
                     return
-                with ui.row().classes('flex-wrap gap-1'):
-                    for pattern in list(cfg.employer_patterns):
-                        with ui.element('div').classes(
-                            'inline-flex items-center gap-1 px-2 py-0.5 rounded-full '
-                            'bg-zinc-100 text-zinc-700 border border-zinc-200 text-xs font-mono'
-                        ):
-                            ui.label(pattern)
-                            ui.button(icon='close',
-                                      on_click=lambda _, p=pattern: _remove_employer(p)) \
-                                .props('flat round dense size=xs').classes('text-zinc-400')
+                with ui.column().classes('gap-1 w-full'):
+                    for ep in list(cfg.employer_patterns):
+                        is_mine    = ep.added_by == uid
+                        is_head_ep = ep.added_by is None
+                        can_remove = is_head or is_mine
 
-            def _remove_employer(pattern: str) -> None:
-                if pattern in cfg.employer_patterns:
-                    cfg.employer_patterns.remove(pattern)
-                    save_config(cfg)
-                    render_employer_chips.refresh()
+                        # Members only see head-owned + their own patterns
+                        if not is_head and not is_mine and not is_head_ep:
+                            continue
+
+                        chip_css = (
+                            'bg-amber-50 text-amber-800 border-amber-200'
+                            if is_head_ep else
+                            'bg-zinc-100 text-zinc-700 border-zinc-200'
+                        )
+                        with ui.row().classes('items-center gap-1'):
+                            with ui.element('div').classes(
+                                f'inline-flex items-center gap-1 px-2 py-0.5 rounded-full '
+                                f'border text-xs font-mono {chip_css}'
+                            ):
+                                if is_head_ep:
+                                    ui.icon('lock').classes('text-amber-400').style('font-size:0.75rem')
+                                ui.label(ep.pattern)
+                                if can_remove:
+                                    ui.button(
+                                        icon='close',
+                                        on_click=lambda _, e=ep: _remove_employer(e),
+                                    ).props('flat round dense size=xs').classes('text-zinc-400')
+
+            def _remove_employer(ep) -> None:
+                cfg.employer_patterns = [e for e in cfg.employer_patterns if e is not ep]
+                save_config(cfg, fid)
+                render_employer_chips.refresh()
 
             render_employer_chips()
 
@@ -436,15 +474,166 @@ def _employers_section() -> None:
                 ).props('outlined dense').classes('flex-1')
 
                 def _add_employer() -> None:
-                    val = pattern_in.value.strip()
-                    if val and val not in cfg.employer_patterns:
-                        cfg.employer_patterns.append(val)
-                        pattern_in.set_value('')
-                        save_config(cfg)
-                        render_employer_chips.refresh()
+                    val = pattern_in.value.strip().upper()
+                    if not val:
+                        return
+                    if any(e.pattern == val for e in cfg.employer_patterns):
+                        return
+                    # Head adds as head-owned (None); members add as their own
+                    added_by = None if is_head else uid
+                    cfg.employer_patterns.append(EmployerPattern(pattern=val, added_by=added_by))
+                    pattern_in.set_value('')
+                    save_config(cfg, fid)
+                    render_employer_chips.refresh()
 
                 ui.button('Add', icon='add', on_click=_add_employer) \
                     .props('unelevated dense no-caps').classes('bg-zinc-800 text-white rounded-lg')
+
+
+def _upload_manager_section() -> None:
+    from services.upload_manager import get_upload_batches, reassign_persons, delete_batch
+    from services.view_manager import ViewManager
+    from data.db import get_engine, get_schema
+
+    fid = auth.current_family_id()
+    all_users = auth.get_all_users()
+    user_opts = {str(u.id): u.display_name for u in all_users}
+
+    def _reassign_dialog(b: dict, on_change) -> None:
+        current_ids = [uid for uid, name in user_opts.items() if name in b['persons']]
+        state = {"error": ""}
+
+        with ui.dialog() as dlg, ui.card().classes('w-96 rounded-2xl p-6 gap-4'):
+            with ui.row().classes('items-center justify-between w-full mb-2'):
+                ui.label('Reassign person').classes('text-base font-semibold text-zinc-800')
+                ui.button(icon='close', on_click=dlg.close).props('flat round dense').classes('text-zinc-400')
+
+            ui.label(b['source_file']).classes('text-xs font-mono text-zinc-400 truncate w-full')
+            ui.label(f"{b['bank_name']} · {b['row_count']} rows").classes('text-xs text-zinc-400 -mt-2 mb-1')
+
+            person_select = ui.select(
+                label='Person(s)', options=user_opts, value=current_ids, multiple=True,
+            ).props('outlined dense use-chips').classes('w-full')
+
+            @ui.refreshable
+            def _fb():
+                if state["error"]:
+                    ui.label(state["error"]).classes('text-sm text-red-500')
+            _fb()
+
+            def save():
+                state["error"] = ""
+                chosen = person_select.value
+                if not chosen:
+                    state["error"] = "Select at least one person."
+                    _fb.refresh()
+                    return
+                ids = [int(v) for v in (chosen if isinstance(chosen, list) else [chosen])]
+                try:
+                    reassign_persons(b['source_file'], b['account_key'], b['table_type'], ids, fid)
+                    ViewManager(get_engine(), schema=get_schema()).refresh(fid)
+                    notify('Person reassigned — views refreshed.', type='positive', position='top')
+                    dlg.close()
+                    on_change()
+                except Exception as ex:
+                    state["error"] = str(ex)
+                    _fb.refresh()
+
+            with ui.row().classes('gap-2 justify-end w-full mt-2'):
+                ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+                ui.button('Save', icon='save', on_click=save).props('unelevated no-caps') \
+                    .classes('bg-zinc-800 text-white rounded-lg px-4')
+
+        dlg.open()
+
+    def _confirm_delete(b: dict, on_change) -> None:
+        with ui.dialog() as dlg, ui.card().classes('w-96 rounded-2xl p-6 gap-4'):
+            with ui.row().classes('items-center justify-between w-full mb-2'):
+                ui.label('Delete upload batch').classes('text-base font-semibold text-zinc-800')
+                ui.button(icon='close', on_click=dlg.close).props('flat round dense').classes('text-zinc-400')
+
+            ui.label(
+                f"This will permanently delete {b['row_count']} transaction row(s) from "
+                f"'{b['source_file']}' and the matching rows from the raw archive. "
+                "This cannot be undone."
+            ).classes('text-sm text-zinc-600')
+
+            def do_delete():
+                try:
+                    n = delete_batch(b['source_file'], b['account_key'], b['table_type'], fid)
+                    ViewManager(get_engine(), schema=get_schema()).refresh(fid)
+                    notify(f"Deleted {n} rows — views refreshed.", type='positive', position='top')
+                    dlg.close()
+                    on_change()
+                except Exception as ex:
+                    notify(f'Delete failed: {ex}', type='negative', position='top')
+
+            with ui.row().classes('gap-2 justify-end w-full mt-2'):
+                ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+                ui.button('Delete', icon='delete_outline', on_click=do_delete) \
+                    .props('unelevated no-caps') \
+                    .classes('bg-red-600 text-white rounded-lg px-4')
+
+        dlg.open()
+
+    def _batch_row(b: dict, on_change) -> None:
+        date_str = (
+            f"{b['date_from'].strftime('%b %d')} – {b['date_to'].strftime('%b %d, %Y')}"
+            if b['date_from'] and b['date_to'] else '—'
+        )
+        persons_str = ', '.join(b['persons']) if b['persons'] else '—'
+        type_color  = 'bg-blue-50 text-blue-700' if b['table_type'] == 'debit' else 'bg-purple-50 text-purple-700'
+
+        with ui.row().classes('items-center gap-3 w-full px-2 py-2 border-b border-zinc-50 hover:bg-zinc-50'):
+            with ui.column().classes('gap-0 flex-1 min-w-40 overflow-hidden'):
+                ui.label(b['source_file']).classes('text-xs font-mono text-zinc-700 truncate')
+                ui.label(b['uploaded_at'].strftime('%Y-%m-%d %H:%M') if b['uploaded_at'] else '') \
+                    .classes('text-xs text-zinc-300')
+
+            ui.label(b['bank_name']).classes('text-xs text-zinc-600 w-32 truncate')
+            ui.label(b['table_type']).classes(f'text-xs px-1.5 py-0.5 rounded font-medium w-16 text-center {type_color}')
+            ui.label(str(b['row_count'])).classes('text-xs text-zinc-600 w-12 text-right')
+            ui.label(date_str).classes('text-xs text-zinc-500 w-36')
+            ui.label(persons_str).classes('text-xs text-zinc-600 w-32 truncate')
+
+            with ui.row().classes('gap-1 w-20 justify-end'):
+                ui.button(icon='person', on_click=lambda _, batch=b: _reassign_dialog(batch, on_change)) \
+                    .props('flat round dense').classes('text-zinc-400').tooltip('Reassign person')
+                ui.button(icon='delete_outline', on_click=lambda _, batch=b: _confirm_delete(batch, on_change)) \
+                    .props('flat round dense').classes('text-red-400').tooltip('Delete batch')
+
+    @ui.refreshable
+    def batch_table() -> None:
+        batches = get_upload_batches(fid)
+
+        with _card('Upload Manager', 'folder_open'):
+            _section_header('Upload Manager', 'folder_open')
+            with ui.column().classes('px-6 py-5 gap-3 w-full'):
+                ui.label(
+                    'View and correct uploaded transaction batches. '
+                    'You can reassign people or delete an entire upload. '
+                    'Both the transaction tables and the raw archive are updated.'
+                ).classes('text-xs text-zinc-400')
+
+                if not batches:
+                    ui.label('No uploads found.').classes('text-sm text-zinc-400 py-2')
+                    return
+
+                with ui.row().classes('items-center gap-3 w-full px-2 py-1'):
+                    ui.label('File').classes('text-xs font-medium text-zinc-400 uppercase tracking-wide flex-1 min-w-40')
+                    ui.label('Account').classes('text-xs font-medium text-zinc-400 uppercase tracking-wide w-32')
+                    ui.label('Type').classes('text-xs font-medium text-zinc-400 uppercase tracking-wide w-16')
+                    ui.label('Rows').classes('text-xs font-medium text-zinc-400 uppercase tracking-wide w-12 text-right')
+                    ui.label('Dates').classes('text-xs font-medium text-zinc-400 uppercase tracking-wide w-36')
+                    ui.label('Person(s)').classes('text-xs font-medium text-zinc-400 uppercase tracking-wide w-32')
+                    ui.label('').classes('w-20')
+
+                ui.separator()
+
+                for b in batches:
+                    _batch_row(b, batch_table.refresh)
+
+    batch_table()
 
 
 def _refresh_views_section() -> None:
@@ -460,7 +649,7 @@ def _refresh_views_section() -> None:
                 try:
                     from services.view_manager import ViewManager
                     from data.db import get_engine, get_schema
-                    ViewManager(get_engine(), schema=get_schema()).refresh()
+                    ViewManager(get_engine(), schema=get_schema()).refresh(auth.current_family_id())
                     notify('Views refreshed.', type='positive', position='top')
                 except Exception as ex:
                     notify(f'Refresh failed: {ex}', type='negative', position='top')
@@ -470,27 +659,281 @@ def _refresh_views_section() -> None:
                 .classes('bg-zinc-800 text-white rounded-lg px-4 self-start')
 
 
-def content() -> None:
-    with ui.column().classes('w-full max-w-3xl mx-auto px-4 py-6 gap-6'):
+# ── Users tab: family members ─────────────────────────────────────────────────
 
-        # Page title
-        with ui.row().classes('items-center gap-3 mb-2'):
+def _family_members_section() -> None:
+    from services.family_service import (
+        get_family, get_family_members, update_member_role,
+        remove_member, add_user_to_family, get_users_without_family,
+    )
+    fid = auth.current_family_id()
+    if not fid:
+        return
+
+    @ui.refreshable
+    def members_table() -> None:
+        family  = get_family(fid)
+        members = get_family_members(fid)
+        uid     = auth.current_user_id()
+
+        with _card(family.name if family else 'Family Members', 'group'):
+            with ui.row().classes('items-center gap-3 px-6 py-4 border-b border-zinc-100'):
+                ui.icon('group').classes('text-zinc-400 text-xl')
+                ui.label(family.name if family else 'Family Members') \
+                    .classes('text-base font-semibold text-zinc-700')
+                ui.space()
+                unassigned = get_users_without_family()
+                if unassigned:
+                    ui.button('Add user', icon='person_add',
+                              on_click=lambda: _add_member_dialog(
+                                  fid, unassigned, members_table.refresh)) \
+                        .props('unelevated no-caps') \
+                        .classes('bg-zinc-800 text-white rounded-lg px-4 text-sm')
+
+            if not members:
+                ui.label('No members.').classes('text-sm text-zinc-400 px-6 py-4')
+            else:
+                for m in members:
+                    is_self = m.user_id == uid
+                    dot_css = 'text-green-500' if m.is_active else 'text-zinc-300'
+                    role_label, role_css = (
+                        ('Instance Admin', 'bg-zinc-800 text-white') if m.is_instance_admin else
+                        ('Family Head',    'bg-amber-100 text-amber-700') if m.family_role == 'head' else
+                        ('Member',         'bg-blue-50 text-blue-700')
+                    )
+                    with ui.row().classes(
+                        'items-center px-6 py-3 gap-4 border-b border-zinc-50 hover:bg-zinc-50 w-full'
+                    ):
+                        ui.icon('circle').classes(f'text-xs {dot_css}')
+                        with ui.column().classes('gap-0 min-w-32'):
+                            with ui.row().classes('items-center gap-2'):
+                                ui.label(m.display_name).classes('text-sm font-medium text-zinc-800')
+                                if is_self:
+                                    ui.label('(you)').classes('text-xs text-zinc-400')
+                            ui.label(f'@{m.username}').classes('text-xs text-zinc-400')
+                        ui.label(role_label).classes(
+                            f'text-xs px-2 py-0.5 rounded-full font-medium {role_css}'
+                        )
+                        ui.space()
+                        if not is_self:
+                            ui.button(icon='edit',
+                                      on_click=lambda m=m: _edit_member_dialog(
+                                          m, fid, members_table.refresh)) \
+                                .props('flat round dense').classes('text-zinc-400')
+
+    members_table()
+
+
+def _edit_member_dialog(m, fid: int, on_change) -> None:
+    from services.family_service import update_member_role, remove_member
+
+    with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
+        with ui.row().classes('items-center justify-between w-full mb-2'):
+            ui.label(f'Edit — {m.display_name}').classes('text-base font-semibold text-zinc-800')
+            ui.button(icon='close', on_click=dlg.close).props('flat round dense').classes('text-zinc-400')
+
+        role_select = ui.select(
+            label='Family role',
+            options={'head': 'Family Head', 'member': 'Member'},
+            value=m.family_role,
+        ).props('outlined dense').classes('w-full')
+
+        def save_role():
+            update_member_role(m.user_id, fid, role_select.value)
+            dlg.close()
+            on_change()
+
+        def confirm_remove():
+            with ui.dialog() as cdlg, ui.card().classes('rounded-2xl p-6 gap-4 w-80'):
+                ui.label(f'Remove {m.display_name} from this family?') \
+                    .classes('text-sm text-zinc-700')
+                with ui.row().classes('gap-2 justify-end w-full mt-2'):
+                    ui.button('Cancel', on_click=cdlg.close).props('flat no-caps').classes('text-zinc-500')
+                    ui.button('Remove', on_click=lambda: (_do_remove(cdlg))) \
+                        .props('unelevated no-caps').classes('bg-red-600 text-white rounded-lg px-4')
+            cdlg.open()
+
+        def _do_remove(cdlg):
+            remove_member(m.user_id, fid)
+            cdlg.close()
+            dlg.close()
+            on_change()
+
+        with ui.row().classes('gap-2 justify-between w-full mt-2'):
+            ui.button('Remove', icon='person_remove', on_click=confirm_remove) \
+                .props('flat no-caps').classes('text-red-500')
+            with ui.row().classes('gap-2'):
+                ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+                ui.button('Save', on_click=save_role, icon='save').props('unelevated no-caps') \
+                    .classes('bg-zinc-800 text-white rounded-lg px-4')
+    dlg.open()
+
+
+def _add_member_dialog(fid: int, unassigned: list, on_change) -> None:
+    from services.family_service import add_user_to_family
+    options = {str(u['id']): f"{u['display_name']} (@{u['username']})" for u in unassigned}
+
+    with ui.dialog() as dlg, ui.card().classes('w-96 rounded-2xl p-6 gap-4'):
+        ui.label('Add Member').classes('text-base font-semibold text-zinc-800')
+        user_select = ui.select(label='User', options=options).props('outlined dense').classes('w-full')
+        role_select = ui.select(
+            label='Role', options={'member': 'Member', 'head': 'Family Head'}, value='member',
+        ).props('outlined dense').classes('w-full')
+
+        def save():
+            if user_select.value:
+                add_user_to_family(int(user_select.value), fid, role_select.value)
+                dlg.close()
+                on_change()
+
+        with ui.row().classes('gap-2 justify-end w-full'):
+            ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+            ui.button('Add', on_click=save, icon='person_add').props('unelevated no-caps') \
+                .classes('bg-zinc-800 text-white rounded-lg px-4')
+    dlg.open()
+
+
+# ── Family tab: all families (admin only) ─────────────────────────────────────
+
+def _all_families_section() -> None:
+    from services.family_service import get_all_families, create_family, rename_family
+
+    @ui.refreshable
+    def families_list() -> None:
+        families = get_all_families()
+        with _card('All Families', 'corporate_fare'):
+            with ui.row().classes('items-center gap-3 px-6 py-4 border-b border-zinc-100'):
+                ui.icon('corporate_fare').classes('text-zinc-400 text-xl')
+                ui.label('All Families').classes('text-base font-semibold text-zinc-700')
+                ui.space()
+                ui.button('New family', icon='add',
+                          on_click=lambda: _create_family_dialog(families_list.refresh)) \
+                    .props('unelevated no-caps') \
+                    .classes('bg-zinc-800 text-white rounded-lg px-4 text-sm')
+
+            if not families:
+                ui.label('No families yet.').classes('text-sm text-zinc-400 px-6 py-4')
+            else:
+                for f in families:
+                    with ui.row().classes(
+                        'items-center px-6 py-3 gap-4 border-b border-zinc-50 hover:bg-zinc-50 w-full'
+                    ):
+                        ui.icon('group').classes('text-zinc-400')
+                        with ui.column().classes('gap-0'):
+                            ui.label(f.name).classes('text-sm font-medium text-zinc-800')
+                            ui.label(f'#{f.id}').classes('text-xs text-zinc-400')
+                        ui.space()
+                        ui.label(
+                            f'{f.member_count} member{"s" if f.member_count != 1 else ""}'
+                        ).classes('text-xs text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full')
+                        ui.button(icon='edit',
+                                  on_click=lambda f=f: _rename_family_dialog(
+                                      f.id, f.name, families_list.refresh)) \
+                            .props('flat round dense').classes('text-zinc-400')
+
+    families_list()
+
+
+def _rename_family_dialog(fid: int, current_name: str, on_change) -> None:
+    from services.family_service import rename_family
+    with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
+        ui.label('Rename Family').classes('text-base font-semibold text-zinc-800')
+        name_input = ui.input(label='Family name', value=current_name) \
+            .props('outlined dense').classes('w-full')
+
+        def save():
+            n = name_input.value.strip()
+            if n:
+                rename_family(fid, n)
+                dlg.close()
+                on_change()
+
+        with ui.row().classes('gap-2 justify-end w-full'):
+            ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+            ui.button('Save', on_click=save, icon='save').props('unelevated no-caps') \
+                .classes('bg-zinc-800 text-white rounded-lg px-4')
+    dlg.open()
+
+
+def _create_family_dialog(on_change) -> None:
+    from services.family_service import create_family
+    with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
+        ui.label('Create New Family').classes('text-base font-semibold text-zinc-800')
+        ui.label('Config will be seeded from Default Family.').classes('text-xs text-zinc-400')
+        name_input = ui.input(label='Family name', placeholder='e.g. The Smiths') \
+            .props('outlined dense').classes('w-full')
+
+        def save():
+            n = name_input.value.strip()
+            if n:
+                create_family(n, auth.current_user_id())
+                dlg.close()
+                on_change()
+
+        with ui.row().classes('gap-2 justify-end w-full'):
+            ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+            ui.button('Create', on_click=save, icon='add').props('unelevated no-caps') \
+                .classes('bg-zinc-800 text-white rounded-lg px-4')
+    dlg.open()
+
+
+# ── Entry point ────────────────────────────────────────────────────────────────
+
+def content() -> None:
+    is_head  = auth.is_family_head()
+    is_admin = auth.is_instance_admin()
+
+    with ui.column().classes('w-full max-w-4xl mx-auto px-4 py-6 gap-0'):
+        with ui.row().classes('items-center gap-3 mb-4'):
             ui.icon('settings').classes('text-zinc-400 text-2xl')
             ui.label('Settings').classes('text-2xl font-bold text-zinc-800')
 
-        # Profile — visible to everyone
-        _profile_section()
+        # ── Tab bar ────────────────────────────────────────────────────────────
+        with ui.tabs().classes('w-full border-b border-zinc-100') \
+                .props('align=left indicator-color=zinc-800 active-color=zinc-800') as tabs:
+            tab_personal = ui.tab('Personal', icon='person')
+            if is_head:
+                tab_uploads = ui.tab('Uploads', icon='folder_open')
+                tab_data    = ui.tab('Data',    icon='storage')
+                tab_users   = ui.tab('Users',   icon='group')
+            if is_admin:
+                tab_family = ui.tab('Family', icon='corporate_fare')
 
-        # User management — admin only
-        if auth.is_admin():
-            _user_management_section()
-            # _aliases_section()
-            _employers_section()
-            _refresh_views_section()
-            _finance_data_export_section()
-            _finance_data_import_section()
-            _raw_export_section()
-            _export_import_section()
+        # ── Tab panels ─────────────────────────────────────────────────────────
+        with ui.tab_panels(tabs, value=tab_personal).classes('w-full mt-6'):
+
+            # ── Personal ──────────────────────────────────────────────────────
+            with ui.tab_panel(tab_personal):
+                with ui.column().classes('w-full gap-6'):
+                    _profile_section()
+                    _employers_section()
+
+            # ── Uploads (head+) ───────────────────────────────────────────────
+            if is_head:
+                with ui.tab_panel(tab_uploads):
+                    _upload_manager_section()
+
+                # ── Data (head+) ──────────────────────────────────────────────
+                with ui.tab_panel(tab_data):
+                    with ui.column().classes('w-full gap-6'):
+                        _finance_data_export_section()
+                        _finance_data_import_section()
+                        _raw_export_section()
+                        _export_import_section()
+                        _refresh_views_section()
+
+                # ── Users (head+) ─────────────────────────────────────────────
+                with ui.tab_panel(tab_users):
+                    with ui.column().classes('w-full gap-6'):
+                        _family_members_section()
+                        if is_admin:
+                            _user_management_section()
+
+            # ── Family (admin only) ───────────────────────────────────────────
+            if is_admin:
+                with ui.tab_panel(tab_family):
+                    with ui.column().classes('w-full gap-6'):
+                        _all_families_section()
 
 
 # ── Data export / import ───────────────────────────────────────────────────────
@@ -499,9 +942,10 @@ def _export_import_section() -> None:
 
     def _build_export() -> dict:
         """Assemble all config into a single portable dict."""
-        cat_cfg    = load_category_config()
-        bank_rules = load_rules()
-        txn_cfg    = load_config()
+        fid        = auth.current_family_id()
+        cat_cfg    = load_category_config(fid)
+        bank_rules = load_rules(fid)
+        txn_cfg    = load_config(fid)
         return {
             "_version": 2,
             "_exported_at": datetime.now().isoformat(timespec="seconds"),
@@ -642,26 +1086,30 @@ def _export_import_section() -> None:
 
                     def do_import():
                         imported = []
+                        fid = auth.current_family_id()
                         try:
                             if sections.get('categories') and sections['categories'].value and cat_data:
                                 cfg = CategoryConfig(
                                     categories=[Category.from_dict(c) for c in cat_data.get('categories', [])],
                                     rules=[CategoryRule.from_dict(r) for r in cat_data.get('rules', [])],
                                 )
-                                save_category_config(cfg)
+                                save_category_config(cfg, fid)
                                 imported.append('categories')
 
                             if sections.get('banks') and sections['banks'].value and br_data:
-                                save_rules([BankRule.from_dict(r) for r in br_data])
+                                save_rules([BankRule.from_dict(r) for r in br_data], fid)
                                 imported.append('banks')
 
                             if sections.get('transaction_config') and sections['transaction_config'].value and txn_data:
                                 from services.transaction_config import TransactionConfig
-                                save_config(TransactionConfig.from_dict(txn_data))
+                                save_config(TransactionConfig.from_dict(txn_data), fid)
                                 imported.append('transaction config')
 
                             if imported:
-                                notify(f"Imported: {', '.join(imported)}", type='positive', position='top')
+                                from services.view_manager import ViewManager
+                                from data.db import get_engine, get_schema
+                                ViewManager(get_engine(), schema=get_schema()).refresh(fid)
+                                notify(f"Imported: {', '.join(imported)} — views refreshed.", type='positive', position='top')
                             else:
                                 notify('Nothing selected to import.', type='warning', position='top')
 
@@ -716,7 +1164,7 @@ def _finance_data_export_section() -> None:
                 all_users = auth.get_all_users()
             except Exception:
                 all_users = []
-            person_options = {0: 'All'} | {u.id: u.person_name.title() for u in all_users if u.is_active}
+            person_options = {0: 'All'} | {u.id: u.display_name for u in all_users if u.is_active}
             export_state   = {'person_id': 0}
 
             with ui.row().classes('items-center gap-2 w-full px-1 pb-1'):
@@ -1015,7 +1463,7 @@ def _raw_export_section() -> None:
                 return
 
             import re as _re
-            rules_by_prefix = {r.prefix: r for r in (load_rules() or [])}
+            rules_by_prefix = {r.prefix: r for r in (load_rules(auth.current_family_id()) or [])}
 
             try:
                 all_users = auth.get_all_users()
@@ -1023,7 +1471,7 @@ def _raw_export_section() -> None:
                 all_users = []
 
             current_uid    = auth.current_user_id() or 0
-            person_options = {u.id: u.person_name.title() for u in all_users if u.is_active}
+            person_options = {u.id: u.display_name for u in all_users if u.is_active}
 
             # Build account options: account_key → human-readable label
             def _account_label(ak: str) -> str:

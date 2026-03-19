@@ -6,6 +6,7 @@ Thin NiceGUI adapter — all logic lives in services/upload_pipeline.py.
 
 from nicegui import events
 
+import services.auth as auth
 from services.upload_pipeline import pipeline
 from services.notifications import notify
 
@@ -23,7 +24,12 @@ async def handle_upload(
         notify("No person selected!", type="negative", position="top")
         return
 
-    result = pipeline.run(raw=raw, filename=name, person=person, bank_rule=bank_rule)
+    result = pipeline.run(
+        raw=raw, filename=name, person=person,
+        family_id=auth.current_family_id(),
+        uploaded_by=auth.current_user_id() or 0,
+        bank_rule=bank_rule,
+    )
 
     if not result.success:
         notify(

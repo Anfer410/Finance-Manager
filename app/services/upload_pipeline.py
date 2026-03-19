@@ -217,6 +217,8 @@ def write_to_consolidated(
     mapping: "ColumnMapping",
     person: list[int],
     source_file: str,
+    family_id: int = 1,
+    uploaded_by: int = 0,
 ) -> int:
     """
     Write normalised rows from df into transactions_debit or transactions_credit.
@@ -309,6 +311,8 @@ def write_to_consolidated(
                 "credit":           abs(crd),
                 "person":           p,
                 "source_file":      source_file,
+                "family_id":        family_id,
+                "uploaded_by":      uploaded_by or None,
             })
         else:
             try:
@@ -322,6 +326,8 @@ def write_to_consolidated(
                 "amount":           amt,
                 "person":           p,
                 "source_file":      source_file,
+                "family_id":        family_id,
+                "uploaded_by":      uploaded_by or None,
             })
 
     if skipped_date:
@@ -352,20 +358,24 @@ def write_to_consolidated(
                     sql = text(f"""
                         INSERT INTO {tbl}
                             (account_key, transaction_date, description,
-                             debit, credit, person, source_file)
+                             debit, credit, person, source_file,
+                             family_id, uploaded_by)
                         VALUES
                             (:account_key, :transaction_date, :description,
-                             :debit, :credit, :person, :source_file)
+                             :debit, :credit, :person, :source_file,
+                             :family_id, :uploaded_by)
                         ON CONFLICT DO NOTHING
                     """)
                 else:
                     sql = text(f"""
                         INSERT INTO {tbl}
                             (account_key, transaction_date, description,
-                             amount, person, source_file)
+                             amount, person, source_file,
+                             family_id, uploaded_by)
                         VALUES
                             (:account_key, :transaction_date, :description,
-                             :amount, :person, :source_file)
+                             :amount, :person, :source_file,
+                             :family_id, :uploaded_by)
                         ON CONFLICT DO NOTHING
                     """)
 
@@ -389,16 +399,19 @@ class UploadPipeline:
         raw:         bytes,
         filename:    str,
         person:      str,
+        family_id:   int = 1,
+        uploaded_by: int = 0,
         bank_rule=None,
         col_mapping: ColumnMapping | None = None,
     ) -> UploadResult:
-        from data.bank_rules import _matcher, load_rules
+        from data.bank_rules import RuleMatcher, load_rules
         from services.raw_table_manager import parse_csv, default_manager
         from services.view_manager import default_view_manager
 
         # ── 1. Match rule ─────────────────────────────────────────────────────
         if bank_rule is None:
-            result = _matcher.match(filename, person)
+            matcher = RuleMatcher(load_rules(family_id))
+            result = matcher.match(filename, person)
             if result is None:
                 return UploadResult(
                     bank_name="unknown", inserted=0, skipped=0, total=0,
@@ -494,6 +507,8 @@ class UploadPipeline:
                 mapping     = mapping_for_write,
                 person      = person,
                 source_file = filename,
+                family_id   = family_id,
+                uploaded_by = uploaded_by,
             )
             print(f"[UploadPipeline] {consolidated_inserted} rows → transactions_{account_type}")
         except Exception as ex:
@@ -532,7 +547,7 @@ class UploadPipeline:
         # ── 6. Refresh views ──────────────────────────────────────────────────
         try:
             vm = default_view_manager()
-            vm.refresh()
+            vm.refresh(family_id)
         except Exception as ex:
             print(f"[UploadPipeline] view refresh failed: {ex}")
 

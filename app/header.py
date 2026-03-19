@@ -31,7 +31,7 @@ def frame(title: str, version: str, get_logo_func=None):
         ui.run_javascript('window.location.href = "/login"')
 
     display_name = auth.current_display_name() or "User"
-    is_admin     = auth.is_admin()
+    is_admin     = auth.is_instance_admin()
 
     # ── Header toolbar ─────────────────────────────────────────────────────────
     with ui.header().classes(replace='row items-center h-20 justify-start') as header_el:

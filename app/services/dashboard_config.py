@@ -341,17 +341,23 @@ def update_widget_layout(
 
 # ── Default dashboard seeding ─────────────────────────────────────────────────
 
+# Snapshot of the reference dashboard layout (captured from user 1).
+# Each entry: (chart_id, position, col_span, row_span, col_start, row_start).
+_DEFAULT_LAYOUT = [
+    ("financial_baseline",  0,  4, 1, 1,  1),
+    ("kpi_alltime",         1,  2, 1, 1,  2),
+    ("kpi_yearly",          2,  2, 1, 3,  2),
+    ("spend_income",        3,  4, 2, 1,  3),
+    ("fixed_vs_variable",   4,  2, 2, 1,  5),
+    ("employer_income",     5,  2, 2, 3,  5),
+    ("category_donut",      6,  2, 2, 1,  7),
+    ("per_bank",            7,  2, 2, 3,  7),
+    ("category_trend",      8,  4, 2, 1,  9),
+    ("weekly_transactions", 9,  4, 3, 1, 11),
+]
+
+
 def _create_default_dashboard(user_id: int) -> int:
-    from components.dashboard_registry import REGISTRY
-    from db_migration import _pack_widget_positions
-
-    widgets_to_place = [
-        {"id": i, "col_span": chart.default_col_span,
-         "row_span": chart.default_row_span, "position": i}
-        for i, chart in enumerate(REGISTRY)
-    ]
-    placements = _pack_widget_positions(widgets_to_place)
-
     with _engine().begin() as conn:
         row = conn.execute(text(f"""
             INSERT INTO {_schema()}.app_dashboards (user_id, name, is_default)
@@ -360,20 +366,14 @@ def _create_default_dashboard(user_id: int) -> int:
         """), {"uid": user_id}).fetchone()
         dashboard_id = row[0]
 
-        for i, chart in enumerate(REGISTRY):
-            col_start, row_start = placements[i]
+        for chart_id, pos, cs, rs, cst, rst in _DEFAULT_LAYOUT:
             conn.execute(text(f"""
                 INSERT INTO {_schema()}.app_dashboard_widgets
                     (dashboard_id, chart_id, position, col_span, row_span, col_start, row_start, config)
                 VALUES (:did, :cid, :pos, :cs, :rs, :cst, :rst, '{{}}')
             """), {
-                "did": dashboard_id,
-                "cid": chart.id,
-                "pos": i,
-                "cs":  chart.default_col_span,
-                "rs":  chart.default_row_span,
-                "cst": col_start,
-                "rst": row_start,
+                "did": dashboard_id, "cid": chart_id, "pos": pos,
+                "cs": cs, "rs": rs, "cst": cst, "rst": rst,
             })
 
     return dashboard_id

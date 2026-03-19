@@ -7,8 +7,9 @@ Route: /categories
 
 from __future__ import annotations
 from nicegui import ui
+import services.auth as auth
 from data.category_rules import (
-    load_category_config, 
+    load_category_config,
     save_category_config,
     Category, CategoryRule, CategoryConfig,
 )
@@ -23,7 +24,7 @@ ENGINE = get_engine()
 
 
 def content() -> None:
-    cfg = load_category_config()
+    cfg = load_category_config(auth.current_family_id())
     vm  = ViewManager(engine=ENGINE, schema=SCHEMA)
 
     with ui.row().classes('w-full items-center justify-between mb-2'):
@@ -218,9 +219,10 @@ def _delete_rule(rule: CategoryRule, cfg: CategoryConfig, refresh_fn) -> None:
 
 
 def _save(vm, cfg: CategoryConfig) -> None:
-    save_category_config(cfg)
+    fid = auth.current_family_id()
+    save_category_config(cfg, fid)
     try:
-        vm.refresh()
+        vm.refresh(fid)
         notify('Saved & views rebuilt.', type='positive', position='top')
     except Exception as e:
         notify(f'Saved but view rebuild failed: {e}', type='warning', position='top')

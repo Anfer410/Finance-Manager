@@ -123,6 +123,7 @@ class _SpendIncome(MixedChartWidget):
     icon             = 'bar_chart'
     category         = 'spend'
     default_col_span = 4
+    default_row_span = 2
     chart_height     = '300px'
     supports_time_range = True
 
@@ -148,6 +149,7 @@ class _PerBank(LineChartWidget):
     icon             = 'account_balance'
     category         = 'spend'
     default_col_span = 2
+    default_row_span = 2
     supports_time_range = True
 
     def render(self, ctx: RenderContext) -> None:
@@ -163,6 +165,7 @@ class _CategoryDonut(DonutChartWidget):
     icon             = 'donut_large'
     category         = 'spend'
     default_col_span = 2
+    default_row_span = 2
     has_own_header   = True
     supports_time_range = True
     config_schema    = [
@@ -207,6 +210,7 @@ class _FixedVsVariable(BarChartWidget):
     icon             = 'stacked_bar_chart'
     category         = 'spend'
     default_col_span = 2
+    default_row_span = 2
     supports_time_range = True
 
     def render(self, ctx: RenderContext) -> None:
@@ -222,6 +226,7 @@ class _TrailingSpend(MixedChartWidget):
     icon             = 'show_chart'
     category         = 'spend'
     default_col_span = 4
+    default_row_span = 2
     chart_height     = '300px'
     supports_time_range = False  # time is always trailing; controlled by year_back field
     config_schema    = [
@@ -250,6 +255,7 @@ class _PersonSpend(BarChartWidget):
     icon             = 'people'
     category         = 'spend'
     default_col_span = 4
+    default_row_span = 2
     chart_height     = '300px'
     supports_time_range = True
     supports_person_filter = False  # always shows all persons for comparison
@@ -316,6 +322,7 @@ class _EmployerIncome(StackedBarChartWidget):
     icon             = 'payments'
     category         = 'income'
     default_col_span = 2
+    default_row_span = 2
     chart_height     = '280px'
     supports_time_range = True
 
@@ -336,6 +343,7 @@ class _CategoryTrend(StackedBarChartWidget):
     icon             = 'trending_up'
     category         = 'trends'
     default_col_span = 4
+    default_row_span = 2
     chart_height     = '320px'
     supports_time_range = True
 
@@ -362,7 +370,7 @@ class _WeeklyTransactions(StackedBarChartWidget):
     icon             = 'view_week'
     category         = 'trends'
     default_col_span = 4
-    default_row_span = 2
+    default_row_span = 3
     chart_height     = '460px'
     supports_time_range = True
 
@@ -446,6 +454,7 @@ class _LoanBalances(AreaLineChartWidget):
     icon                   = 'trending_down'
     category               = 'loans'
     default_col_span       = 4
+    default_row_span       = 2
     supports_person_filter = False
     supports_time_range    = False
     supports_loan_select   = True
@@ -585,6 +594,7 @@ class _LoanAmortization(AreaLineChartWidget):
     icon                   = 'area_chart'
     category               = 'loans'
     default_col_span       = 4
+    default_row_span       = 2
     chart_height           = '280px'
     supports_person_filter = False
     supports_time_range    = False

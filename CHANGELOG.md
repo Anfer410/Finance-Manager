@@ -1,6 +1,115 @@
 # CHANGELOG
 
 
+## v2.2.0 (2026-03-20)
+
+### Chores
+
+- Deployment cleanup and gitignore improvements
+  ([`6b1b554`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/6b1b554ed6b2401943c637e9689ab46ccd4bb703))
+
+- dockerfile: use python:3.13-slim, set APP_ENV=prod - docker-compose: add db volume, healthcheck,
+  depends_on, fix DB_USER default, require secrets via :? syntax - app/main.py: read STORAGE_SECRET
+  from env instead of hardcoding - .env.example: document all required env vars - .dockerignore:
+  exclude venv, pycache, tests, docs from image - .gitignore: add memory/, .claude/, .pytest_cache/
+  - remove stale/unreferenced files: ico.ico_old, logo_old.png, salzit.png, extension_icon.png -
+  remove memory/ from git tracking
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Continuous Integration
+
+- Add GHCR push job and version artifact from version-bump
+  ([`34dcedd`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/34dcedd4987a73a43abe8607b9d2974ab3504ef5))
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Documentation
+
+- Add license and update readme
+  ([`a866cd8`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/a866cd8bd654a9b1c99ea611bca28779ffebd84b))
+
+- Update CLAUDE.md test file table with all Tier 1+2 test files
+  ([`d015544`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/d015544c120b85ed31756c54fe7d72a012f7e9a0))
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Features
+
+- Expand default category rules and add Travel/Entertainment categories
+  ([`4283447`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/42834479934747b3a49775c683b35e050eb2c73f))
+
+Adds ~200 active default rules covering groceries, gas stations, restaurants, rideshare,
+  health/pharmacies, home/insurance, utilities, lodging, travel, entertainment (streaming/gaming),
+  merchandise, personal care, and investments. Also adds Travel and Entertainment as new default
+  spend categories.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Refactoring
+
+- Consolidate tests into a single tests/ directory
+  ([`461fc2d`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/461fc2d074f4008afd7aeff683706288ad2fd195))
+
+Move unit tests from app/tests/ into tests/ alongside the integration tests. Remove the sys.path
+  hacks (unnecessary since pytest runs from app/ as CWD). Update CLAUDE.md to document both test
+  types.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Testing
+
+- Add Tier 1 tests (family, loan, grid layout, upload pipeline run)
+  ([`24c802f`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/24c802f5079105c383867c795a65eeb854b4a87a))
+
+- Add 80 new tests across 4 new test files (236 total, all passing) - test_family_service.py: full
+  CRUD coverage for family/member management - test_loan_service.py: amortization math unit tests +
+  DB save/load/delete - test_dashboard_grid_layout.py: mocked unit tests for compact, cascade, move,
+  swap - test_upload_pipeline_run.py: integration tests for UploadPipeline.run() including
+  debit/credit inserts, dedup, error paths, and explicit col_mapping
+
+Also fix two bugs found during audit: - Fix NameError in upload_pipeline.py:524 — early return when
+  archive is disabled referenced undefined `inserted`/`skipped` vars; use `consolidated_inserted`
+  instead - Delete dead compat shim app/components/dashboard_registry.py (nothing imported it)
+
+Fix conftest.py to advance families SERIAL sequence after manual seeded inserts so create_family()
+  doesn't collide with existing IDs.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+- Add Tier 2 integration test suite (dashboard_config, upload_manager, custom_chart_query DB,
+  finance_dashboard_data DB)
+  ([`8aed807`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/8aed807025b6da3a878c2ad5f6ea44b814368d7e))
+
+- tests/test_dashboard_config.py: 18 tests covering dashboard CRUD, widget CRUD, find_free_position,
+  and auto-positioning without overlap - tests/test_upload_manager.py: 14 tests covering _sanitize
+  unit tests, _raw_join_clause unit tests, and integration tests for get_upload_batches,
+  reassign_persons, and delete_batch - tests/test_custom_chart_query_db.py: 17 tests covering
+  get_source_columns, execute_chart_query with real DB execution, _resolve_time_range, and
+  _fmt_person - tests/test_finance_dashboard_data_db.py: 15 tests covering get_years,
+  get_yearly_kpi, get_monthly_spend_series, and get_persons against seeded data
+
+Fixture setup: seed bank rules for family 42 so ViewManager includes the account_key in views
+  (checking outflows require negative amounts in transactions_debit). Patch _family_filter directly
+  on the loaded module rather than patching auth, since importlib-loaded modules need the patch on
+  the module's own namespace.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+- Fix all 156 tests passing in full suite
+  ([`479491f`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/479491f793eaf4cdd6ed332f9581928cc67b45e4))
+
+- conftest: seed families 2, 7, 42 for FK constraint coverage - test_auth: update stale assertion
+  (create_user no longer auto-assigns family 1) - test_custom_chart_renderer: use patch.object
+  per-test instead of sys.modules.setdefault - test_transaction_scoping: fix ViewManager.refresh()
+  call signature, fix uploaded_by FK violation, use pg_engine.begin() + try/finally for isolation
+  tests - test_upload_pipeline: remove services.view_manager from module-level stubs — it is a lazy
+  import and the global stub poisoned sys.modules for later test files - config_repo: handle
+  psycopg3 JSONB auto-deserialization in _settings_get
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+
 ## v2.1.0 (2026-03-19)
 
 ### Bug Fixes

@@ -10,12 +10,13 @@ from datetime import datetime
 from nicegui import ui
 from services.notifications import notify
 
-from services.auth import current_user_id, current_selected_persons
 from services.dashboard_config import (
     get_or_create_default, list_dashboards, create_dashboard,
     delete_dashboard, rename_dashboard,
     add_widget, update_widget_config, update_widget_label,
     get_widgets, restore_widgets,
+    set_dashboard_shares, get_dashboard_shares,
+    get_shared_with_me, set_subscription, list_subscribed_shared,
 )
 from services.dashboard_grid_layout import (
     set_col_span, set_row_span, apply_move,
@@ -25,6 +26,9 @@ from components.widgets import REGISTRY_BY_ID, RenderContext
 from components.widgets.settings_ui import open_widget_settings_dialog
 from components.add_widget_dialog import open_add_widget_dialog
 from components.dashboard_txn_table import render_txn_table
+
+from services.auth import current_user_id, current_selected_persons, current_family_id
+from services.family_service import get_family_members
 
 import data.finance_dashboard_data as data
 
@@ -59,6 +63,7 @@ def content() -> None:
         'edit_mode':           False,
         'active_dashboard_id': get_or_create_default(user_id),
         'edit_snapshot':       None,   # widget snapshot taken when entering edit mode
+        'is_shared_view':      False,  # True when viewing a dashboard owned by someone else
     }
 
     # ── Drag-to-move/resize event bus ─────────────────────────────────────────
@@ -116,30 +121,89 @@ def content() -> None:
     # ── Dashboard tab bar ─────────────────────────────────────────────────────
     @ui.refreshable
     def dashboard_tabs() -> None:
-        dbs = list_dashboards(user_id)
-        with ui.row().classes('items-center gap-1 mb-4 flex-wrap'):
-            for db in dbs:
-                is_active = db['id'] == state['active_dashboard_id']
-                with ui.row().classes('items-center gap-0'):
-                    ui.button(
-                        db['name'],
-                        on_click=lambda _, did=db['id']: _switch_dashboard(did),
-                    ).props('no-caps dense').classes(
-                        'text-sm px-3 py-1 rounded-lg ' +
-                        ('bg-zinc-800 text-white' if is_active else 'text-zinc-500')
-                    )
-                    if state['edit_mode'] and not db['is_default']:
-                        ui.button(
-                            icon='edit',
-                            on_click=lambda _, db=db: _rename_dashboard_dialog(db),
-                        ).props('flat round dense size=xs').classes('text-zinc-400').tooltip('Rename')
-                        ui.button(
-                            icon='delete_outline',
-                            on_click=lambda _, did=db['id']: _delete_dashboard(did),
-                        ).props('flat round dense size=xs').classes('text-red-300').tooltip('Delete dashboard')
+        own_dbs      = list_dashboards(user_id)
+        shared_pinned = list_subscribed_shared(user_id)
+        shared_all    = get_shared_with_me(user_id)
+        edit          = state['edit_mode']
 
-            ui.button(icon='add', on_click=lambda: _new_dashboard_dialog()) \
-                .props('flat round dense size=sm').classes('text-gray-400').tooltip('New dashboard')
+        with ui.column().classes('gap-2 mb-4 w-full'):
+            # ── Tab row ───────────────────────────────────────────────────────
+            with ui.row().classes('items-center gap-1 flex-wrap'):
+                # Own dashboards
+                for db in own_dbs:
+                    is_active = db['id'] == state['active_dashboard_id'] and not state['is_shared_view']
+                    with ui.row().classes('items-center gap-0'):
+                        ui.button(
+                            db['name'],
+                            on_click=lambda _, did=db['id']: _switch_dashboard(did, is_shared=False),
+                        ).props('no-caps dense').classes(
+                            'text-sm px-3 py-1 rounded-lg ' +
+                            ('bg-zinc-800 text-white' if is_active else 'text-zinc-500')
+                        )
+                        if edit:
+                            if not db['is_default']:
+                                ui.button(
+                                    icon='edit',
+                                    on_click=lambda _, db=db: _rename_dashboard_dialog(db),
+                                ).props('flat round dense size=xs').classes('text-zinc-400').tooltip('Rename')
+                                ui.button(
+                                    icon='delete_outline',
+                                    on_click=lambda _, did=db['id']: _delete_dashboard(did),
+                                ).props('flat round dense size=xs').classes('text-red-300').tooltip('Delete dashboard')
+                            ui.button(
+                                icon='group',
+                                on_click=lambda _, db=db: _share_dashboard_dialog(db),
+                            ).props('flat round dense size=xs').classes('text-indigo-400').tooltip('Share dashboard')
+
+                # Subscribed shared dashboards
+                for sd in shared_pinned:
+                    is_active = sd['id'] == state['active_dashboard_id'] and state['is_shared_view']
+                    with ui.row().classes('items-center gap-0.5'):
+                        with ui.element('div').classes('flex flex-col items-start'):
+                            ui.button(
+                                sd['name'],
+                                on_click=lambda _, did=sd['id']: _switch_dashboard(did, is_shared=True),
+                            ).props('no-caps dense').classes(
+                                'text-sm px-3 py-1 rounded-lg ' +
+                                ('bg-indigo-700 text-white' if is_active else 'text-indigo-400')
+                            )
+                        ui.icon('group').classes('text-indigo-300').style('font-size:0.9rem') \
+                            .tooltip(f'Shared by {sd["owner_name"]}')
+
+                # "Shared" pill — always visible so users know something is shared with them
+                if shared_all and not edit:
+                    _n_new = sum(1 for s in shared_all if not s['is_subscribed'])
+                    with ui.element('div').style('position:relative;display:inline-flex'):
+                        ui.button(
+                            'Shared', icon='group',
+                            on_click=lambda: _open_shared_panel(),
+                        ).props('flat no-caps dense').classes('text-indigo-400 text-sm px-2')
+                        if _n_new:
+                            ui.badge(str(_n_new), color='indigo').props('floating rounded')
+
+                ui.button(icon='add', on_click=lambda: _new_dashboard_dialog()) \
+                    .props('flat round dense size=sm').classes('text-gray-400').tooltip('New dashboard')
+
+            # ── Shared-with-me section (edit mode only) ───────────────────────
+            if edit and shared_all:
+                with ui.element('div').classes(
+                    'w-full rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3'
+                ):
+                    ui.label('Shared with me').classes(
+                        'text-xs font-semibold text-indigo-400 uppercase tracking-wide mb-2'
+                    )
+                    for s in shared_all:
+                        with ui.row().classes('items-center gap-2 py-1'):
+                            ui.icon('dashboard_customize').classes('text-indigo-400').style('font-size:1rem')
+                            ui.label(s['name']).classes('text-sm flex-1')
+                            ui.label(f'by {s["owner_name"]}').classes('text-xs text-zinc-400')
+                            ui.switch(
+                                value=s['is_subscribed'],
+                                on_change=lambda e, did=s['dashboard_id']:
+                                    _toggle_subscription(did, e.value),
+                            ).props('dense color=indigo').tooltip(
+                                'Show as tab' if not s['is_subscribed'] else 'Hide from tabs'
+                            )
 
     # ── Active category filter chip ───────────────────────────────────────────
     @ui.refreshable
@@ -159,7 +223,7 @@ def content() -> None:
         persons      = _persons()
         dashboard_id = state['active_dashboard_id']
         widgets      = get_widgets(dashboard_id)
-        edit         = state['edit_mode']
+        edit         = state['edit_mode'] and not state['is_shared_view']
 
         shared_state = {
             'category':           state.get('category'),
@@ -278,6 +342,8 @@ def content() -> None:
         txn_table_refresh()
 
     def _toggle_edit() -> None:
+        if state['is_shared_view']:
+            return
         state['edit_mode'] = not state['edit_mode']
         if state['edit_mode']:
             state['edit_snapshot'] = get_widgets(state['active_dashboard_id'])
@@ -302,9 +368,19 @@ def content() -> None:
         dashboard_grid.refresh(state['year'])
         edit_fab.refresh()
 
-    def _switch_dashboard(dashboard_id: int) -> None:
+    def _switch_dashboard(dashboard_id: int, *, is_shared: bool = False) -> None:
+        # Exit edit mode when switching to a shared dashboard
+        if is_shared and state['edit_mode']:
+            state['edit_mode'] = False
+            state['edit_snapshot'] = None
+            edit_btn.set_text('Edit Dashboard')
+            edit_btn.props('icon=edit')
+            cancel_btn.set_visibility(False)
+            edit_fab.refresh()
+        state['is_shared_view'] = is_shared
         state['active_dashboard_id'] = dashboard_id
         state['category'] = None
+        edit_btn.set_visibility(not is_shared)
         category_chip.refresh()
         dashboard_tabs.refresh()
         dashboard_grid.refresh(state['year'])
@@ -355,6 +431,80 @@ def content() -> None:
         if state['active_dashboard_id'] == dashboard_id:
             state['active_dashboard_id'] = get_or_create_default(user_id)
             dashboard_grid.refresh(state['year'])
+        dashboard_tabs.refresh()
+
+    # ── Share management ──────────────────────────────────────────────────────
+
+    def _share_dashboard_dialog(db: dict) -> None:
+        fid     = current_family_id()
+        members = [m for m in get_family_members(fid) if m.user_id != user_id] if fid else []
+        current = set(get_dashboard_shares(db['id']))
+
+        with ui.dialog() as dlg, ui.card().classes('w-96 rounded-2xl p-6 gap-4'):
+            ui.label(f'Share "{db["name"]}"').classes('text-base font-semibold')
+            if not members:
+                ui.label('No other family members to share with.') \
+                    .classes('text-sm text-zinc-400')
+            else:
+                ui.label('Select who can see this dashboard:') \
+                    .classes('text-sm text-zinc-500')
+                checkboxes: dict[int, ui.checkbox] = {}
+                for m in members:
+                    cb = ui.checkbox(
+                        m.display_name,
+                        value=m.user_id in current,
+                    ).classes('text-sm')
+                    checkboxes[m.user_id] = cb
+
+            with ui.row().classes('justify-end gap-2 mt-2'):
+                ui.button('Cancel', on_click=dlg.close) \
+                    .props('flat no-caps').classes('text-zinc-500')
+                if members:
+                    def _save() -> None:
+                        selected = [uid for uid, cb in checkboxes.items() if cb.value]
+                        set_dashboard_shares(db['id'], selected)
+                        dlg.close()
+                        notify('Sharing updated.', type='positive', position='top')
+                        dashboard_tabs.refresh()
+                    ui.button('Save', on_click=_save) \
+                        .props('unelevated no-caps').classes('bg-zinc-800 text-white')
+        dlg.open()
+
+    def _open_shared_panel() -> None:
+        shared = get_shared_with_me(user_id)
+        with ui.dialog() as dlg, ui.card().classes('w-96 rounded-2xl p-6 gap-4'):
+            ui.label('Shared with me').classes('text-base font-semibold')
+            if not shared:
+                ui.label('No dashboards have been shared with you.') \
+                    .classes('text-sm text-zinc-400')
+            else:
+                ui.label('Toggle which shared dashboards appear as tabs.') \
+                    .classes('text-sm text-zinc-500 mb-2')
+                for s in shared:
+                    with ui.row().classes('items-center gap-2 py-1'):
+                        ui.icon('dashboard_customize').classes('text-indigo-400').style('font-size:1rem')
+                        with ui.column().classes('gap-0 flex-1'):
+                            ui.label(s['name']).classes('text-sm font-medium')
+                            ui.label(f'by {s["owner_name"]}').classes('text-xs text-zinc-400')
+                        ui.switch(
+                            value=s['is_subscribed'],
+                            on_change=lambda e, did=s['dashboard_id']:
+                                _toggle_subscription(did, e.value),
+                        ).props('dense color=indigo')
+            with ui.row().classes('justify-end mt-2'):
+                ui.button('Close', on_click=dlg.close) \
+                    .props('flat no-caps').classes('text-zinc-500')
+        dlg.open()
+
+    def _toggle_subscription(dashboard_id: int, subscribed: bool) -> None:
+        set_subscription(dashboard_id, user_id, subscribed)
+        # If unsubscribing from the currently active shared dashboard, go home
+        if not subscribed and state['active_dashboard_id'] == dashboard_id:
+            state['active_dashboard_id'] = get_or_create_default(user_id)
+            state['is_shared_view'] = False
+            edit_btn.set_visibility(True)
+            dashboard_grid.refresh(state['year'])
+            txn_table_refresh()
         dashboard_tabs.refresh()
 
     # ── Widget management ─────────────────────────────────────────────────────

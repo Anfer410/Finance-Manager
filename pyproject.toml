@@ -1,6 +1,5 @@
 [tool.semantic_release]
 version_variables = ["app/config.json:appVersion"]
-branch = "main"
 commit_message = "chore: release {version} [skip ci]"
 tag_format = "v{version}"
 logging_use_named_masks = false
@@ -21,3 +20,16 @@ exclude_commit_patterns = [
 allowed_tags = ["feat", "fix", "perf", "refactor", "docs", "style", "test", "chore", "ci", "build"]
 minor_tags = ["feat"]
 patch_tags = ["fix", "perf"]
+
+# ── Branch configuration ──────────────────────────────────────────────────────
+# develop: produces pre-release versions  e.g. 1.3.0-rc.1
+# main:    produces full releases         e.g. 1.3.0
+
+[tool.semantic_release.branches.main]
+match = "main"
+prerelease = false
+
+[tool.semantic_release.branches.develop]
+match = "develop"
+prerelease = true
+prerelease_token = "rc"

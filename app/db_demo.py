@@ -522,9 +522,7 @@ def _fam1_bank_rules(uid_admin: int, uid_user1: int, uid_user2: int) -> list[dic
             "match_type": "startswith",
             "match_value": "demo1_checking",
             "account_type": "checking",
-            "payment_category": "",
             "payment_description": "",
-            "checking_payment_pattern": "",
             "member_name_column": "",
             "member_aliases": {},
             "column_map": {
@@ -543,9 +541,7 @@ def _fam1_bank_rules(uid_admin: int, uid_user1: int, uid_user2: int) -> list[dic
             "match_type": "startswith",
             "match_value": "demo1_savings",
             "account_type": "checking",
-            "payment_category": "",
             "payment_description": "",
-            "checking_payment_pattern": "",
             "member_name_column": "",
             "member_aliases": {},
             "column_map": {
@@ -564,9 +560,7 @@ def _fam1_bank_rules(uid_admin: int, uid_user1: int, uid_user2: int) -> list[dic
             "match_type": "startswith",
             "match_value": "demo1_credit",
             "account_type": "credit",
-            "payment_category": "Payment",
             "payment_description": "ONLINE PAYMENT",
-            "checking_payment_pattern": "DEMO CREDIT",
             "member_name_column": "",
             "member_aliases": {},
             "column_map": {
@@ -595,9 +589,7 @@ def _fam2_bank_rules(uid_user3: int, uid_user4: int, uid_user5: int) -> list[dic
             "match_type": "startswith",
             "match_value": "demo2_checking",
             "account_type": "checking",
-            "payment_category": "",
             "payment_description": "",
-            "checking_payment_pattern": "",
             "member_name_column": "",
             "member_aliases": {},
             "column_map": {
@@ -618,9 +610,7 @@ def _fam2_bank_rules(uid_user3: int, uid_user4: int, uid_user5: int) -> list[dic
             "match_type": "startswith",
             "match_value": f"demo2_credit{i}",
             "account_type": "credit",
-            "payment_category": "Payment",
             "payment_description": "ONLINE PAYMENT",
-            "checking_payment_pattern": f"DEMO CREDIT {i}",
             "member_name_column": "",
             "member_aliases": {},
             "column_map": {

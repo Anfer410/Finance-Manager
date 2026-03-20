@@ -649,8 +649,13 @@ def _refresh_views_section() -> None:
             def _do_refresh():
                 try:
                     from services.view_manager import ViewManager
+                    from services.transfer_detection_service import run_detection
                     from data.db import get_engine, get_schema
-                    ViewManager(get_engine(), schema=get_schema()).refresh()
+                    engine = get_engine()
+                    schema = get_schema()
+                    fid = auth.current_family_id()
+                    run_detection(fid, engine, schema)
+                    ViewManager(engine, schema=schema).refresh()
                     notify('Views refreshed.', type='positive', position='top')
                 except Exception as ex:
                     notify(f'Refresh failed: {ex}', type='negative', position='top')

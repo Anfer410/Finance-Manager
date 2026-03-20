@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v2.3.0-rc.2 (2026-03-20)
+
+### Chores
+
+- Pull app from GHCR with user-friendly compose setup
+  ([`537e0f3`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/537e0f3489564b138cb620e877953980e6cd2344))
+
+### Features
+
+- Fixes and nice to have updates
+  ([`0e4c540`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/0e4c5401aae23f2c7bcafa5c9bf86985956a69d9))
+
+
 ## v2.3.0-rc.1 (2026-03-20)
 
 ### Features

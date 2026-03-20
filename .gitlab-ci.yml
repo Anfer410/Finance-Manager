@@ -29,6 +29,10 @@ version-bump:
     - git pull origin "$CI_COMMIT_BRANCH"
     - semantic-release version
     - semantic-release publish
+    - echo "APP_VERSION=$(git describe --tags --abbrev=0)" >> version.env
+  artifacts:
+    reports:
+      dotenv: version.env
 
 include:
   - project: 'components/docker'
@@ -56,3 +60,34 @@ include:
           when: on_success
         - when: manual
           allow_failure: true
+
+push-to-ghcr:
+  stage: release
+  needs:
+    - job: "version-bump"
+      artifacts: true
+      optional: true
+    - "build-finance-manager-image"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "trigger"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - app/**/*
+      when: on_success
+    - when: manual
+      allow_failure: true
+  variables:
+    GITLAB_IMAGE: "${CI_REGISTRY}/scripts/finances/finance-manager"
+    GHCR_IMAGE: "ghcr.io/$GHCR_USER/finance-manager"
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker pull $GITLAB_IMAGE:$CI_COMMIT_SHA
+    - docker login ghcr.io -u $GHCR_USER -p $GHCR_TOKEN
+    - |
+      if [ -n "$APP_VERSION" ]; then
+        docker tag $GITLAB_IMAGE:$CI_COMMIT_SHA $GHCR_IMAGE:$APP_VERSION
+        docker push $GHCR_IMAGE:$APP_VERSION
+      fi
+    - docker tag $GITLAB_IMAGE:$CI_COMMIT_SHA $GHCR_IMAGE:latest
+    - docker push $GHCR_IMAGE:latest

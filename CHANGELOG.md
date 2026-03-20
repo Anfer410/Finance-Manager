@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.3.0-rc.1 (2026-03-20)
+
+### Features
+
+- Shared dashboards within family
+  ([`c162678`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/c1626786f70eb6b1c1195d6cdf1f5d0eac90eb2e))
+
+
 ## v2.2.1 (2026-03-20)
 
 ### Bug Fixes

@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.3.0-rc.3 (2026-03-20)
+
+### Bug Fixes
+
+- Add transfer pattern button
+  ([`56cd0fc`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/56cd0fc45e555ccac1f7e59decc6a1c0b989048d))
+
+
 ## v2.3.0-rc.2 (2026-03-20)
 
 ### Chores

@@ -1104,7 +1104,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
         with ui.row().classes("gap-2 items-center mt-2"):
             new_pat_in = ui.input(placeholder="e.g. TRANSFER") \
                 .classes("w-48").props("outlined dense") \
-                .on("change", lambda e: new_pat_ref.update({"value": e.value})) \
+                .on("change", lambda e: new_pat_ref.update({"value": e.args})) \
                 .on("keydown.enter", lambda _: _add_detection_pattern())
             ui.button("Add", icon="add", on_click=_add_detection_pattern) \
                 .props("unelevated dense no-caps") \

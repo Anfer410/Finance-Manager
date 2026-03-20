@@ -7,7 +7,7 @@ Transfer patterns are bank-wide: they apply to every account under the bank.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 
 
 def _slugify(name: str) -> str:
@@ -18,10 +18,6 @@ def _slugify(name: str) -> str:
 class BankConfig:
     name: str
     slug: str
-    # Patterns that identify inter-account transfers — applied to all accounts
-    # under this bank.  Transactions matching any pattern are excluded from
-    # spend/income totals in view_manager.
-    transfer_patterns: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -20,16 +20,7 @@ class EmployerPattern:
 @dataclass
 class TransactionConfig:
     # Inter-account transfer exclusions
-    transfer_patterns: list[str] = field(default_factory=lambda: [
-        "ONLINE PAYMENT",
-        "AUTOPAY",
-        "AUTOMATIC PAYMENT",
-        "TRANSFER",
-        "ZELLE",
-        "CAPITAL ONE MOBILE PMT",
-        "CAPITAL ONE ONLINE PMT",
-        "CITI CARD",
-    ])
+    transfer_patterns: list[str] = field(default_factory=list)
 
     # Employer / payroll description patterns — each carries who added it.
     # added_by=None  → Family Head entry, members cannot edit/remove it.
@@ -68,7 +59,7 @@ class TransactionConfig:
                     added_by=item.get("added_by"),
                 ))
         return TransactionConfig(
-            transfer_patterns=d.get("transfer_patterns", TransactionConfig.__dataclass_fields__["transfer_patterns"].default_factory()),
+            transfer_patterns=d.get("transfer_patterns", []),
             employer_patterns=employer_patterns,
             member_aliases=d.get("member_aliases", {}),
         )

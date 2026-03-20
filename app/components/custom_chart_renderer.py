@@ -46,7 +46,8 @@ def _tooltip_formatter(label_format: str | None) -> str:
     return (
         'params => {'
         '  if (!Array.isArray(params)) params = [params];'
-        f'  return params[0].name + "<br/>" + params.map(p => {row}).join("<br/>");'
+        '  const rows = params.filter(p => p.value != null && +p.value !== 0);'
+        f'  return params[0].name + "<br/>" + (rows.length ? rows : params).map(p => {row}).join("<br/>");'
         '}'
     )
 

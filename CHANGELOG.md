@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.2.1 (2026-03-20)
+
+### Bug Fixes
+
+- Consolidate transfer patterns to family-wide TransactionConfig
+  ([`57fca20`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/57fca202f8cbc8c3768812a058483f7336db8a48))
+
+
 ## v2.2.0 (2026-03-20)
 
 ### Chores

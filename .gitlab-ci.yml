@@ -45,6 +45,8 @@ include:
       rules_build:
         - if: '$CI_PIPELINE_SOURCE == "trigger"'
           when: never
+        - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+          when: never
         - if: '$CI_COMMIT_BRANCH == "main"'
           changes:
             - app/**/*
@@ -54,12 +56,17 @@ include:
       rules_release:
         - if: '$CI_PIPELINE_SOURCE == "trigger"'
           when: never
+        - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+          when: never
         - if: '$CI_COMMIT_BRANCH == "main"'
           changes:
             - app/**/*
           when: on_success
         - when: manual
           allow_failure: true
+      rules_prerelease:
+        - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+          when: on_success
 
 push-to-ghcr:
   stage: release
@@ -67,7 +74,8 @@ push-to-ghcr:
     - job: "version-bump"
       artifacts: true
       optional: true
-    - "build-finance-manager-image"
+    - job: "build-finance-manager-image"
+      optional: true
   rules:
     - if: '$CI_PIPELINE_SOURCE == "trigger"'
       when: never

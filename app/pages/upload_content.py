@@ -9,6 +9,7 @@ from nicegui import ui
 import services.auth as auth
 from data.bank_rules import BankRule, load_rules, save_rules
 from data.bank_config import BankConfig, load_banks, save_banks
+from services.transaction_config import load_config, save_config
 from services.handle_upload import handle_upload
 from services.notifications import notify
 from data.db import get_engine, get_schema
@@ -535,8 +536,10 @@ def _open_edit_account_dialog(rule: BankRule, on_save, on_delete):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _open_bank_settings_dialog(bank: BankConfig, on_save, on_delete, bank_rules: list | None = None):
-    """Edit bank-level settings: name and transfer patterns."""
-    patterns: list[str] = list(bank.transfer_patterns)
+    """Edit bank settings: name and family-wide transfer patterns."""
+    fid = auth.current_family_id()
+    txn_cfg = load_config(fid)
+    patterns: list[str] = list(txn_cfg.transfer_patterns)
 
     with ui.dialog().props("persistent") as dlg, \
          ui.card().classes("w-[520px] rounded-2xl p-0 gap-0 overflow-hidden"):
@@ -570,8 +573,8 @@ def _open_bank_settings_dialog(bank: BankConfig, on_save, on_delete, bank_rules:
                 .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
             ui.label(
                 "Transactions whose descriptions contain any of these patterns "
-                "are excluded from spend and income totals across all accounts at this bank. "
-                "Use for inter-account transfers (e.g. TRANSFER, ZELLE)."
+                "are excluded from spend and income totals across all accounts. "
+                "These apply family-wide — not just to this bank."
             ).classes("text-xs text-zinc-400")
 
             chips_container = ui.row().classes("flex-wrap gap-2 min-h-8")
@@ -634,8 +637,9 @@ def _open_bank_settings_dialog(bank: BankConfig, on_save, on_delete, bank_rules:
         if not new_name:
             notify("Bank name is required.", type="warning", position="top")
             return
-        bank.name             = new_name
-        bank.transfer_patterns = list(patterns)
+        bank.name = new_name
+        txn_cfg.transfer_patterns = list(patterns)
+        save_config(txn_cfg, fid)
         dlg.close()
         on_save(bank)
 

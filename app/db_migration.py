@@ -385,6 +385,32 @@ def _create_app_tables(conn, schema: str) -> None:
         )
     """))
 
+    # ── Shared dashboard tables ───────────────────────────────────────────────
+    # Who can see a dashboard (set by the owner)
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.app_dashboard_shares (
+            id           SERIAL PRIMARY KEY,
+            dashboard_id INTEGER NOT NULL
+                         REFERENCES {schema}.app_dashboards(id) ON DELETE CASCADE,
+            shared_with  INTEGER NOT NULL
+                         REFERENCES {schema}.app_users(id) ON DELETE CASCADE,
+            shared_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (dashboard_id, shared_with)
+        )
+    """))
+
+    # Whether a viewer has pinned a shared dashboard to their own tab bar
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.app_dashboard_subscriptions (
+            dashboard_id INTEGER NOT NULL
+                         REFERENCES {schema}.app_dashboards(id) ON DELETE CASCADE,
+            user_id      INTEGER NOT NULL
+                         REFERENCES {schema}.app_users(id) ON DELETE CASCADE,
+            added_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (dashboard_id, user_id)
+        )
+    """))
+
 
 def _migrate_widget_positions(conn, schema: str) -> None:
     """

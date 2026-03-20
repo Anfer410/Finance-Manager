@@ -23,8 +23,10 @@ wheels/
 .claude/
 memory/
 
-# Pytest
+# Pytest / Coverage
 .pytest_cache/
+coverage.xml
+.pip-cache/
 
 # Misc
 *.python-version

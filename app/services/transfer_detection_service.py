@@ -249,13 +249,59 @@ def detect_potential_transfers(family_id: int, engine: Engine, schema: str) -> i
     return count
 
 
+def cleanup_stale_potential_transfers(family_id: int, engine: Engine, schema: str) -> int:
+    """
+    Delete potential_transfer flags (user_kept=FALSE) whose transactions no
+    longer match any current transfer pattern.  Must run before re-detection so
+    that removed patterns clean up their stale flags immediately.
+
+    If no patterns are configured at all, all pending potential_transfer flags
+    are removed (none can be valid).
+    """
+    from services.transaction_config import load_config
+
+    def _esc(s: str) -> str:
+        return s.replace("'", "''")
+
+    cfg          = load_config(family_id)
+    all_patterns = list(cfg.transfer_patterns) + cfg.named_exclusion_patterns
+
+    if all_patterns:
+        still_matches  = " OR ".join(
+            f"d.description ILIKE '%{_esc(p)}%'" for p in all_patterns
+        )
+        no_match_clause = f"AND NOT ({still_matches})"
+    else:
+        no_match_clause = ""   # no patterns → remove everything
+
+    sql = text(f"""
+        DELETE FROM {schema}.transaction_flags f
+        USING {schema}.transactions_debit d
+        WHERE f.tx_id     = d.id
+          AND f.tx_table  = 'debit'
+          AND f.flag_type = 'potential_transfer'
+          AND f.user_kept = FALSE
+          AND f.family_id = :family_id
+          {no_match_clause}
+    """)
+
+    with engine.begin() as conn:
+        count = conn.execute(sql, {"family_id": family_id}).rowcount
+
+    if count:
+        print(f"[TransferDetection] family {family_id}: {count} stale potential_transfer flag(s) removed")
+    return count
+
+
 def run_detection(family_id: int, engine: Engine, schema: str) -> None:
     """
     Run all detection algorithms for a family.
     Called after every upload and after manual view refresh.
-    Order matters: internal_transfer and credit_payment first so that
-    potential_transfer skips already-paired rows.
+    Order matters: cleanup first so removed patterns clear stale flags,
+    then internal_transfer and credit_payment, then potential_transfer
+    so it skips already-paired rows.
     """
+    cleanup_stale_potential_transfers(family_id, engine, schema)
     detect_internal_transfers(family_id, engine, schema)
     detect_credit_payments(family_id, engine, schema)
     detect_potential_transfers(family_id, engine, schema)

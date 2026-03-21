@@ -32,23 +32,32 @@ ALLOWED_OPS = frozenset(['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE'])
 TRUNC_VALUES = frozenset(['day', 'week', 'month', 'quarter', 'year'])
 
 _col_cache: dict[str, list[str]] = {}
-_person_cache: dict[int, str] | None = None
+# Keyed by family_id (None = no family) to avoid cross-family leakage
+_person_cache: dict[int | None, dict[int, str]] = {}
 
 PERSON_COLUMNS = frozenset(['person'])
 
 
-def _get_person_name_map() -> dict[int, str]:
-    """Return {user_id: display_name} for all users. Cached for the process lifetime."""
+def _get_person_name_map(family_id: int | None) -> dict[int, str]:
+    """Return {user_id: display_name} for users in the given family. Cached per family."""
     global _person_cache
-    if _person_cache is not None:
-        return _person_cache
+    if family_id in _person_cache:
+        return _person_cache[family_id]
     schema = get_schema()
     with get_engine().connect() as conn:
-        rows = conn.execute(text(
-            f"SELECT id, display_name FROM {schema}.app_users ORDER BY id"
-        )).fetchall()
-    _person_cache = {r[0]: r[1] for r in rows}
-    return _person_cache
+        if family_id is not None:
+            rows = conn.execute(text(
+                f"SELECT u.id, u.display_name FROM {schema}.app_users u"
+                f" JOIN {schema}.family_memberships fm ON fm.user_id = u.id"
+                f"  AND fm.left_at IS NULL AND fm.family_id = :fid"
+                f" ORDER BY u.id"
+            ), {"fid": family_id}).fetchall()
+        else:
+            rows = conn.execute(text(
+                f"SELECT id, display_name FROM {schema}.app_users ORDER BY id"
+            )).fetchall()
+    _person_cache[family_id] = {r[0]: r[1] for r in rows}
+    return _person_cache[family_id]
 
 
 def _fmt_person(val, person_map: dict) -> str:
@@ -100,10 +109,14 @@ def _compute_rolling_surplus(
     date_from,
     date_to,
     schema: str,
+    family_id: int | None = None,
 ) -> list:
     """Cumulative (income − spend) accumulated across x_ordered buckets."""
     params: dict = {}
     where_parts: list[str] = []
+    if family_id is not None:
+        where_parts.append("family_id = :_fid")
+        params['_fid'] = family_id
     if date_from is not None:
         where_parts.append("transaction_date >= :__df")
         params['__df'] = date_from
@@ -150,6 +163,7 @@ def _execute_overlay_queries(
     date_from,
     date_to,
     schema: str,
+    family_id: int | None = None,
 ) -> dict:
     """Execute one series per overlay config and align to x_ordered."""
     overlay: dict[str, list] = {}
@@ -160,7 +174,7 @@ def _execute_overlay_queries(
         computed = ov.get('computed')
         if computed == 'rolling_surplus':
             overlay[label] = _compute_rolling_surplus(
-                x_expr, format_dates, x_ordered, date_from, date_to, schema,
+                x_expr, format_dates, x_ordered, date_from, date_to, schema, family_id,
             )
             continue
         if computed:
@@ -179,6 +193,9 @@ def _execute_overlay_queries(
             continue
         ov_where_parts: list[str] = []
         ov_params: dict = {}
+        if family_id is not None:
+            ov_where_parts.append("family_id = :_fid")
+            ov_params['_fid'] = family_id
         if date_from is not None:
             ov_where_parts.append("transaction_date >= :__odf")
             ov_params['__odf'] = date_from
@@ -269,9 +286,20 @@ def execute_chart_query(
         x_expr = x_column
         format_dates = False
 
+    # Scope to current family
+    try:
+        from services.auth import current_family_id as _current_family_id
+        _fid = _current_family_id()
+        family_id: int | None = _fid if isinstance(_fid, int) else None
+    except Exception:
+        family_id = None
+
     # Build WHERE clause from filters (only values go into params)
     where_parts = []
     params: dict = {}
+    if family_id is not None:
+        where_parts.append("family_id = :_fid")
+        params['_fid'] = family_id
     filters = config.get('filters') or []
     for i, f in enumerate(filters):
         col = f.get('column', '')
@@ -322,7 +350,7 @@ def execute_chart_query(
 
     x_is_person      = x_column in PERSON_COLUMNS
     series_is_person = bool(series_column and series_column in PERSON_COLUMNS)
-    person_map       = _get_person_name_map() if (x_is_person or series_is_person) else {}
+    person_map       = _get_person_name_map(family_id) if (x_is_person or series_is_person) else {}
 
     if series_column:
         result = _pivot_series(rows, format_dates, y_column, person_map, x_is_person, series_is_person)
@@ -333,7 +361,7 @@ def execute_chart_query(
     if overlay_cfgs:
         result['overlay'] = _execute_overlay_queries(
             overlay_cfgs, x_expr, format_dates,
-            result.get('x', []), date_from, date_to, schema,
+            result.get('x', []), date_from, date_to, schema, family_id,
         )
 
     return result

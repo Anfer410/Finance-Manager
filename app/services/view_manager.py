@@ -7,10 +7,9 @@ Builds Postgres views from the two consolidated transaction tables:
   transactions_credit  — normalised credit card rows (partitioned by year)
 
 Views produced:
-  v_credit_payments   — payment rows on credit cards (credit > 0 + payment filter)
   v_credit_spend      — purchases on credit (debit > 0, payment rows excluded)
-  v_debit_spend       — checking outflows (negative amount, transfers/payments excluded)
-  v_income            — checking inflows (positive amount, transfers excluded)
+  v_debit_spend       — checking outflows (negative amount, employer patterns + flags excluded)
+  v_income            — checking inflows (positive amount, transfer patterns excluded)
   v_all_spend         — UNION ALL of v_credit_spend + v_debit_spend
 
 Multi-family design
@@ -74,7 +73,6 @@ class ViewManager:
                       "v_credit_spend", "v_credit_payments"):
                 conn.execute(text(f"DROP VIEW IF EXISTS {self.schema}.{v} CASCADE"))
 
-        self._build_credit_payments_view(family_data)
         self._build_credit_spend_view(family_data)
         self._build_debit_spend_view(family_data)
         self._build_income_view(family_data)
@@ -151,53 +149,11 @@ class ViewManager:
         parts = []
         if rule.payment_description:
             parts.append(f"description ILIKE '%{_esc(rule.payment_description)}%'")
-        if rule.payment_category:
-            # category column doesn't exist in transactions_credit —
-            # payment_category is the raw bank category value which is
-            # only in raw tables.  We rely on description pattern here.
-            # If users need category matching they should set payment_description.
-            pass
         if not parts:
             return ""
         return "(" + " OR ".join(parts) + ")"
 
     # ── View builders ──────────────────────────────────────────────────────────
-
-    def _build_credit_payments_view(self, family_data: list[_FamilyViewData]) -> None:
-        """
-        Payment rows received on credit cards.
-        credit > 0 AND description matches payment_description.
-        """
-        branches = []
-        for fd in family_data:
-            for rule in fd.rules:
-                if rule.account_type != "credit":
-                    continue
-                pay_filter = self._payment_where(rule)
-                if not pay_filter:
-                    continue
-
-                ak = _esc(rule.prefix)
-                branches.append(
-                    f"    SELECT person, transaction_date, description,\n"
-                    f"           credit AS amount,\n"
-                    f"           '{ak}'::TEXT AS bank,\n"
-                    f"           family_id\n"
-                    f"    FROM {self.schema}.transactions_credit\n"
-                    f"    WHERE account_key = '{ak}'\n"
-                    f"      AND credit > 0\n"
-                    f"      AND credit != 'NaN'::numeric\n"
-                    f"      AND {pay_filter}"
-                )
-
-        self._create_view(
-            "v_credit_payments", branches,
-            fallback=(
-                "SELECT NULL::INTEGER[] AS person, NULL::DATE AS transaction_date, "
-                "NULL::TEXT AS description, NULL::NUMERIC AS amount, "
-                "NULL::TEXT AS bank, NULL::INTEGER AS family_id WHERE FALSE"
-            ),
-        )
 
     def _build_credit_spend_view(self, family_data: list[_FamilyViewData]) -> None:
         """
@@ -247,22 +203,13 @@ class ViewManager:
     def _build_debit_spend_view(self, family_data: list[_FamilyViewData]) -> None:
         """
         Checking outflows (amount < 0), per-family exclusions:
-          1. That family's transfer patterns
-          2. That family's employer income patterns
-          3. That family's credit card checking-side payment patterns
-          4. Amount+date reconciliation against v_credit_payments (family-scoped)
+          1. Employer income patterns (payroll excluded from spend)
+          2. Named transfer exclusions (user-confirmed external account patterns)
+          3. Automated flags: internal_transfer, credit_payment, potential_transfer
         """
         branches = []
         for fd in family_data:
             cat_expr, ctype_expr = self._category_case_expr(fd.cfg_cat)
-
-            # Checking-side credit payment patterns for THIS family only
-            credit_rules = [r for r in fd.rules if r.account_type == "credit"]
-            checking_payment_patterns = [
-                r.checking_payment_pattern
-                for r in credit_rules
-                if r.checking_payment_pattern
-            ]
 
             for rule in fd.rules:
                 if rule.account_type != "checking":
@@ -273,32 +220,24 @@ class ViewManager:
 
                 excls = []
 
-                # 1. Transfer patterns (this family's)
-                for p in fd.cfg.transfer_patterns:
-                    excls.append(f"      AND description NOT ILIKE '%{_esc(p)}%'")
-
-                # 2. Employer patterns (this family's)
+                # 1. Employer patterns
                 for p in fd.cfg.employer_pattern_strings:
                     excls.append(f"      AND description NOT ILIKE '%{_esc(p)}%'")
 
-                # 3. Checking-side credit payment patterns (this family's)
-                if checking_payment_patterns:
-                    desc_or = " OR ".join(
-                        f"description ILIKE '%{_esc(p)}%'"
-                        for p in checking_payment_patterns
-                    )
-                    excls.append(f"      AND NOT ({desc_or})")
+                # 2. Named transfer exclusions — user-confirmed external accounts.
+                #    These are always excluded regardless of flag state, because the
+                #    user has explicitly named them as non-spend destinations.
+                for p in fd.cfg.named_exclusion_patterns:
+                    excls.append(f"      AND description NOT ILIKE '%{_esc(p)}%'")
 
-                # 4. Amount+date reconciliation against v_credit_payments (family-scoped)
+                # 3. Automated flags (includes potential_transfer pending user review)
                 excls.append(
-                    f"      AND NOT EXISTS (\n"
-                    f"          SELECT 1 FROM {self.schema}.v_credit_payments cp\n"
-                    f"          WHERE ABS(t.amount) = cp.amount\n"
-                    f"            AND ABS(t.amount) > 50\n"
-                    f"            AND t.transaction_date\n"
-                    f"                BETWEEN cp.transaction_date - 3\n"
-                    f"                    AND cp.transaction_date + 3\n"
-                    f"            AND t.family_id = cp.family_id\n"
+                    f"      AND t.id NOT IN (\n"
+                    f"          SELECT tx_id FROM {self.schema}.transaction_flags\n"
+                    f"          WHERE flag_type IN ('internal_transfer', 'credit_payment', 'potential_transfer')\n"
+                    f"            AND tx_table  = 'debit'\n"
+                    f"            AND family_id = {fd.family_id}\n"
+                    f"            AND NOT user_kept\n"
                     f"      )"
                 )
 
@@ -347,6 +286,16 @@ class ViewManager:
                     for p in fd.cfg.transfer_patterns
                 )
 
+                flag_excl = (
+                    f"      AND id NOT IN (\n"
+                    f"          SELECT tx_id FROM {self.schema}.transaction_flags\n"
+                    f"          WHERE flag_type = 'internal_transfer'\n"
+                    f"            AND tx_table  = 'debit'\n"
+                    f"            AND family_id = {fd.family_id}\n"
+                    f"            AND NOT user_kept\n"
+                    f"      )"
+                )
+
                 branches.append(
                     f"    SELECT person,\n"
                     f"           transaction_date,\n"
@@ -358,6 +307,7 @@ class ViewManager:
                     f"    WHERE account_key = '{ak}'\n"
                     f"      AND amount > 0\n"
                     + (f"\n{transfer_excl}" if transfer_excl else "")
+                    + f"\n{flag_excl}"
                 )
 
         self._create_view(

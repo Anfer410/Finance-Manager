@@ -295,3 +295,129 @@ class TestFindFreePosition:
             assert not (col == 1 and row == 1)
         finally:
             _cleanup_user(pg_engine, schema, uid)
+
+
+# ── Shared dashboards ─────────────────────────────────────────────────────────
+
+class TestDashboardSharing:
+    def test_set_and_get_shares(self, pg_engine, schema):
+        dc    = _load(pg_engine)
+        owner = _make_user(pg_engine, schema, "share_owner")
+        u1    = _make_user(pg_engine, schema, "share_user1")
+        u2    = _make_user(pg_engine, schema, "share_user2")
+        did   = dc.create_dashboard(owner, "Shared DB")
+        try:
+            dc.set_dashboard_shares(did, [u1, u2])
+            assert set(dc.get_dashboard_shares(did)) == {u1, u2}
+        finally:
+            _cleanup_user(pg_engine, schema, u2)
+            _cleanup_user(pg_engine, schema, u1)
+            _cleanup_user(pg_engine, schema, owner)
+
+    def test_set_shares_replaces_existing(self, pg_engine, schema):
+        dc    = _load(pg_engine)
+        owner = _make_user(pg_engine, schema, "share_replace_owner")
+        u1    = _make_user(pg_engine, schema, "share_replace_u1")
+        u2    = _make_user(pg_engine, schema, "share_replace_u2")
+        did   = dc.create_dashboard(owner, "Replace Shares")
+        try:
+            dc.set_dashboard_shares(did, [u1, u2])
+            dc.set_dashboard_shares(did, [u1])       # remove u2
+            assert dc.get_dashboard_shares(did) == [u1]
+        finally:
+            _cleanup_user(pg_engine, schema, u2)
+            _cleanup_user(pg_engine, schema, u1)
+            _cleanup_user(pg_engine, schema, owner)
+
+    def test_get_shared_with_me(self, pg_engine, schema):
+        dc    = _load(pg_engine)
+        owner = _make_user(pg_engine, schema, "swm_owner")
+        viewer = _make_user(pg_engine, schema, "swm_viewer")
+        did   = dc.create_dashboard(owner, "Visible to Viewer")
+        try:
+            dc.set_dashboard_shares(did, [viewer])
+            shared = dc.get_shared_with_me(viewer)
+            assert len(shared) == 1
+            assert shared[0]['dashboard_id'] == did
+            assert shared[0]['is_subscribed'] is False
+        finally:
+            _cleanup_user(pg_engine, schema, viewer)
+            _cleanup_user(pg_engine, schema, owner)
+
+    def test_share_cascade_on_dashboard_delete(self, pg_engine, schema):
+        dc    = _load(pg_engine)
+        owner = _make_user(pg_engine, schema, "cascade_owner")
+        u1    = _make_user(pg_engine, schema, "cascade_u1")
+        did   = dc.create_dashboard(owner, "Will be deleted")
+        try:
+            dc.set_dashboard_shares(did, [u1])
+            # Delete the dashboard
+            with pg_engine.begin() as conn:
+                conn.execute(text(
+                    f"DELETE FROM {schema}.app_dashboards WHERE id = :did"
+                ), {"did": did})
+            assert dc.get_shared_with_me(u1) == []
+        finally:
+            _cleanup_user(pg_engine, schema, u1)
+            _cleanup_user(pg_engine, schema, owner)
+
+
+class TestDashboardSubscriptions:
+    def test_subscribe_and_list(self, pg_engine, schema):
+        dc    = _load(pg_engine)
+        owner = _make_user(pg_engine, schema, "sub_owner")
+        viewer = _make_user(pg_engine, schema, "sub_viewer")
+        did   = dc.create_dashboard(owner, "Sub Test")
+        try:
+            dc.set_dashboard_shares(did, [viewer])
+            dc.set_subscription(did, viewer, True)
+            pinned = dc.list_subscribed_shared(viewer)
+            assert len(pinned) == 1
+            assert pinned[0]['id'] == did
+        finally:
+            _cleanup_user(pg_engine, schema, viewer)
+            _cleanup_user(pg_engine, schema, owner)
+
+    def test_unsubscribe(self, pg_engine, schema):
+        dc    = _load(pg_engine)
+        owner = _make_user(pg_engine, schema, "unsub_owner")
+        viewer = _make_user(pg_engine, schema, "unsub_viewer")
+        did   = dc.create_dashboard(owner, "Unsub Test")
+        try:
+            dc.set_dashboard_shares(did, [viewer])
+            dc.set_subscription(did, viewer, True)
+            dc.set_subscription(did, viewer, False)
+            assert dc.list_subscribed_shared(viewer) == []
+        finally:
+            _cleanup_user(pg_engine, schema, viewer)
+            _cleanup_user(pg_engine, schema, owner)
+
+    def test_is_subscribed_flag_in_get_shared_with_me(self, pg_engine, schema):
+        dc    = _load(pg_engine)
+        owner = _make_user(pg_engine, schema, "flag_owner")
+        viewer = _make_user(pg_engine, schema, "flag_viewer")
+        did   = dc.create_dashboard(owner, "Flag Test")
+        try:
+            dc.set_dashboard_shares(did, [viewer])
+            dc.set_subscription(did, viewer, True)
+            shared = dc.get_shared_with_me(viewer)
+            assert shared[0]['is_subscribed'] is True
+        finally:
+            _cleanup_user(pg_engine, schema, viewer)
+            _cleanup_user(pg_engine, schema, owner)
+
+    def test_revoked_share_drops_from_subscribed_list(self, pg_engine, schema):
+        dc    = _load(pg_engine)
+        owner = _make_user(pg_engine, schema, "revoke_owner")
+        viewer = _make_user(pg_engine, schema, "revoke_viewer")
+        did   = dc.create_dashboard(owner, "Revoke Test")
+        try:
+            dc.set_dashboard_shares(did, [viewer])
+            dc.set_subscription(did, viewer, True)
+            # Owner revokes share
+            dc.set_dashboard_shares(did, [])
+            # Subscription row may still exist but list_subscribed_shared guards against this
+            assert dc.list_subscribed_shared(viewer) == []
+        finally:
+            _cleanup_user(pg_engine, schema, viewer)
+            _cleanup_user(pg_engine, schema, owner)

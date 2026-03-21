@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.3.0-rc.4 (2026-03-21)
+
+### Features
+
+- Pattern impact badges, suggestions, and stale flag cleanup
+  ([`9d01b6c`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/9d01b6c108658df57ed58d7a474f4a8e9bac6201))
+
+
 ## v2.3.0-rc.3 (2026-03-20)
 
 ### Bug Fixes

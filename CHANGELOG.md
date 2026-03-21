@@ -1,41 +1,12 @@
 # CHANGELOG
 
 
-## v2.3.0-rc.4 (2026-03-21)
+## v2.3.0 (2026-03-21)
 
 ### Features
 
-- Pattern impact badges, suggestions, and stale flag cleanup
-  ([`9d01b6c`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/9d01b6c108658df57ed58d7a474f4a8e9bac6201))
-
-
-## v2.3.0-rc.3 (2026-03-20)
-
-### Bug Fixes
-
-- Add transfer pattern button
-  ([`56cd0fc`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/56cd0fc45e555ccac1f7e59decc6a1c0b989048d))
-
-
-## v2.3.0-rc.2 (2026-03-20)
-
-### Chores
-
-- Pull app from GHCR with user-friendly compose setup
-  ([`537e0f3`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/537e0f3489564b138cb620e877953980e6cd2344))
-
-### Features
-
-- Fixes and nice to have updates
-  ([`0e4c540`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/0e4c5401aae23f2c7bcafa5c9bf86985956a69d9))
-
-
-## v2.3.0-rc.1 (2026-03-20)
-
-### Features
-
-- Shared dashboards within family
-  ([`c162678`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/c1626786f70eb6b1c1195d6cdf1f5d0eac90eb2e))
+- Release
+  ([`c2b5edd`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/c2b5eddab8ce7833a992ece8bd7cfb2478af82f1))
 
 
 ## v2.2.1 (2026-03-20)

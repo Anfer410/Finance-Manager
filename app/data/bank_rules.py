@@ -24,15 +24,10 @@ class BankRule:
 
     # ── Account classification ─────────────────────────────────────────────
     account_type:        AccountType = "checking"
-    payment_category:    str         = ""   # e.g. "Payment/Credit"
+    # Optional safety filter for credit cards whose CSV formats payment rows
+    # as debit > 0 rather than credit > 0.  Used by view_manager to exclude
+    # those rows from v_credit_spend.  Leave blank for standard bank CSVs.
     payment_description: str         = ""   # e.g. "ONLINE PAYMENT"
-    # ── Credit payment checking-side pattern ─────────────────────────────
-    # When this credit card payment appears as an outflow in checking,
-    # what substring appears in the checking description?
-    # e.g. Capital One → "CAPITAL ONE", Citi → "CITI CARD"
-    # Used by view_manager to exclude these rows from v_debit_spend
-    # without relying solely on amount+date matching.
-    checking_payment_pattern: str = ""
 
     # ── Member name resolution ────────────────────────────────────────────
     # If the bank stores member/cardholder name in a non-standard column,
@@ -90,8 +85,6 @@ def load_rules(family_id: int) -> list[BankRule]:
                     rule.account_type = default.account_type
                 if not rule.payment_description:
                     rule.payment_description = default.payment_description
-                if not rule.payment_category:
-                    rule.payment_category = default.payment_category
             return rules
     except Exception as e:
         print(f"[bank_rules] DB load failed ({e})")

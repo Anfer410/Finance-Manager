@@ -47,6 +47,8 @@ def run_migrations() -> None:
             _create_app_tables(conn, schema)
             _migrate_widget_positions(conn, schema)
             _create_transaction_tables(conn, schema)
+            _create_transaction_flags_table(conn, schema)
+            _migrate_transaction_flags_add_potential_transfer(conn, schema)
             _migrate_configs_if_needed(conn, schema)
         print("[migration] Startup migrations complete.")
     except Exception as ex:
@@ -385,18 +387,50 @@ def _create_app_tables(conn, schema: str) -> None:
         )
     """))
 
+    # ── Shared dashboard tables ───────────────────────────────────────────────
+    # Who can see a dashboard (set by the owner)
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.app_dashboard_shares (
+            id           SERIAL PRIMARY KEY,
+            dashboard_id INTEGER NOT NULL
+                         REFERENCES {schema}.app_dashboards(id) ON DELETE CASCADE,
+            shared_with  INTEGER NOT NULL
+                         REFERENCES {schema}.app_users(id) ON DELETE CASCADE,
+            shared_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (dashboard_id, shared_with)
+        )
+    """))
+
+    # Whether a viewer has pinned a shared dashboard to their own tab bar
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.app_dashboard_subscriptions (
+            dashboard_id INTEGER NOT NULL
+                         REFERENCES {schema}.app_dashboards(id) ON DELETE CASCADE,
+            user_id      INTEGER NOT NULL
+                         REFERENCES {schema}.app_users(id) ON DELETE CASCADE,
+            added_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (dashboard_id, user_id)
+        )
+    """))
+
 
 def _migrate_widget_positions(conn, schema: str) -> None:
     """
-    One-time: populate col_start/row_start for any widgets still at (1,1).
-    Uses a strip-packing algo (left→right, top→bottom) per dashboard.
-    Safe to run repeatedly — only touches widgets where BOTH are still 1.
+    One-time: populate col_start/row_start for dashboards where widgets were
+    never positioned (all still defaulted to (1,1)).
+
+    Triggers only when 2+ widgets on the same dashboard share (col_start=1,
+    row_start=1) — the uninitialized state.  A single widget legitimately
+    placed at (1,1) (the top-left cell) does NOT trigger a repack, so
+    user-customised layouts are never disturbed on subsequent migration runs.
     """
-    # Find dashboards that have widgets needing placement
+    # Find dashboards where multiple widgets are still piled at (1,1)
     rows = conn.execute(text(f"""
-        SELECT DISTINCT dashboard_id
+        SELECT dashboard_id
         FROM   {schema}.app_dashboard_widgets
         WHERE  col_start = 1 AND row_start = 1
+        GROUP  BY dashboard_id
+        HAVING COUNT(*) > 1
     """)).fetchall()
 
     for (dashboard_id,) in rows:
@@ -544,6 +578,67 @@ def ensure_partition_for_year(conn, schema: str, year: int) -> None:
     unexpected year.  Idempotent.
     """
     _ensure_year_partitions(conn, schema, [year])
+
+
+# ── Transaction flags table ────────────────────────────────────────────────────
+
+def _create_transaction_flags_table(conn, schema: str) -> None:
+    """
+    Stores automated flags for transactions that should be excluded from spend/income views.
+
+    flag_type values:
+      'internal_transfer'  — money moved between own accounts (checking ↔ savings)
+      'credit_payment'     — credit card payment from checking
+      'potential_transfer' — unilateral outflow matching a transfer pattern; awaits user review
+
+    user_kept = TRUE means the user has reviewed this flag and wants the transaction
+    to remain in spend/income (overrides the automated detection).
+    """
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {schema}.transaction_flags (
+            id            SERIAL PRIMARY KEY,
+            family_id     INTEGER      NOT NULL REFERENCES {schema}.families(id),
+            flag_type     TEXT         NOT NULL
+                          CHECK (flag_type IN ('internal_transfer', 'credit_payment')),
+            tx_table      TEXT         NOT NULL
+                          CHECK (tx_table IN ('debit', 'credit')),
+            tx_id         BIGINT       NOT NULL,
+            matched_table TEXT         CHECK (matched_table IN ('debit', 'credit')),
+            matched_id    BIGINT,
+            amount        NUMERIC(14,2) NOT NULL,
+            user_kept     BOOLEAN      NOT NULL DEFAULT FALSE,
+            detected_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            UNIQUE (tx_table, tx_id, flag_type)
+        )
+    """))
+    conn.execute(text(f"""
+        CREATE INDEX IF NOT EXISTS idx_transaction_flags_lookup
+        ON {schema}.transaction_flags (family_id, flag_type, tx_table, user_kept)
+    """))
+
+
+def _migrate_transaction_flags_add_potential_transfer(conn, schema: str) -> None:
+    """
+    Idempotently expand the flag_type CHECK constraint to include 'potential_transfer'.
+    Safe to run on a DB that already has the new constraint.
+    """
+    conn.execute(text(f"""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'transaction_flags_flag_type_check'
+                  AND conrelid = '{schema}.transaction_flags'::regclass
+                  AND pg_get_constraintdef(oid) NOT LIKE '%potential_transfer%'
+            ) THEN
+                ALTER TABLE {schema}.transaction_flags
+                    DROP CONSTRAINT transaction_flags_flag_type_check;
+                ALTER TABLE {schema}.transaction_flags
+                    ADD CONSTRAINT transaction_flags_flag_type_check
+                    CHECK (flag_type IN ('internal_transfer', 'credit_payment', 'potential_transfer'));
+            END IF;
+        END $$
+    """))
 
 
 # ── Config seeding (only if tables are empty) ─────────────────────────────────

@@ -5,8 +5,7 @@ Step 1 — Account details (bank selector, alias, account type)
 Step 2 — Upload sample CSV + filename detection (pre-populated from actual file)
 Step 3 — Column mapping  →  stages CSV data into a temp DB table
 Step 4 — Member aliases + person override  (skipped if no member column)
-Step 5 — Payment patterns  (skipped for non-credit accounts)
-Step 6 — Review + save
+Step 5 — Review + save
 """
 from __future__ import annotations
 
@@ -58,7 +57,6 @@ _STEP_TITLES = {
     2: "Upload CSV",
     3: "Column mapping",
     4: "Member aliases",
-    5: "Payment patterns",
     6: "Review & save",
 }
 
@@ -247,9 +245,6 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
             back_btn = ui.button("Back", icon="arrow_back") \
                 .props("flat no-caps").classes("text-zinc-500")
             with ui.row().classes("gap-2"):
-                skip_btn = ui.button("Skip") \
-                    .props("flat no-caps").classes("text-zinc-400")
-                skip_btn.set_visibility(False)
                 next_btn = ui.button("Next", icon="arrow_forward") \
                     .props("unelevated no-caps") \
                     .classes("bg-zinc-800 text-white px-5 rounded-lg")
@@ -270,19 +265,14 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
         """Compute the next step number, skipping optional steps when not applicable."""
         if from_step == 3:
             # After column mapping: member aliases only if member col is mapped
-            return 4 if _has_member_col() else _next_step(4)
+            return 4 if _has_member_col() else 6
         if from_step == 4:
-            # After member aliases: payment patterns only for credit accounts
-            return 5 if _is_credit() else 6
+            return 6
         return from_step + 1
 
     def _prev_step(from_step: int) -> int:
         """Compute the previous step number, skipping optional steps when not applicable."""
-        if from_step == 5:
-            return 4 if _has_member_col() else 3
         if from_step == 6:
-            if _is_credit():
-                return 5
             return 4 if _has_member_col() else 3
         return from_step - 1
 
@@ -296,14 +286,12 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
         next_btn.enable()
         next_btn._event_listeners.clear()
         back_btn._event_listeners.clear()
-        skip_btn.set_visibility(st == 5)
         back_btn.on("click", go_back)
         with body:
             if st == 1:   _step1()
             elif st == 2: _step2()
             elif st == 3: _step3()
             elif st == 4: _step4()
-            elif st == 5: _step5()
             elif st == 6: _step6()
 
     # ── Step 1: account details (bank selector + alias) ────────────────────────
@@ -850,248 +838,7 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
 
         next_btn.on("click", advance_step4)
 
-    # ── Step 5: payment patterns (credit only) ─────────────────────────────────
-    def _step5():
-        d = state["bank_details"]
-
-        skip_btn.set_text("Skip")
-
-        with ui.column().classes("w-full gap-0"):
-
-            with ui.column().classes("px-6 py-4 gap-1"):
-                ui.label("Payment patterns").classes("text-base font-semibold text-zinc-800")
-                ui.label(
-                    "Search transactions to identify payment rows and the checking-side pattern. "
-                    "Use the Credit tab to browse your uploaded CSV data, "
-                    "or the Debit tab to find how this card's payment appears in your checking account."
-                ).classes("text-sm text-zinc-500")
-
-            with ui.row().classes("px-6 gap-3 flex-wrap"):
-                with ui.column().classes("gap-0.5 flex-1 min-w-36"):
-                    ui.label("Payment category").classes("text-xs text-zinc-500")
-                    pat_cat_in = ui.input(
-                        value=d.get("payment_category", ""),
-                        placeholder="e.g. Payment/Credit",
-                    ).classes("w-full").props("outlined dense")
-                with ui.column().classes("gap-0.5 flex-1 min-w-36"):
-                    ui.label("Payment description").classes("text-xs text-zinc-500")
-                    pat_desc_in = ui.input(
-                        value=d.get("payment_description", ""),
-                        placeholder="e.g. ONLINE PAYMENT",
-                    ).classes("w-full").props("outlined dense")
-                with ui.column().classes("gap-0.5 flex-1 min-w-36"):
-                    ui.label("Checking-side pattern").classes("text-xs text-zinc-500")
-                    pat_chk_in = ui.input(
-                        value=d.get("checking_payment_pattern", ""),
-                        placeholder="e.g. CAPITAL ONE",
-                    ).classes("w-full").props("outlined dense")
-
-            ui.separator().classes("mx-6")
-
-            with ui.row().classes("px-6 items-center gap-4 py-2 flex-wrap"):
-                source_toggle = ui.toggle(
-                    {"credit": "Credit (uploaded data)", "debit": "Debit transactions"},
-                    value="credit",
-                ).props("no-caps dense")
-                search_in = ui.input(placeholder="Search descriptions…") \
-                    .classes("flex-1 min-w-32").props("outlined dense clearable")
-                ui.button(
-                    "Search", icon="search",
-                    on_click=lambda: (
-                        tbl_page.update({"n": 1, "search": search_in.value or ""}),
-                        render_rows.refresh()
-                    )
-                ).props("unelevated dense no-caps") \
-                 .classes("bg-zinc-700 text-white rounded-lg px-3")
-
-            tbl_wrap = ui.column().classes("px-6 w-full gap-0")
-            page_row = ui.row().classes("px-6 items-center gap-2 py-2")
-
-            engine     = get_engine()
-            schema     = get_schema()
-            temp_table = state["temp_table"]
-            tbl_page   = {"n": 1, "search": ""}
-            PAGE_SIZE  = 40
-
-            def _query_credit(search: str, page: int):
-                try:
-                    with engine.connect() as conn:
-                        params: dict = {
-                            "offset": (page - 1) * PAGE_SIZE,
-                            "limit":  PAGE_SIZE,
-                        }
-                        where = ""
-                        if search:
-                            where = "WHERE description ILIKE :search"
-                            params["search"] = "%" + search + "%"
-                        rows = conn.execute(sa_text(
-                            f'SELECT date, description, debit, credit '
-                            f'FROM "{schema}"."{temp_table}" '
-                            f'{where} ORDER BY date DESC '
-                            f'LIMIT :limit OFFSET :offset'
-                        ), params).fetchall()
-                        count = conn.execute(sa_text(
-                            f'SELECT COUNT(*) FROM "{schema}"."{temp_table}" {where}'
-                        ), {k: v for k, v in params.items()
-                           if k not in ("offset", "limit")}).fetchone()[0]
-                        return ["date", "description", "debit", "credit"], [list(r) for r in rows], count
-                except Exception:
-                    return ["date", "description", "debit", "credit"], [], 0
-
-            def _query_debit(search: str, page: int):
-                try:
-                    with engine.connect() as conn:
-                        params: dict = {
-                            "offset": (page - 1) * PAGE_SIZE,
-                            "limit":  PAGE_SIZE,
-                        }
-                        where = ""
-                        if search:
-                            where = "WHERE description ILIKE :search"
-                            params["search"] = "%" + search + "%"
-                        rows = conn.execute(sa_text(
-                            f'SELECT transaction_date, description, amount, account_key '
-                            f'FROM "{schema}".transactions_debit '
-                            f'{where} ORDER BY transaction_date DESC '
-                            f'LIMIT :limit OFFSET :offset'
-                        ), params).fetchall()
-                        count = conn.execute(sa_text(
-                            f'SELECT COUNT(*) FROM "{schema}".transactions_debit {where}'
-                        ), {k: v for k, v in params.items()
-                           if k not in ("offset", "limit")}).fetchone()[0]
-                        return ["date", "description", "amount", "account_key"], [list(r) for r in rows], count
-                except Exception:
-                    return ["date", "description", "amount", "account_key"], [], 0
-
-            def _matches_pattern(val: str) -> bool:
-                v = str(val).upper()
-                checks = [
-                    pat_cat_in.value.strip().upper(),
-                    pat_desc_in.value.strip().upper(),
-                ]
-                return any(c and c in v for c in checks)
-
-            @ui.refreshable
-            def render_rows():
-                tbl_wrap.clear()
-                page_row.clear()
-
-                mode = source_toggle.value
-                if mode == "credit":
-                    cols, rows, total = _query_credit(tbl_page["search"], tbl_page["n"])
-                    copy_targets = [
-                        ("Payment category",    pat_cat_in),
-                        ("Payment description", pat_desc_in),
-                    ]
-                else:
-                    cols, rows, total = _query_debit(tbl_page["search"], tbl_page["n"])
-                    copy_targets = [("Checking pattern", pat_chk_in)]
-
-                total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
-                desc_idx    = 1
-
-                with tbl_wrap:
-                    if not rows:
-                        with ui.column().classes("items-center py-8 gap-2"):
-                            ui.icon("search_off").classes("text-zinc-200 text-4xl")
-                            ui.label("No rows to display.").classes("text-sm text-zinc-400")
-                    else:
-                        with ui.scroll_area().style("max-height:300px"):
-                            with ui.element("table").classes(
-                                "w-full text-xs border-collapse font-mono"
-                            ):
-                                with ui.element("thead"):
-                                    with ui.element("tr"):
-                                        with ui.element("th").classes(
-                                            "px-2 py-2 bg-zinc-50 border border-zinc-100 w-6"
-                                        ):
-                                            ui.label("")
-                                        for col in cols:
-                                            with ui.element("th").classes(
-                                                "text-left px-2 py-2 bg-zinc-50 border "
-                                                "border-zinc-100 text-zinc-500 font-semibold "
-                                                "whitespace-nowrap"
-                                            ):
-                                                ui.label(col)
-
-                                with ui.element("tbody"):
-                                    for row in rows:
-                                        is_match = any(_matches_pattern(str(cell)) for cell in row)
-                                        row_bg   = (
-                                            "bg-amber-50 hover:bg-amber-100"
-                                            if is_match else "hover:bg-zinc-50"
-                                        )
-                                        with ui.element("tr").classes(row_bg):
-                                            desc_val = str(row[desc_idx]) if row else ""
-                                            with ui.element("td").classes(
-                                                "px-1 py-1 border border-zinc-100 text-center"
-                                            ):
-                                                ui.button(icon="add_circle_outline") \
-                                                    .props("flat round dense size=xs") \
-                                                    .classes("text-zinc-400 hover:text-blue-500")
-                                                with ui.menu().props("auto-close"):
-                                                    ui.label("Copy to field:").classes(
-                                                        "text-xs text-zinc-400 px-3 pt-2 font-semibold"
-                                                    )
-                                                    for lbl, widget in copy_targets:
-                                                        preview = desc_val[:28] + ("…" if len(desc_val) > 28 else "")
-                                                        def make_copy(w=widget, v=desc_val, l=lbl):
-                                                            def _do():
-                                                                w.set_value(v)
-                                                                notify("Copied to " + l,
-                                                                       type="positive", position="top")
-                                                                render_rows.refresh()
-                                                            return _do
-                                                        ui.menu_item(
-                                                            lbl + " ← " + preview,
-                                                            on_click=make_copy(),
-                                                        ).classes("text-xs")
-
-                                            for cell in row:
-                                                cell_str      = str(cell) if cell is not None else ""
-                                                is_cell_match = _matches_pattern(cell_str)
-                                                with ui.element("td").classes(
-                                                    "px-2 py-1 border border-zinc-100 "
-                                                    "whitespace-nowrap max-w-xs overflow-hidden "
-                                                    + ("text-amber-800 font-semibold" if is_cell_match
-                                                       else "text-zinc-600")
-                                                ):
-                                                    ui.label(cell_str)
-
-                with page_row:
-                    ui.label(f"{total:,} rows").classes("text-xs text-zinc-400 mr-1")
-                    ui.button(
-                        icon="chevron_left",
-                        on_click=lambda: (
-                            tbl_page.update({"n": tbl_page["n"] - 1}),
-                            render_rows.refresh()
-                        )
-                    ).props("flat round dense size=sm").classes("text-zinc-500") \
-                     .bind_enabled_from(tbl_page, "n", lambda p: p > 1)
-                    ui.label(f"p.{tbl_page['n']} / {total_pages}").classes("text-xs text-zinc-600")
-                    ui.button(
-                        icon="chevron_right",
-                        on_click=lambda: (
-                            tbl_page.update({"n": tbl_page["n"] + 1}),
-                            render_rows.refresh()
-                        )
-                    ).props("flat round dense size=sm").classes("text-zinc-500") \
-                     .bind_enabled_from(tbl_page, "n", lambda p: p < total_pages)
-
-            source_toggle.on("update:model-value", lambda _: (
-                tbl_page.update({"n": 1, "search": ""}),
-                render_rows.refresh()
-            ))
-
-            render_rows()
-
-        def advance_step5():
-            d["payment_category"]         = pat_cat_in.value.strip()
-            d["payment_description"]      = pat_desc_in.value.strip()
-            d["checking_payment_pattern"] = pat_chk_in.value.strip()
-            _advance(6)
-
-        next_btn.on("click", advance_step5)
+    # ── Step 5 (was): payment patterns — removed; handled by automated detection ─
 
     # ── Step 6: review + save ──────────────────────────────────────────────────
     def _step6():
@@ -1116,8 +863,6 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                     d["match_type"] + ': "' + d["match_value"] + '"',
                     acct,
                 ]
-                if d.get("payment_description"):
-                    chips.append("payment: " + d["payment_description"])
                 if d.get("member_name_column"):
                     chips.append("member col: " + d["member_name_column"])
                 if d.get("member_aliases"):
@@ -1161,19 +906,16 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
 
         def save_account():
             rule = BankRule(
-                bank_name                = d["bank_name"],
-                prefix                   = d["prefix"],
-                match_type               = d["match_type"],
-                match_value              = d["match_value"],
-                account_type             = acct,
-                payment_category         = d.get("payment_category", ""),
-                payment_description      = d.get("payment_description", ""),
-                checking_payment_pattern = d.get("checking_payment_pattern", ""),
-                member_name_column       = d.get("member_name_column", ""),
-                member_aliases           = d.get("member_aliases", {}),
-                person_override          = d.get("person_override"),
-                column_map               = m.to_dict(),
-                dedup_columns            = m.dedup_columns(acct),
+                bank_name          = d["bank_name"],
+                prefix             = d["prefix"],
+                match_type         = d["match_type"],
+                match_value        = d["match_value"],
+                account_type       = acct,
+                member_name_column = d.get("member_name_column", ""),
+                member_aliases     = d.get("member_aliases", {}),
+                person_override    = d.get("person_override"),
+                column_map         = m.to_dict(),
+                dedup_columns      = m.dedup_columns(acct),
             )
 
             fid = auth.current_family_id()

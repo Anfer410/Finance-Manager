@@ -18,9 +18,28 @@ class EmployerPattern:
 
 
 @dataclass
+class NamedTransferExclusion:
+    """
+    A user-defined pattern for excluding one-sided transfers from spend.
+    e.g. pattern="XXXXXX5045", label="Jessica Savings"
+
+    created_by=None  → created by a Family Head (visible/editable by all heads)
+    created_by=<id>  → created by that member (only they or a head can edit/remove)
+    """
+    pattern:    str
+    label:      str       = ""
+    created_by: int | None = None
+
+
+@dataclass
 class TransactionConfig:
-    # Inter-account transfer exclusions
+    # Broad description patterns used as a safety net for income-view exclusions
+    # and as the source list for potential_transfer detection.
     transfer_patterns: list[str] = field(default_factory=list)
+
+    # User-confirmed named exclusions for specific external accounts.
+    # e.g. "XXXXXX5045" → "Jessica Savings"
+    named_transfer_exclusions: list[NamedTransferExclusion] = field(default_factory=list)
 
     # Employer / payroll description patterns — each carries who added it.
     # added_by=None  → Family Head entry, members cannot edit/remove it.
@@ -35,9 +54,18 @@ class TransactionConfig:
         """Plain list of pattern strings — used by view_manager and dashboard queries."""
         return [ep.pattern for ep in self.employer_patterns]
 
+    @property
+    def named_exclusion_patterns(self) -> list[str]:
+        """Plain list of pattern strings from named_transfer_exclusions."""
+        return [e.pattern for e in self.named_transfer_exclusions]
+
     def to_dict(self) -> dict:
         return {
             "transfer_patterns": self.transfer_patterns,
+            "named_transfer_exclusions": [
+                {"pattern": e.pattern, "label": e.label, "created_by": e.created_by}
+                for e in self.named_transfer_exclusions
+            ],
             "employer_patterns": [
                 {"pattern": ep.pattern, "added_by": ep.added_by}
                 for ep in self.employer_patterns
@@ -51,15 +79,22 @@ class TransactionConfig:
         employer_patterns = []
         for item in raw_ep:
             if isinstance(item, str):
-                # Backward compat: plain string → Head-owned
                 employer_patterns.append(EmployerPattern(pattern=item, added_by=None))
             elif isinstance(item, dict):
                 employer_patterns.append(EmployerPattern(
                     pattern=item.get("pattern", ""),
                     added_by=item.get("added_by"),
                 ))
+        named_transfer_exclusions = []
+        for item in d.get("named_transfer_exclusions", []):
+            named_transfer_exclusions.append(NamedTransferExclusion(
+                pattern=item.get("pattern", ""),
+                label=item.get("label", ""),
+                created_by=item.get("created_by"),
+            ))
         return TransactionConfig(
             transfer_patterns=d.get("transfer_patterns", []),
+            named_transfer_exclusions=named_transfer_exclusions,
             employer_patterns=employer_patterns,
             member_aliases=d.get("member_aliases", {}),
         )

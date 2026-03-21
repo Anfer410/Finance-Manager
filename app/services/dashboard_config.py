@@ -357,6 +357,96 @@ _DEFAULT_LAYOUT = [
 ]
 
 
+# ── Dashboard sharing ─────────────────────────────────────────────────────────
+
+def set_dashboard_shares(dashboard_id: int, user_ids: list[int]) -> None:
+    """Replace the share list for a dashboard (owner call)."""
+    with _engine().begin() as conn:
+        conn.execute(text(f"""
+            DELETE FROM {_schema()}.app_dashboard_shares WHERE dashboard_id = :did
+        """), {"did": dashboard_id})
+        for uid in user_ids:
+            conn.execute(text(f"""
+                INSERT INTO {_schema()}.app_dashboard_shares (dashboard_id, shared_with)
+                VALUES (:did, :uid) ON CONFLICT DO NOTHING
+            """), {"did": dashboard_id, "uid": uid})
+
+
+def get_dashboard_shares(dashboard_id: int) -> list[int]:
+    """Return user_ids this dashboard is currently shared with."""
+    with _engine().connect() as conn:
+        rows = conn.execute(text(f"""
+            SELECT shared_with FROM {_schema()}.app_dashboard_shares
+            WHERE dashboard_id = :did
+        """), {"did": dashboard_id}).fetchall()
+    return [r[0] for r in rows]
+
+
+def get_shared_with_me(user_id: int) -> list[dict]:
+    """
+    Return all dashboards shared with this user, including owner info and
+    whether the user has subscribed (pinned) each one.
+    """
+    with _engine().connect() as conn:
+        rows = conn.execute(text(f"""
+            SELECT d.id, d.name, u.id, u.display_name,
+                   (sub.user_id IS NOT NULL) AS is_subscribed
+            FROM   {_schema()}.app_dashboard_shares sh
+            JOIN   {_schema()}.app_dashboards d ON d.id = sh.dashboard_id
+            JOIN   {_schema()}.app_users u ON u.id = d.user_id
+            LEFT   JOIN {_schema()}.app_dashboard_subscriptions sub
+                   ON sub.dashboard_id = d.id AND sub.user_id = :uid
+            WHERE  sh.shared_with = :uid
+            ORDER  BY u.display_name, d.name
+        """), {"uid": user_id}).fetchall()
+    return [
+        {
+            "dashboard_id": r[0],
+            "name":         r[1],
+            "owner_id":     r[2],
+            "owner_name":   r[3],
+            "is_subscribed": bool(r[4]),
+        }
+        for r in rows
+    ]
+
+
+def set_subscription(dashboard_id: int, user_id: int, subscribed: bool) -> None:
+    """Pin or unpin a shared dashboard to the user's tab bar."""
+    with _engine().begin() as conn:
+        if subscribed:
+            conn.execute(text(f"""
+                INSERT INTO {_schema()}.app_dashboard_subscriptions (dashboard_id, user_id)
+                VALUES (:did, :uid) ON CONFLICT DO NOTHING
+            """), {"did": dashboard_id, "uid": user_id})
+        else:
+            conn.execute(text(f"""
+                DELETE FROM {_schema()}.app_dashboard_subscriptions
+                WHERE dashboard_id = :did AND user_id = :uid
+            """), {"did": dashboard_id, "uid": user_id})
+
+
+def list_subscribed_shared(user_id: int) -> list[dict]:
+    """
+    Return shared dashboards the user has pinned to their tab bar.
+    Guards against stale subscriptions: only returns dashboards still shared with the user.
+    """
+    with _engine().connect() as conn:
+        rows = conn.execute(text(f"""
+            SELECT d.id, d.name, u.display_name
+            FROM   {_schema()}.app_dashboard_subscriptions sub
+            JOIN   {_schema()}.app_dashboards d ON d.id = sub.dashboard_id
+            JOIN   {_schema()}.app_users u ON u.id = d.user_id
+            JOIN   {_schema()}.app_dashboard_shares sh
+                   ON sh.dashboard_id = d.id AND sh.shared_with = :uid
+            WHERE  sub.user_id = :uid
+            ORDER  BY u.display_name, d.name
+        """), {"uid": user_id}).fetchall()
+    return [{"id": r[0], "name": r[1], "owner_name": r[2]} for r in rows]
+
+
+# ── Default dashboard seeding ─────────────────────────────────────────────────
+
 def _create_default_dashboard(user_id: int) -> int:
     with _engine().begin() as conn:
         row = conn.execute(text(f"""

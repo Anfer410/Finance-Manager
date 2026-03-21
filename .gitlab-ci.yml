@@ -1,12 +1,18 @@
 stages:
-  - version
-  - build
-  - release
+  - version   # semantic-release bump (develop → rc, main → release)
+  - test      # integration tests
+  - build     # docker image build + push :sha
+  - tag       # docker tag :mr-<IID>  or  :pre-release-candidate + :rc
+  - release   # promote :pre-release-candidate → :latest + push to GHCR
 
 default:
   interruptible: false
-  tags: 
+  tags:
     - shell
+
+# ── Version bump ──────────────────────────────────────────────────────────────
+# develop → bumps to next pre-release (e.g. 1.3.0-rc.1)
+# main    → cuts the full release from the accumulated rc commits
 
 version-bump:
   stage: version
@@ -17,6 +23,8 @@ version-bump:
     GIT_DEPTH: 0
     GL_TOKEN: $GITLAB_TOKEN
   rules:
+    - if: '$CI_COMMIT_BRANCH == "develop" && $CI_COMMIT_MESSAGE !~ /^chore: release/'
+      when: on_success
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE !~ /^chore: release/'
       when: on_success
   script:
@@ -34,68 +42,115 @@ version-bump:
     reports:
       dotenv: version.env
 
+# ── Integration tests ─────────────────────────────────────────────────────────
+# Runs on every MR (feature → develop) and on every push to develop.
+# conftest.py spins up a throwaway Postgres container on port 5434.
+# Coverage is reported in Cobertura XML format for GitLab MR diff view.
+
+run-tests:
+  stage: test
+  coverage: '/^TOTAL\s+\d+\s+\d+\s+(\d+)%/'
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  cache:
+    key: "pip-$CI_PROJECT_ID"
+    paths:
+      - .pip-cache/
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: on_success
+    - if: '$CI_COMMIT_BRANCH == "develop" && $CI_COMMIT_MESSAGE !~ /^chore: release/'
+      when: on_success
+  script:
+    - cd app
+    - python3 -m venv .venv
+    - .venv/bin/pip install -r requirements.txt -q
+    - cd ..
+    # Run from project root so coverage paths are app/pages/... matching the repo layout
+    - PYTHONPATH=app app/.venv/bin/pytest tests/ -v
+        --cov=app
+        --cov-report=xml:coverage.xml
+        --cov-report=term-missing
+    # Prefix filenames with app/ so GitLab resolves them to the right repo paths
+    - sed -i 's|filename="|filename="app/|g' coverage.xml
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
+# ── Docker image jobs (via shared template) ───────────────────────────────────
+
 include:
   - project: 'components/docker'
     ref: main
-    file: template.gitlab-ci.yml
+    file: template-app-pipeline.gitlab-ci.yml
     inputs:
       image_name: finance-manager
       dockerfile: dockerfile
       ci_registry_image: "${CI_REGISTRY}/scripts/finances"
+
+      # Build on MR pipelines and develop pushes (not on main — image already exists)
       rules_build:
-        - if: '$CI_PIPELINE_SOURCE == "trigger"'
-          when: never
-        - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-          when: never
-        - if: '$CI_COMMIT_BRANCH == "main"'
-          changes:
-            - app/**/*
-          when: on_success
-        - when: manual
-          allow_failure: true
-      rules_release:
-        - if: '$CI_PIPELINE_SOURCE == "trigger"'
-          when: never
-        - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-          when: never
-        - if: '$CI_COMMIT_BRANCH == "main"'
-          changes:
-            - app/**/*
-          when: on_success
-        - when: manual
-          allow_failure: true
-      rules_prerelease:
         - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
           when: on_success
+        - if: '$CI_COMMIT_BRANCH == "develop" && $CI_COMMIT_MESSAGE !~ /^chore: release/'
+          when: on_success
+        - when: never
+
+      # Tag mr-<IID> on MR pipelines only
+      rules_tag_mr:
+        - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+          when: on_success
+        - when: never
+
+      # Tag pre-release-candidate (+ rc version) on develop pushes only
+      rules_tag_prerelease:
+        - if: '$CI_COMMIT_BRANCH == "develop" && $CI_COMMIT_MESSAGE !~ /^chore: release/'
+          when: on_success
+        - when: never
+
+      # Promote pre-release-candidate → latest on main only
+      rules_tag_latest:
+        - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE !~ /^chore: release/'
+          when: on_success
+        - when: never
+
+# Override needs for tag-prerelease so it receives the $APP_VERSION dotenv artifact
+tag-prerelease-finance-manager-image:
+  needs:
+    - job: version-bump
+      artifacts: true
+      optional: true
+    - job: build-finance-manager-image
+
+# ── Push to GHCR ──────────────────────────────────────────────────────────────
+# Runs on main after version-bump and tag-latest complete.
+# Pulls the image from GitLab registry (tagged latest by tag-latest step)
+# and mirrors it to GHCR with the release version tag.
 
 push-to-ghcr:
   stage: release
   needs:
-    - job: "version-bump"
+    - job: version-bump
       artifacts: true
       optional: true
-    - job: "build-finance-manager-image"
-      optional: true
+    - job: tag-latest-finance-manager-image
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "trigger"'
-      when: never
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      changes:
-        - app/**/*
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE !~ /^chore: release/'
       when: on_success
-    - when: manual
-      allow_failure: true
+    - when: never
   variables:
     GITLAB_IMAGE: "${CI_REGISTRY}/scripts/finances/finance-manager"
     GHCR_IMAGE: "ghcr.io/$GHCR_USER/finance-manager"
   script:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker pull $GITLAB_IMAGE:$CI_COMMIT_SHA
+    - docker pull $GITLAB_IMAGE:latest
     - docker login ghcr.io -u $GHCR_USER -p $GHCR_TOKEN
     - |
       if [ -n "$APP_VERSION" ]; then
-        docker tag $GITLAB_IMAGE:$CI_COMMIT_SHA $GHCR_IMAGE:$APP_VERSION
+        docker tag $GITLAB_IMAGE:latest $GHCR_IMAGE:$APP_VERSION
         docker push $GHCR_IMAGE:$APP_VERSION
       fi
-    - docker tag $GITLAB_IMAGE:$CI_COMMIT_SHA $GHCR_IMAGE:latest
+    - docker tag $GITLAB_IMAGE:latest $GHCR_IMAGE:latest
     - docker push $GHCR_IMAGE:latest

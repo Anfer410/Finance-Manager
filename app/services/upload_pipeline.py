@@ -556,6 +556,14 @@ class UploadPipeline:
         except Exception as ex:
             print(f"[UploadPipeline] view refresh failed: {ex}")
 
+        # ── 7. Run transfer detection ─────────────────────────────────────────
+        try:
+            from services.transfer_detection_service import run_detection
+            from data.db import get_engine, get_schema
+            run_detection(family_id, get_engine(), get_schema())
+        except Exception as ex:
+            print(f"[UploadPipeline] transfer detection failed: {ex}")
+
         return UploadResult(
             bank_name = bank_name,
             inserted  = inserted,

@@ -120,6 +120,7 @@ def pg_engine():
         dm_module._create_app_tables(conn, "finance")
         dm_module._migrate_widget_positions(conn, "finance")
         dm_module._create_transaction_tables(conn, "finance")
+        dm_module._create_transaction_flags_table(conn, "finance")
         dm_module._migrate_configs_if_needed(conn, "finance")
 
         # Seed additional families used by isolation + scoping tests.

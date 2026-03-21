@@ -139,6 +139,107 @@ def _get_reviewed_transfers(fid: int, uid: int, is_head: bool) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+_TRANSFER_CANDIDATE_KEYWORDS = [
+    "ZELLE", "VENMO", "CASHAPP", "CASH APP", "PAYPAL",
+    "WIRE", "ACH", "XFER", "BILLPAY", "BILL PAY",
+    "P2P", "SEND MONEY", "SQUARE CASH",
+]
+
+
+def _get_pattern_impact(patterns: list[str], fid: int) -> dict[str, tuple[int, int]]:
+    """
+    Return {pattern: (inflow_count, outflow_count)} for checking accounts.
+    Counts transactions_debit rows whose description ILIKE '%pattern%'.
+    """
+    if not patterns:
+        return {}
+    engine = get_engine()
+    schema = get_schema()
+    rules = load_rules(fid)
+    checking_keys = [r.prefix for r in rules if r.account_type == "checking"]
+    if not checking_keys:
+        return {p: (0, 0) for p in patterns}
+
+    values_clause = ", ".join(f"(:p{i})" for i in range(len(patterns)))
+    key_clause    = ", ".join(f":ck{j}" for j in range(len(checking_keys)))
+    params: dict  = {"fid": fid}
+    for i, p in enumerate(patterns):
+        params[f"p{i}"] = p
+    for j, k in enumerate(checking_keys):
+        params[f"ck{j}"] = k
+
+    sql = text(f"""
+        SELECT
+            unnested.pat,
+            COUNT(*) FILTER (WHERE d.amount > 0) AS inflows,
+            COUNT(*) FILTER (WHERE d.amount < 0) AS outflows
+        FROM {schema}.transactions_debit d
+        CROSS JOIN (VALUES {values_clause}) AS unnested(pat)
+        WHERE d.family_id = :fid
+          AND d.account_key IN ({key_clause})
+          AND d.description ILIKE '%' || unnested.pat || '%'
+        GROUP BY unnested.pat
+    """)
+
+    result = {p: (0, 0) for p in patterns}
+    with engine.connect() as conn:
+        for row in conn.execute(sql, params).mappings():
+            result[row["pat"]] = (row["inflows"] or 0, row["outflows"] or 0)
+    return result
+
+
+def _get_pattern_suggestions(fid: int, existing: list[str]) -> list[str]:
+    """
+    Return keywords from _TRANSFER_CANDIDATE_KEYWORDS that appear in unflagged
+    checking outflows but are not already in the configured transfer_patterns.
+    """
+    engine = get_engine()
+    schema = get_schema()
+    rules = load_rules(fid)
+    checking_keys = [r.prefix for r in rules if r.account_type == "checking"]
+    if not checking_keys:
+        return []
+
+    existing_upper = {p.upper() for p in existing}
+    candidates = [c for c in _TRANSFER_CANDIDATE_KEYWORDS if c.upper() not in existing_upper]
+    if not candidates:
+        return []
+
+    key_clause    = ", ".join(f":ck{j}" for j in range(len(checking_keys)))
+    values_clause = ", ".join(f"(:c{i})" for i in range(len(candidates)))
+    params: dict  = {"fid": fid}
+    for j, k in enumerate(checking_keys):
+        params[f"ck{j}"] = k
+    for i, c in enumerate(candidates):
+        params[f"c{i}"] = c
+
+    sql = text(f"""
+        SELECT cand.kw
+        FROM (VALUES {values_clause}) AS cand(kw)
+        WHERE EXISTS (
+            SELECT 1
+            FROM {schema}.transactions_debit d
+            WHERE d.family_id = :fid
+              AND d.account_key IN ({key_clause})
+              AND d.amount < 0
+              AND d.description ILIKE '%' || cand.kw || '%'
+              AND d.id NOT IN (
+                  SELECT tx_id
+                  FROM {schema}.transaction_flags
+                  WHERE family_id = :fid
+                    AND tx_table  = 'debit'
+                    AND flag_type IN ('internal_transfer', 'credit_payment', 'potential_transfer')
+                    AND NOT user_kept
+              )
+        )
+        ORDER BY cand.kw
+    """)
+
+    with engine.connect() as conn:
+        rows = conn.execute(sql, params).mappings().all()
+    return [r["kw"] for r in rows]
+
+
 def _slugify(name: str) -> str:
     return _re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
 
@@ -1042,15 +1143,42 @@ def _transfers_tab_content(on_refresh: callable) -> None:
 
     @ui.refreshable
     def detection_chips():
-        _cfg = load_config(fid)
+        _cfg    = load_config(fid)
+        impact  = _get_pattern_impact(_cfg.transfer_patterns, fid)
         with ui.row().classes("flex-wrap gap-2 min-h-8"):
             if _cfg.transfer_patterns:
                 for pat in _cfg.transfer_patterns:
-                    with ui.row().classes(
+                    inflows, outflows = impact.get(pat, (0, 0))
+                    has_warning = inflows > 0
+                    chip_cls = (
                         "items-center gap-1 px-2.5 py-1 rounded-full border "
-                        "bg-zinc-50 border-zinc-200 text-zinc-700"
-                    ):
+                        + ("bg-amber-50 border-amber-300 text-amber-800"
+                           if has_warning
+                           else "bg-zinc-50 border-zinc-200 text-zinc-700")
+                    )
+                    with ui.row().classes(chip_cls):
+                        if has_warning:
+                            ui.icon("warning", size="xs").classes("text-amber-500")
                         ui.label(pat).classes("text-sm font-mono")
+                        badge_text = ""
+                        if outflows or inflows:
+                            parts = []
+                            if outflows:
+                                parts.append(f"{outflows}↓")
+                            if inflows:
+                                parts.append(f"{inflows}↑")
+                            badge_text = " ".join(parts)
+                        if badge_text:
+                            tip = (
+                                f"{outflows} outflow(s) flagged as transfers"
+                                + (f", {inflows} inflow(s) excluded from income ⚠" if inflows else "")
+                            )
+                            ui.label(badge_text) \
+                                .classes(
+                                    "text-xs "
+                                    + ("text-amber-600" if has_warning else "text-zinc-400")
+                                ) \
+                                .tooltip(tip)
                         if is_head:
                             def _remove(p=pat):
                                 c = load_config(fid)
@@ -1064,6 +1192,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
                                 except Exception:
                                     pass
                                 detection_chips.refresh()
+                                suggested_patterns.refresh()
                                 pending_body.refresh()
                                 on_refresh()
                             ui.button(icon="close", on_click=_remove) \
@@ -1098,6 +1227,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
             new_pat_in.set_value("")
             new_pat_ref["value"] = ""
             detection_chips.refresh()
+            suggested_patterns.refresh()
             pending_body.refresh()
             on_refresh()
 
@@ -1109,6 +1239,42 @@ def _transfers_tab_content(on_refresh: callable) -> None:
             ui.button("Add", icon="add", on_click=_add_detection_pattern) \
                 .props("unelevated dense no-caps") \
                 .classes("bg-zinc-800 text-white rounded-lg px-3")
+
+    @ui.refreshable
+    def suggested_patterns():
+        _cfg  = load_config(fid)
+        suggs = _get_pattern_suggestions(fid, _cfg.transfer_patterns)
+        if not suggs:
+            return
+        ui.label("Suggested — found in unflagged outflows:") \
+            .classes("text-xs text-zinc-400 mt-3 mb-1")
+        with ui.row().classes("flex-wrap gap-2"):
+            for sug in suggs:
+                def _add_suggestion(p=sug):
+                    c = load_config(fid)
+                    if p not in c.transfer_patterns:
+                        c.transfer_patterns.append(p)
+                        save_config(c, fid)
+                        try:
+                            from services.transfer_detection_service import run_detection
+                            from services.view_manager import default_view_manager
+                            run_detection(fid, get_engine(), get_schema())
+                            default_view_manager().refresh()
+                        except Exception:
+                            pass
+                    detection_chips.refresh()
+                    suggested_patterns.refresh()
+                    pending_body.refresh()
+                    on_refresh()
+                ui.button(f"+ {sug}", on_click=_add_suggestion) \
+                    .props("flat dense no-caps") \
+                    .classes(
+                        "text-xs text-zinc-500 border border-dashed border-zinc-300 "
+                        "rounded-full px-2.5 py-0.5 hover:bg-zinc-50"
+                    )
+
+    if is_head:
+        suggested_patterns()
 
     ui.separator().classes("my-6")
 

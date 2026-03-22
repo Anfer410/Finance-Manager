@@ -1,5 +1,5 @@
 {
     "appName" : "Finance Manager",
-    "appVersion" : "2.3.0",
+    "appVersion" : "2.3.1-rc.1",
     "appPort" : 8080
 }

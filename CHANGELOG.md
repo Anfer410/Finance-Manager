@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.3.1 (2026-03-22)
+
+### Bug Fixes
+
+- Currencies
+  ([`5414f5d`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/5414f5d11a6d7960a96b5263c6a48c3563db7a9a))
+
+
 ## v2.3.0 (2026-03-21)
 
 ### Features

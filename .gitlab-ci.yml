@@ -33,8 +33,9 @@ version-bump:
     - git config user.email "gitlab-ci@$CI_SERVER_HOST"
     - git config user.name "GitLab CI"
     - git remote set-url origin "https://oauth2:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+    - git fetch origin
     - git checkout "$CI_COMMIT_BRANCH"
-    - git pull origin "$CI_COMMIT_BRANCH"
+    - git reset --hard "origin/$CI_COMMIT_BRANCH"
     - semantic-release version
     - semantic-release publish
     - echo "APP_VERSION=$(git describe --tags --abbrev=0)" >> version.env

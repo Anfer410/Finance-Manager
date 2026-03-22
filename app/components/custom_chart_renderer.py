@@ -13,6 +13,11 @@ from __future__ import annotations
 from nicegui import ui
 
 from styles.dashboards import TT_AXIS, LEGEND, BANK_COLORS, legend_pos, grid_for_legend
+import services.auth as _auth
+
+
+def _cur() -> str:
+    return _auth.current_currency_prefix()
 
 
 def _legend_opts(config: dict) -> dict:
@@ -30,7 +35,8 @@ def _grid_opts(config: dict) -> dict:
 
 def _label_formatter(label_format: str | None) -> str:
     if label_format == 'dollar':
-        return 'v => "$" + v.value.toLocaleString(undefined,{maximumFractionDigits:0})'
+        cur = _cur()
+        return f'v => "{cur}" + v.value.toLocaleString(undefined,{{maximumFractionDigits:0}})'
     if label_format == 'percent':
         return 'v => v.value + "%"'
     return 'v => v.value.toLocaleString()'
@@ -38,7 +44,8 @@ def _label_formatter(label_format: str | None) -> str:
 
 def _tooltip_formatter(label_format: str | None) -> str:
     if label_format == 'dollar':
-        row = 'p.marker + " " + p.seriesName + ": $" + (+p.value).toLocaleString(undefined,{maximumFractionDigits:0})'
+        cur = _cur()
+        row = f'p.marker + " " + p.seriesName + ": {cur}" + (+p.value).toLocaleString(undefined,{{maximumFractionDigits:0}})'
     elif label_format == 'percent':
         row = 'p.marker + " " + p.seriesName + ": " + p.value + "%"'
     else:

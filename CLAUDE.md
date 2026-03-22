@@ -28,7 +28,9 @@ feature/* ──MR──► develop ──MR──► main
    git checkout main && git pull
    git checkout -b feat/short-description
    ```
-2. **Commit when each logical unit of work is done** — don't batch unrelated changes into one commit. Use conventional commits format (`feat:`, `fix:`, `chore:`, etc.).
+2. **Open a draft MR/PR immediately** after creating the branch so the work is visible early.
+3. **Commit when each logical unit of work is done** — don't batch unrelated changes into one commit. Use conventional commits format (`feat:`, `fix:`, `chore:`, etc.).
+4. **Mark the MR ready for review** (remove draft) when the conversation's work is complete.
 
 Branch naming:
 - `feat/<slug>` — new feature

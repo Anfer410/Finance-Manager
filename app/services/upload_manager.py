@@ -206,6 +206,28 @@ def delete_batch(
     return result.rowcount
 
 
+def backfill_currency(account_key: str, currency: str, family_id: int) -> int:
+    """
+    Set the currency column on all existing transactions for the given account_key.
+    Updates both transactions_debit and transactions_credit (only the table that
+    actually has rows for this account_key will be affected).
+    Returns the total number of rows updated.
+    """
+    schema = _schema()
+    currency = currency.strip().upper()
+    total = 0
+    with _engine().begin() as conn:
+        for tbl in (f"{schema}.transactions_debit", f"{schema}.transactions_credit"):
+            result = conn.execute(text(f"""
+                UPDATE {tbl}
+                SET    currency   = :cur
+                WHERE  account_key = :ak
+                  AND  family_id   = :fid
+            """), {"cur": currency, "ak": account_key, "fid": family_id})
+            total += result.rowcount
+    return total
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _sanitize(name: str) -> str:

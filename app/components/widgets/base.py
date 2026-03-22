@@ -243,13 +243,15 @@ class Widget(ABC):
 
     def render_standalone(
         self,
-        year:    int,
-        persons: list[int] | None = None,
-        config:  dict | None      = None,
+        year:      int,
+        persons:   list[int] | None = None,
+        config:    dict | None      = None,
+        family_id: int | None       = None,
     ) -> None:
         """
         Convenience method to render this widget outside a full dashboard.
         Used by the loans and planning pages.
         """
         ctx = RenderContext.build(year, persons, config or {}, {})
+        ctx.family_id = family_id
         self.render(ctx)

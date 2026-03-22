@@ -181,7 +181,8 @@ class ViewManager:
                     f"           ({cat_expr}) AS category,\n"
                     f"           ({ctype_expr}) AS cost_type,\n"
                     f"           account_key AS source_bank,\n"
-                    f"           family_id\n"
+                    f"           family_id,\n"
+                    f"           currency\n"
                     f"    FROM {self.schema}.transactions_credit\n"
                     f"    WHERE account_key = '{ak}'\n"
                     f"      AND debit > 0\n"
@@ -196,7 +197,7 @@ class ViewManager:
                 "NULL::TEXT AS description, NULL::NUMERIC AS amount, "
                 "NULL::TEXT AS bank, NULL::TEXT AS category, "
                 "NULL::TEXT AS cost_type, NULL::TEXT AS source_bank, "
-                "NULL::INTEGER AS family_id WHERE FALSE"
+                "NULL::INTEGER AS family_id, NULL::TEXT AS currency WHERE FALSE"
             ),
         )
 
@@ -252,7 +253,8 @@ class ViewManager:
                     f"           ({cat_expr}) AS category,\n"
                     f"           ({ctype_expr}) AS cost_type,\n"
                     f"           account_key AS source_bank,\n"
-                    f"           t.family_id\n"
+                    f"           t.family_id,\n"
+                    f"           t.currency\n"
                     f"    FROM {self.schema}.transactions_debit t\n"
                     f"    WHERE account_key = '{ak}'\n"
                     f"      AND amount < 0\n"
@@ -266,7 +268,7 @@ class ViewManager:
                 "NULL::TEXT AS description, NULL::NUMERIC AS amount, "
                 "NULL::TEXT AS bank, NULL::TEXT AS category, "
                 "NULL::TEXT AS cost_type, NULL::TEXT AS source_bank, "
-                "NULL::INTEGER AS family_id WHERE FALSE"
+                "NULL::INTEGER AS family_id, NULL::TEXT AS currency WHERE FALSE"
             ),
         )
 
@@ -302,7 +304,8 @@ class ViewManager:
                     f"           description,\n"
                     f"           amount,\n"
                     f"           '{bank_label}'::TEXT AS bank,\n"
-                    f"           family_id\n"
+                    f"           family_id,\n"
+                    f"           currency\n"
                     f"    FROM {self.schema}.transactions_debit\n"
                     f"    WHERE account_key = '{ak}'\n"
                     f"      AND amount > 0\n"
@@ -315,12 +318,13 @@ class ViewManager:
             fallback=(
                 "SELECT NULL::INTEGER[] AS person, NULL::DATE AS transaction_date, "
                 "NULL::TEXT AS description, NULL::NUMERIC AS amount, "
-                "NULL::TEXT AS bank, NULL::INTEGER AS family_id WHERE FALSE"
+                "NULL::TEXT AS bank, NULL::INTEGER AS family_id, "
+                "NULL::TEXT AS currency WHERE FALSE"
             ),
         )
 
     def _build_all_spend_view(self) -> None:
-        cols = "person, transaction_date, description, amount, bank, category, cost_type, source_bank, family_id"
+        cols = "person, transaction_date, description, amount, bank, category, cost_type, source_bank, family_id, currency"
         sql  = (
             f"    SELECT {cols}, 'credit'::TEXT AS source FROM {self.schema}.v_credit_spend\n"
             f"    UNION ALL\n"

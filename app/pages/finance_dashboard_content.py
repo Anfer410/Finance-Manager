@@ -53,9 +53,9 @@ def _resolve_widget(chart_id: str):
 # ── Main content ──────────────────────────────────────────────────────────────
 
 def content() -> None:
-    user_id = current_user_id()
-    years   = data.get_years()
-    now     = datetime.now()
+    user_id    = current_user_id()
+    years      = data.get_years()
+    now        = datetime.now()
 
     state = {
         'year':                years[0] if years else now.year,

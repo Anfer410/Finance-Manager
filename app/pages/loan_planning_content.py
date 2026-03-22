@@ -16,6 +16,13 @@ from services.loan_service import (
     calculate_loan, get_baseline,
 )
 
+from components.widgets.registry import REGISTRY_BY_ID
+import services.auth as _auth
+
+
+def _cur() -> str:
+    return _auth.current_currency_prefix()
+
 
 # ── Page entry point ──────────────────────────────────────────────────────────
 
@@ -32,78 +39,12 @@ def content() -> None:
             ui.icon("calculate").classes("text-zinc-400 text-2xl")
             ui.label("Loan Planning").classes("text-2xl font-bold text-zinc-800")
 
-        _baseline_section(family_id=family_id)
+        with ui.element("div").classes("card w-full"):
+            REGISTRY_BY_ID["financial_baseline"].render_standalone(
+                year=0, family_id=family_id, config={"months": 18}
+            )
         _calculator_section(family_id=family_id)
         _extra_payment_section(family_id=family_id)
-
-
-# ── Financial baseline ────────────────────────────────────────────────────────
-
-def _baseline_section(months: int = 18, family_id: int | None = None) -> None:
-    baseline = get_baseline(months=months, family_id=family_id)
-
-    dti      = baseline["dti"]
-    headroom = baseline["headroom"]
-
-    # Color-code DTI — overspending takes priority over DTI ratio
-    if baseline["avg_surplus"] < 0:
-        dti_color = "#ef4444"
-        dti_label = "Overspending"
-    elif dti < 28:
-        dti_color = "#22c55e"
-        dti_label = "Healthy"
-    elif dti < 36:
-        dti_color = "#f59e0b"
-        dti_label = "Moderate"
-    elif dti < 43:
-        dti_color = "#f97316"
-        dti_label = "High"
-    else:
-        dti_color = "#ef4444"
-        dti_label = "Stretched"
-
-    with ui.card().classes("w-full rounded-2xl shadow-none border border-zinc-100 p-0 gap-0"):
-        with ui.row().classes("items-center gap-3 px-6 py-4 border-b border-zinc-100"):
-            ui.icon("bar_chart").classes("text-zinc-400 text-xl")
-            ui.label("Financial baseline").classes("text-base font-semibold text-zinc-700")
-            ui.label(f"trailing {months} months").classes("text-xs text-zinc-300 ml-1")
-
-        with ui.row().classes("gap-0 px-6 py-5 flex-wrap"):
-            _kpi("Avg monthly income",  f"${baseline['avg_income']:,.0f}",  "per month")
-            _kpi_sep()
-            _kpi("Avg monthly spend",   f"${baseline['avg_spend']:,.0f}",   "per month")
-            _kpi_sep()
-            _kpi("Avg surplus",         f"${baseline['avg_surplus']:,.0f}", "after expenses")
-            _kpi_sep()
-            _kpi("Total debt payments", f"${baseline['monthly_debt']:,.0f}", "per month")
-            _kpi_sep()
-
-            # DTI with colored badge
-            with ui.column().classes("gap-0 pr-6 min-w-32"):
-                ui.label("Debt-to-income").classes("text-xs text-zinc-400")
-                with ui.row().classes("items-center gap-2"):
-                    ui.label(f"{dti:.1f}%").classes("text-sm font-semibold text-zinc-800")
-                    with ui.element("span") \
-                            .classes("text-xs px-1.5 py-0.5 rounded-full font-medium") \
-                            .style(f"background:{dti_color}22;color:{dti_color}"):
-                        ui.label(dti_label)
-                ui.label(f"${headroom:,.0f} headroom").classes("text-xs text-zinc-300")
-
-        # DTI bar
-        with ui.column().classes("px-6 pb-5 gap-1 w-full"):
-            with ui.row().classes("items-center justify-between w-full"):
-                ui.label("DTI ratio").classes("text-xs text-zinc-400")
-                ui.label("28% / 36% / 43% thresholds").classes("text-xs text-zinc-300")
-            with ui.element("div").classes("relative w-full bg-zinc-100 rounded-full h-2"):
-                # threshold markers
-                for pct, label in ((28, "28%"), (36, "36%"), (43, "43%")):
-                    ui.element("div") \
-                        .classes("absolute top-0 h-2 w-px bg-zinc-300") \
-                        .style(f"left:{min(pct,100)}%")
-                fill = min(dti, 100)
-                ui.element("div") \
-                    .classes("h-2 rounded-full") \
-                    .style(f"width:{fill:.1f}%;background-color:{dti_color};transition:width 0.5s")
 
 
 # ── New loan calculator ───────────────────────────────────────────────────────
@@ -158,9 +99,9 @@ def _calculator_section(family_id: int | None = None) -> None:
                     # Metrics block
                     with ui.column().classes("gap-3 flex-1 min-w-48"):
                         with ui.row().classes("gap-4 flex-wrap"):
-                            _kpi("Monthly payment",    f"${calc['monthly_payment']:,.2f}", "per month")
-                            _kpi("Total interest",     f"${calc['total_interest']:,.0f}",  "over life of loan")
-                            _kpi("Total cost",         f"${calc['total_cost']:,.0f}",       "principal + interest")
+                            _kpi("Monthly payment",    f"{_cur()}{calc['monthly_payment']:,.2f}", "per month")
+                            _kpi("Total interest",     f"{_cur()}{calc['total_interest']:,.0f}",  "over life of loan")
+                            _kpi("Total cost",         f"{_cur()}{calc['total_cost']:,.0f}",       "principal + interest")
                             _kpi("Payoff date",        calc["payoff_date"].strftime("%b %Y"), "")
 
                         # DTI impact row
@@ -168,7 +109,7 @@ def _calculator_section(family_id: int | None = None) -> None:
                             _kpi("Current DTI",  f"{old_dti:.1f}%",  "before this loan")
                             _kpi("New DTI",      f"{new_dti:.1f}%",  "after this loan")
                             _kpi("Remaining headroom",
-                                 f"${headroom - calc['monthly_payment']:,.0f}",
+                                 f"{_cur()}{headroom - calc['monthly_payment']:,.0f}",
                                  "monthly surplus after loan")
 
                     # Verdict badge
@@ -258,25 +199,25 @@ def _extra_payment_section(family_id: int | None = None) -> None:
                     with ui.column().classes("gap-3 flex-1 min-w-44"):
                         ui.label("Without extra payment") \
                             .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-1")
-                        _kpi("Monthly payment",   f"${loan.monthly_payment:,.0f}", "per month")
+                        _kpi("Monthly payment",   f"{_cur()}{loan.monthly_payment:,.0f}", "per month")
                         _kpi("Payoff date",        stats.payoff_date.strftime("%b %Y"),
                              f"{stats.months_remaining} months remaining")
-                        _kpi("Interest remaining", f"${stats.total_interest_remaining:,.0f}", "")
+                        _kpi("Interest remaining", f"{_cur()}{stats.total_interest_remaining:,.0f}", "")
 
                     ui.element("div").classes("self-stretch w-px bg-zinc-100")
 
                     # After column
                     with ui.column().classes("gap-3 flex-1 min-w-44"):
-                        ui.label(f"With +${extra:,.0f}/mo extra") \
+                        ui.label(f"With +{_cur()}{extra:,.0f}/mo extra") \
                             .classes("text-xs font-semibold text-indigo-500 uppercase tracking-wide mb-1")
                         _kpi("Monthly payment",
-                             f"${loan.monthly_payment + extra:,.0f}",
-                             f"+${extra:,.0f} extra")
+                             f"{_cur()}{loan.monthly_payment + extra:,.0f}",
+                             f"+{_cur()}{extra:,.0f} extra")
                         _kpi("New payoff date",    new_payoff.strftime("%b %Y"),
                              f"{stats.months_remaining - mo_saved} months remaining")
                         _kpi("Interest remaining",
-                             f"${stats.total_interest_remaining - saved_int:,.0f}",
-                             f"saves ${saved_int:,.0f}")
+                             f"{_cur()}{stats.total_interest_remaining - saved_int:,.0f}",
+                             f"saves {_cur()}{saved_int:,.0f}")
 
                     ui.element("div").classes("self-stretch w-px bg-zinc-100")
 
@@ -284,7 +225,7 @@ def _extra_payment_section(family_id: int | None = None) -> None:
                     with ui.column().classes("items-center justify-center gap-1 min-w-44 py-4"):
                         ui.icon("savings").classes("text-indigo-400 text-3xl mb-1")
                         ui.label("You save").classes("text-xs text-zinc-400")
-                        ui.label(f"${saved_int:,.0f}") \
+                        ui.label(f"{_cur()}{saved_int:,.0f}") \
                             .classes("text-2xl font-bold text-indigo-600")
                         ui.label("in interest").classes("text-xs text-zinc-400")
                         if mo_saved > 0:
@@ -351,7 +292,7 @@ def _payoff_comparison_chart(loan, extra: float, stats, new_payoff) -> None:
             "textStyle": {"color": "#09090b", "fontSize": 11},
         },
         "legend": {
-            "data": ["Normal", f"+${extra:,.0f}/mo"],
+            "data": ["Normal", f"+{_cur()}{extra:,.0f}/mo"],
             "top": 0, "textStyle": {"color": "#71717a", "fontSize": 11},
         },
         "grid": {"left": "2%", "right": "2%", "top": "30px", "bottom": "8%", "containLabel": True},
@@ -375,7 +316,7 @@ def _payoff_comparison_chart(loan, extra: float, stats, new_payoff) -> None:
         "yAxis": {
             "type": "value",
             "splitLine": {"lineStyle": {"color": "#f4f4f5", "type": "dashed"}},
-            "axisLabel": {":formatter": "v => '$' + (v/1000).toFixed(0) + 'k'",
+            "axisLabel": {":formatter": f"v => '{_cur()}' + (v/1000).toFixed(0) + 'k'",
                           "color": "#71717a", "fontSize": 9},
         },
         "series": [
@@ -419,7 +360,3 @@ def _kpi(label: str, value: str, sub: str = "") -> None:
         ui.label(value).classes("text-sm font-semibold text-zinc-800")
         if sub:
             ui.label(sub).classes("text-xs text-zinc-300")
-
-
-def _kpi_sep() -> None:
-    ui.element("div").classes("w-px bg-zinc-100 self-stretch mr-6")

@@ -2,6 +2,11 @@ from nicegui import ui
 from styles.dashboards import GRID, TT_AXIS, LEGEND, C_SPEND, C_INCOME, C_PAYROLL, C_NET_POS, C_NET_NEG, BANK_COLORS, legend_pos, grid_for_legend
 import services.auth as auth
 
+
+def _cur() -> str:
+    """Currency prefix for labels — e.g. 'PLN ' or '' when showing all currencies."""
+    return auth.current_currency_prefix()
+
 # ── KPI card ──────────────────────────────────────────────────────────────────
 
 def kpi_card(title: str, icon: str, kpi: dict) -> None:
@@ -13,12 +18,12 @@ def kpi_card(title: str, icon: str, kpi: dict) -> None:
             ui.icon(icon).style('font-size:1.2rem;color:var(--muted-fg)')
         with ui.row().classes('items-center justify-between'):
             ui.label('Spend').classes('text-xs text-muted')
-            ui.label(f"${kpi['spend']:,.0f}").classes('text-sm font-semibold').style(f'color:{C_SPEND}')
+            ui.label(f"{_cur()}{kpi['spend']:,.0f}").classes('text-sm font-semibold').style(f'color:{C_SPEND}')
         with ui.row().classes('items-center justify-between'):
             ui.label('Income').classes('text-xs text-muted')
-            ui.label(f"${kpi['income']:,.0f}").classes('text-sm font-semibold').style(f'color:{C_INCOME}')
+            ui.label(f"{_cur()}{kpi['income']:,.0f}").classes('text-sm font-semibold').style(f'color:{C_INCOME}')
         ui.separator().classes('my-2')
-        ui.label(f"{'▲' if net >= 0 else '▼'} ${abs(net):,.0f}") \
+        ui.label(f"{'▲' if net >= 0 else '▼'} {_cur()}{abs(net):,.0f}") \
             .classes('text-xl font-bold').style(f'color:{net_color}')
         ui.label('net').classes('text-xs text-muted')
 
@@ -36,7 +41,7 @@ def spend_income_chart(series: dict, legend_position: str = 'top') -> None:
             ':formatter': f"""params => {{
                 let lines = params.map(p => {{
                     if (p.value == null) return null;
-                    let abs = '$' + Math.abs(p.value).toLocaleString(undefined, {{maximumFractionDigits:0}});
+                    let abs = '{_cur()}' + Math.abs(p.value).toLocaleString(undefined, {{maximumFractionDigits:0}});
                     let sign = p.seriesName === 'Budget' ? (p.value >= 0 ? '▲ ' : '▼ ') : '';
                     return p.marker + p.seriesName + ': ' + sign + abs;
                 }}).filter(Boolean);
@@ -54,7 +59,7 @@ def spend_income_chart(series: dict, legend_position: str = 'top') -> None:
         'yAxis': {
             'type': 'value',
             'splitLine': {'lineStyle': {'color': '#f4f4f5', 'type': 'dashed'}},
-            'axisLabel': {':formatter': 'v => "$" + v.toLocaleString()', 'color': '#71717a', 'fontSize': 11},
+            'axisLabel': {':formatter': f'v => "{_cur()}" + v.toLocaleString()', 'color': '#71717a', 'fontSize': 11},
         },
         'series': [
             {
@@ -63,7 +68,7 @@ def spend_income_chart(series: dict, legend_position: str = 'top') -> None:
                 'barMaxWidth': 28,
                 'itemStyle': {'color': C_SPEND, 'borderRadius': [4, 4, 0, 0]},
                 'label': {'show': True, 'position': 'top', 'color': '#71717a', 'fontSize': 10,
-                          ':formatter': 'v => v.value > 0 ? "$" + (v.value/1000).toFixed(1) + "k" : ""'},
+                          ':formatter': f'v => v.value > 0 ? "{_cur()}" + (v.value/1000).toFixed(1) + "k" : ""'},
             },
             {
                 'name': 'Income', 'type': 'line', 'smooth': 0.3,
@@ -72,7 +77,7 @@ def spend_income_chart(series: dict, legend_position: str = 'top') -> None:
                 'lineStyle': {'width': 2.5, 'color': C_INCOME},
                 'itemStyle': {'color': C_INCOME, 'borderWidth': 2, 'borderColor': '#fff'},
                 'label': {'show': True, 'position': 'top', 'color': '#71717a', 'fontSize': 10,
-                          ':formatter': 'v => v.value > 0 ? "$" + (v.value/1000).toFixed(1) + "k" : ""'},
+                          ':formatter': f'v => v.value > 0 ? "{_cur()}" + (v.value/1000).toFixed(1) + "k" : ""'},
             },
             {
                 'name': 'Budget', 'type': 'line', 'smooth': 0.3,
@@ -92,7 +97,7 @@ def spend_income_chart(series: dict, legend_position: str = 'top') -> None:
                     ':formatter': f"""(params) => {{
                         let v = ({budget_json})[params.dataIndex];
                         if (v == null) return '';
-                        return (v >= 0 ? '▲' : '▼') + ' $' + Math.abs(v).toLocaleString(undefined, {{maximumFractionDigits:0}});
+                        return (v >= 0 ? '▲' : '▼') + ' {_cur()}' + Math.abs(v).toLocaleString(undefined, {{maximumFractionDigits:0}});
                     }}""",
                 },
                 'connectNulls': False,
@@ -119,7 +124,7 @@ def per_bank_chart(series: dict, legend_position: str = 'top') -> None:
         'yAxis': {
             'type': 'value',
             'splitLine': {'lineStyle': {'color': '#f4f4f5', 'type': 'dashed'}},
-            'axisLabel': {':formatter': 'v => "$" + v.toLocaleString()', 'color': '#71717a', 'fontSize': 11},
+            'axisLabel': {':formatter': f'v => "{_cur()}" + v.toLocaleString()', 'color': '#71717a', 'fontSize': 11},
         },
         'series': [
             {
@@ -129,7 +134,7 @@ def per_bank_chart(series: dict, legend_position: str = 'top') -> None:
                 'itemStyle': {'color': BANK_COLORS[i % len(BANK_COLORS)]},
                 'emphasis': {'focus': 'series'},
                 'label': {'show': True, 'position': 'top', 'color': '#71717a', 'fontSize': 10,
-                          ':formatter': 'v => v.value > 0 ? "$" + (v.value/1000).toFixed(1) + "k" : ""'},
+                          ':formatter': f'v => v.value > 0 ? "{_cur()}" + (v.value/1000).toFixed(1) + "k" : ""'},
             }
             for i, (bank, values) in enumerate(banks.items())
         ],
@@ -141,9 +146,9 @@ def employer_income_chart(series: dict, legend_position: str = 'top') -> None:
     charts  = []
 
     _label = {'show': True, 'position': 'inside', 'color': '#fff', 'fontSize': 10,
-               ':formatter': 'v => v.value > 0 ? "$" + (v.value/1000).toFixed(1) + "k" : ""'}
+               ':formatter': f'v => v.value > 0 ? "{_cur()}" + (v.value/1000).toFixed(1) + "k" : ""'}
     _top_label = {'show': True, 'position': 'top', 'color': '#71717a', 'fontSize': 10,
-                  ':formatter': 'v => v.value > 0 ? "$" + (v.value/1000).toFixed(1) + "k" : ""'}
+                  ':formatter': f'v => v.value > 0 ? "{_cur()}" + (v.value/1000).toFixed(1) + "k" : ""'}
 
     if series['has_employer_patterns']:
         legend.append('Payroll')
@@ -178,7 +183,7 @@ def employer_income_chart(series: dict, legend_position: str = 'top') -> None:
         'yAxis': {
             'type': 'value',
             'splitLine': {'lineStyle': {'color': '#f4f4f5', 'type': 'dashed'}},
-            'axisLabel': {':formatter': 'v => "$" + v.toLocaleString()', 'color': '#71717a', 'fontSize': 11},
+            'axisLabel': {':formatter': f'v => "{_cur()}" + v.toLocaleString()', 'color': '#71717a', 'fontSize': 11},
         },
         'series': charts,
     }).classes('w-full').style('height:260px')
@@ -207,12 +212,12 @@ def category_donut(series: dict, inverted: bool = False) -> None:
             ":formatter": "p => p.percent + '%'",
         }
         center_text = f"{len(pie_data)} categories"
-        tooltip_fmt = 'p => p.name + ": $" + p.value.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}) + " (" + p.percent + "%)"'
+        tooltip_fmt = f'p => p.name + ": {_cur()}" + p.value.toLocaleString(undefined,{{minimumFractionDigits:0,maximumFractionDigits:0}}) + " (" + p.percent + "%)"'
     else:
         # Default: no slice labels, amount in tooltip
         label_cfg   = {"show": False}
-        center_text = f"${grand_total:,.0f}"
-        tooltip_fmt = 'p => p.name + ": $" + p.value.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}) + " (" + p.percent + "%)"'
+        center_text = f"{_cur()}{grand_total:,.0f}"
+        tooltip_fmt = f'p => p.name + ": {_cur()}" + p.value.toLocaleString(undefined,{{minimumFractionDigits:0,maximumFractionDigits:0}}) + " (" + p.percent + "%)"'
 
     ui.echart({
         "tooltip": {"trigger": "item", ":formatter": tooltip_fmt},
@@ -269,7 +274,7 @@ def category_trend_chart(series: dict, on_category_click=None, active_category: 
             entry["label"] = {
                 "show": True, "position": "top",
                 "color": "#71717a", "fontSize": 10, "fontWeight": "bold",
-                ":formatter": f"(v => (w => w > 0 ? '$' + w.toLocaleString(undefined,{{maximumFractionDigits:0}}) : '')(({monthly_totals_json})[v.dataIndex]))",
+                ":formatter": f"(v => (w => w > 0 ? '{_cur()}' + w.toLocaleString(undefined,{{maximumFractionDigits:0}}) : '')(({monthly_totals_json})[v.dataIndex]))",
             }
         else:
             entry["label"] = {"show": False}
@@ -278,13 +283,13 @@ def category_trend_chart(series: dict, on_category_click=None, active_category: 
     chart = ui.echart({
         "tooltip": {
             **TT_AXIS, "axisPointer": {"type": "shadow"},
-            ":formatter": """params => {
+            ":formatter": f"""params => {{
                 let visible = params.filter(p => p.value > 0);
                 let total   = visible.reduce((s, p) => s + p.value, 0);
-                let lines   = visible.map(p => p.marker + p.seriesName + ': $' + p.value.toLocaleString(undefined,{maximumFractionDigits:0}));
-                lines.push('<b>Total: $' + total.toLocaleString(undefined,{maximumFractionDigits:0}) + '</b>');
+                let lines   = visible.map(p => p.marker + p.seriesName + ': {_cur()}' + p.value.toLocaleString(undefined,{{maximumFractionDigits:0}}));
+                lines.push('<b>Total: {_cur()}' + total.toLocaleString(undefined,{{maximumFractionDigits:0}}) + '</b>');
                 return params[0].name + '<br/>' + lines.join('<br/>');
-            }""",
+            }}""",
         },
         "legend": legend_pos(legend_position, data=cat_names, textStyle={"fontSize": 10}),
         "grid": grid_for_legend(legend_position),
@@ -297,7 +302,7 @@ def category_trend_chart(series: dict, on_category_click=None, active_category: 
         "yAxis": {
             "type": "value",
             "splitLine": {"lineStyle": {"color": "#f4f4f5", "type": "dashed"}},
-            "axisLabel": {":formatter": "v => '$' + v.toLocaleString()", "color": "#71717a", "fontSize": 11},
+            "axisLabel": {":formatter": f"v => '{_cur()}' + v.toLocaleString()", "color": "#71717a", "fontSize": 11},
         },
         "series": cat_series,
     }, on_point_click=lambda e: on_category_click(e.series_name) if on_category_click and e.series_name != '_total' else None
@@ -318,7 +323,7 @@ def fixed_vs_variable_chart(series: dict, legend_position: str = 'top') -> None:
         "yAxis": {
             "type": "value",
             "splitLine": {"lineStyle": {"color": "#f4f4f5", "type": "dashed"}},
-            "axisLabel": {":formatter": "v => '$' + v.toLocaleString()", "color": "#71717a", "fontSize": 11},
+            "axisLabel": {":formatter": f"v => '{_cur()}' + v.toLocaleString()", "color": "#71717a", "fontSize": 11},
         },
         "series": [
             {
@@ -326,14 +331,14 @@ def fixed_vs_variable_chart(series: dict, legend_position: str = 'top') -> None:
                 "barMaxWidth": 24,
                 "itemStyle": {"color": "#60a5fa", "borderRadius": [4, 4, 0, 0]},
                 "label": {"show": True, "position": "top", "color": "#71717a", "fontSize": 10,
-                           ":formatter": 'v => v.value > 0 ? "$" + (v.value/1000).toFixed(1) + "k" : ""'},
+                           ":formatter": f'v => v.value > 0 ? "{_cur()}" + (v.value/1000).toFixed(1) + "k" : ""'},
             },
             {
                 "name": "Variable", "type": "bar", "data": series["variable"],
                 "barMaxWidth": 24,
                 "itemStyle": {"color": "#fb923c", "borderRadius": [4, 4, 0, 0]},
                 "label": {"show": True, "position": "top", "color": "#71717a", "fontSize": 10,
-                           ":formatter": 'v => v.value > 0 ? "$" + (v.value/1000).toFixed(1) + "k" : ""'},
+                           ":formatter": f'v => v.value > 0 ? "{_cur()}" + (v.value/1000).toFixed(1) + "k" : ""'},
             },
         ],
     }).classes("w-full").style("height:280px")
@@ -401,7 +406,7 @@ def weekly_transactions_chart(series: dict, on_category_click=None, active_categ
             series_entry["label"] = {
                 "show": True, "position": "top",
                 "color": "#374151", "fontSize": 10, "fontWeight": "bold",
-                ":formatter": f"(v => (w => w > 0 ? '$' + w.toLocaleString(undefined,{{maximumFractionDigits:0}}) : '')(({weekly_totals_json})[v.dataIndex]))",
+                ":formatter": f"(v => (w => w > 0 ? '{_cur()}' + w.toLocaleString(undefined,{{maximumFractionDigits:0}}) : '')(({weekly_totals_json})[v.dataIndex]))",
             }
         else:
             series_entry["label"] = {"show": False}
@@ -418,12 +423,12 @@ def weekly_transactions_chart(series: dict, on_category_click=None, active_categ
             '<tr>' +
             '<td style="padding:2px 8px 2px 0;color:#6b7280;font-size:11px;white-space:nowrap">' + t.cat + '</td>' +
             '<td style="padding:2px 8px 2px 0;font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + t.desc + '</td>' +
-            '<td style="padding:2px 0;font-weight:600;text-align:right;white-space:nowrap">$' + t.amt.toLocaleString(undefined,{{maximumFractionDigits:0}}) + '</td>' +
+            '<td style="padding:2px 0;font-weight:600;text-align:right;white-space:nowrap">{_cur()}' + t.amt.toLocaleString(undefined,{{maximumFractionDigits:0}}) + '</td>' +
             '</tr>'
         ).join('');
         return '<b>Week of ' + params[0].axisValue + '</b>' +
                '<table style="border-collapse:collapse;margin-top:6px;width:100%">' + rows + '</table>' +
-               '<div style="border-top:1px solid #e4e4e7;margin-top:6px;padding-top:4px;font-weight:700;text-align:right">Total: $' + total.toLocaleString(undefined,{{maximumFractionDigits:0}}) + '</div>';
+               '<div style="border-top:1px solid #e4e4e7;margin-top:6px;padding-top:4px;font-weight:700;text-align:right">Total: {_cur()}' + total.toLocaleString(undefined,{{maximumFractionDigits:0}}) + '</div>';
     }}"""
 
     ui.echart({
@@ -448,7 +453,7 @@ def weekly_transactions_chart(series: dict, on_category_click=None, active_categ
         "yAxis": {
             "type": "value",
             "splitLine": {"lineStyle": {"color": "#f4f4f5", "type": "dashed"}},
-            "axisLabel": {":formatter": "v => '$' + v.toLocaleString()", "color": "#71717a", "fontSize": 10},
+            "axisLabel": {":formatter": f"v => '{_cur()}' + v.toLocaleString()", "color": "#71717a", "fontSize": 10},
         },
         "series": cat_series,
         "dataZoom": [
@@ -478,7 +483,7 @@ def transactions_table(rows: list[dict]) -> None:
     # Summary row
     with ui.row().classes("w-full items-center justify-between mb-3"):
         ui.label(f"{len(rows):,} transactions").classes("text-sm text-muted")
-        ui.label(f"Total: ${total_spend:,.0f}").classes("text-sm font-semibold text-gray-700")
+        ui.label(f"Total: {_cur()}{total_spend:,.0f}").classes("text-sm font-semibold text-gray-700")
 
     if not rows:
         ui.label("No transactions found.").classes("text-sm text-muted text-center py-8 w-full")
@@ -519,9 +524,9 @@ def transactions_table(rows: list[dict]) -> None:
         </q-td>
     """)
 
-    table.add_slot("body-cell-amount", """
+    table.add_slot("body-cell-amount", f"""
         <q-td :props="props" style="text-align:right">
-            <span style="font-weight:600;color:#f87171">${{ props.value.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) }}</span>
+            <span style="font-weight:600;color:#f87171">{_cur()}{{{{ props.value.toLocaleString(undefined,{{minimumFractionDigits:2,maximumFractionDigits:2}}) }}}}</span>
         </q-td>
     """)
 

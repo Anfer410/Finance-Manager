@@ -10,6 +10,9 @@ import re as _re2
 from sqlalchemy import text
 
 import services.auth as auth
+
+def _cur() -> str:
+    return auth.current_currency_prefix()
 from data.bank_rules import BankRule, load_rules, save_rules
 from data.bank_config import BankConfig, load_banks, save_banks
 from services.transaction_config import (
@@ -238,6 +241,7 @@ def _get_pattern_suggestions(fid: int, existing: list[str]) -> list[str]:
     with engine.connect() as conn:
         rows = conn.execute(sql, params).mappings().all()
     return [r["kw"] for r in rows]
+
 
 
 def _slugify(name: str) -> str:
@@ -974,7 +978,7 @@ def _open_pattern_matches_dialog(pattern: str, label: str, fid: int) -> None:
                                     "px-3 py-2 border border-zinc-100 "
                                     "text-sm text-zinc-700 whitespace-nowrap text-right"
                                 ):
-                                    ui.label(f"${r['amount']:,.2f}")
+                                    ui.label(f"{_cur()}{r['amount']:,.2f}")
                                 with ui.element("td").classes(
                                     "px-3 py-2 border border-zinc-100 "
                                     "text-sm text-zinc-400 whitespace-nowrap font-mono"
@@ -1276,6 +1280,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
     if is_head:
         suggested_patterns()
 
+
     ui.separator().classes("my-6")
 
     # ── §1  Pending Review ─────────────────────────────────────────────────────
@@ -1414,7 +1419,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
                                 f"{n} transaction{'s' if n > 1 else ''} · {date_str}"
                             ).classes("text-xs text-zinc-400")
 
-                        ui.label(f"${total_amt:,.2f}") \
+                        ui.label(f"{_cur()}{total_amt:,.2f}") \
                             .classes("text-sm font-semibold text-zinc-700 shrink-0")
 
                         def _mark_group_keep(rows=group_rows):
@@ -1456,7 +1461,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
                                 .classes("text-xs text-zinc-400 w-20 shrink-0")
                             ui.label(r["description"]) \
                                 .classes("text-xs text-zinc-600 flex-1 truncate")
-                            ui.label(f"${r['amount']:,.2f}") \
+                            ui.label(f"{_cur()}{r['amount']:,.2f}") \
                                 .classes("text-xs text-zinc-500 shrink-0")
                             def _keep_one(flag_id=r["flag_id"]):
                                 _set_flag_user_kept(flag_id, True)
@@ -1512,7 +1517,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
                             .classes("text-xs text-zinc-400 w-20 shrink-0")
                         ui.label(r["description"]) \
                             .classes("text-xs text-zinc-600 flex-1 truncate")
-                        ui.label(f"${r['amount']:,.2f}") \
+                        ui.label(f"{_cur()}{r['amount']:,.2f}") \
                             .classes("text-xs text-zinc-500 shrink-0")
                         def _unmark(flag_id=r["flag_id"]):
                             _set_flag_user_kept(flag_id, False)

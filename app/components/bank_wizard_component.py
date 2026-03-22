@@ -20,11 +20,12 @@ from sqlalchemy import text as sa_text
 
 import services.auth as auth
 from data.bank_rules import BankRule, load_rules, save_rules
+from data.currencies import CURRENCY_OPTIONS
 from data.bank_config import BankConfig, load_banks, save_banks
 from services.notifications import notify
 from services.upload_pipeline import (
     sniff, suggest_mapping, ColumnMapping,
-    REQUIRED_ROLES, SniffResult,
+    REQUIRED_ROLES, SniffResult, _strip_trailing_delimiter, _parse_amount,
 )
 from data.db import get_engine, get_schema
 
@@ -98,11 +99,13 @@ def _create_staging_table(state: dict) -> bool:
             sep = pd.io.parsers.readers.csv.Sniffer().sniff(text_data[:4096]).delimiter
         except Exception:
             sep = ","
+        raw = _strip_trailing_delimiter(raw, sep)
+        skiprows = sniff_result.skiprows if sniff_result else 0
         if sniff_result and not sniff_result.has_header:
-            df = pd.read_csv(io.BytesIO(raw), sep=sep, header=None, dtype=str)
+            df = pd.read_csv(io.BytesIO(raw), sep=sep, header=None, skiprows=skiprows, dtype=str)
             df.columns = [f"col_{i}" for i in range(len(df.columns))]
         else:
-            df = pd.read_csv(io.BytesIO(raw), sep=sep, dtype=str)
+            df = pd.read_csv(io.BytesIO(raw), sep=sep, skiprows=skiprows, dtype=str)
             # Normalize column names to match what sniff() produced and what the
             # mapping stores (e.g. "Transaction Date" → "transaction_date")
             import re as _re2
@@ -135,22 +138,20 @@ def _create_staging_table(state: dict) -> bool:
             debit_col  = mapping.debit  or ""
             credit_col = mapping.credit or ""
             try:
-                dbt = float(str(row.get(debit_col, 0) or 0).replace(",", ""))
-                if pd.isna(dbt): dbt = 0.0
-            except ValueError:
+                dbt = _parse_amount(row.get(debit_col, 0) or 0)
+            except Exception:
                 dbt = 0.0
             try:
-                crd = float(str(row.get(credit_col, 0) or 0).replace(",", ""))
-                if pd.isna(crd): crd = 0.0
-            except ValueError:
+                crd = _parse_amount(row.get(credit_col, 0) or 0)
+            except Exception:
                 crd = 0.0
             rows.append({"date": txn_date, "description": desc,
                          "debit": abs(dbt), "credit": abs(crd)})
         else:
             amount_col = mapping.amount or ""
             try:
-                amt = float(str(row.get(amount_col, 0) or 0).replace(",", ""))
-            except ValueError:
+                amt = _parse_amount(row.get(amount_col, 0) or 0)
+            except Exception:
                 amt = 0.0
             rows.append({"date": txn_date, "description": desc, "amount": amt})
 
@@ -483,6 +484,20 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                             placeholder="e.g. transaction_download",
                         ).classes("w-full").props("outlined dense")
 
+                ui.separator()
+                ui.label("Currency") \
+                    .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
+                ui.label(
+                    "ISO 4217 code for this account's currency. "
+                    "Auto-detected from your sample — leave blank for single-currency families."
+                ).classes("text-xs text-zinc-400")
+                currency_in = ui.select(
+                    options=CURRENCY_OPTIONS,
+                    value=state["bank_details"].get("currency") or None,
+                    label="Currency",
+                    with_input=True,
+                ).classes("w-72").props("outlined dense clearable")
+
             async def on_sample(e: events.UploadEventArguments):
                 raw = await e.file.read()
                 state["raw"]      = raw
@@ -499,6 +514,9 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                     # Pre-populate filename detection from the actual filename
                     stem = Path(e.file.name).stem
                     match_val_in.set_value(stem)
+                    # Auto-populate currency from sniff detection
+                    if result.detected_currency and result.detected_currency in CURRENCY_OPTIONS:
+                        currency_in.set_value(result.detected_currency)
                     filename_col.set_visibility(True)
                     next_btn.enable()
                 except Exception as ex:
@@ -530,6 +548,7 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                 return
             state["bank_details"]["match_type"]  = match_type_sel.value
             state["bank_details"]["match_value"] = mval
+            state["bank_details"]["currency"]    = (currency_in.value or "").strip().upper()
             _advance(_next_step(2))
 
         next_btn.on("click", advance_step2)
@@ -911,6 +930,7 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                 match_type         = d["match_type"],
                 match_value        = d["match_value"],
                 account_type       = acct,
+                currency           = d.get("currency", ""),
                 member_name_column = d.get("member_name_column", ""),
                 member_aliases     = d.get("member_aliases", {}),
                 person_override    = d.get("person_override"),

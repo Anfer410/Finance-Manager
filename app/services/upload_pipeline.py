@@ -63,11 +63,67 @@ class SniffResult:
     norm_columns: list[str]
     has_header:   bool
     sample_rows:  list[list[str]]
-    row_count:    int
+    row_count:          int
+    skiprows:           int = 0
+    detected_currency:  str = ""  # ISO 4217 code sniffed from sample values, e.g. "PLN"
 
 
 def _normalize_col(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
+
+
+def _strip_trailing_delimiter(raw: bytes, sep: str) -> bytes:
+    """Remove a trailing separator from every line (e.g. "a;b;c;" → "a;b;c").
+    Some banks append a redundant delimiter at the end of each row, which pandas
+    would interpret as an extra empty column."""
+    text = raw.decode("utf-8", errors="replace")
+    cleaned = "\n".join(
+        line.rstrip().rstrip(sep) if line.rstrip().endswith(sep) else line
+        for line in text.splitlines()
+    )
+    return cleaned.encode("utf-8")
+
+
+def _find_data_start(lines: list[str], sep: str) -> int:
+    """
+    Return the line index where the largest consecutive block of same-width CSV
+    rows begins.  Bank files often have preamble sections with varying column
+    counts; the actual transaction data is the longest consistent block.
+    Blocks with fewer than 2 fields are ignored (single-value summary lines).
+    Returns 0 if no clear block is found.
+    """
+    # Collect (original_line_index, field_count) for every non-empty line
+    counted = [
+        (i, len(line.strip().split(sep)))
+        for i, line in enumerate(lines)
+        if line.strip()
+    ]
+    if not counted:
+        return 0
+
+    best_start = 0
+    best_len   = 0
+    run_start  = 0
+    run_cnt    = counted[0][1]
+    run_len    = 1
+
+    for k in range(1, len(counted)):
+        _, cnt = counted[k]
+        if cnt == run_cnt:
+            run_len += 1
+        else:
+            if run_cnt >= 2 and run_len > best_len:
+                best_len  = run_len
+                best_start = counted[run_start][0]
+            run_start = k
+            run_cnt   = cnt
+            run_len   = 1
+
+    # Check the final run
+    if run_cnt >= 2 and run_len > best_len:
+        best_start = counted[run_start][0]
+
+    return best_start
 
 
 def sniff(raw: bytes) -> SniffResult:
@@ -78,8 +134,12 @@ def sniff(raw: bytes) -> SniffResult:
     except Exception:
         sep = ","
 
+    raw      = _strip_trailing_delimiter(raw, sep)
+    text     = raw.decode("utf-8", errors="replace")
+    skiprows = _find_data_start(text.splitlines(), sep)
+
     try:
-        df_h = pd.read_csv(io.BytesIO(raw), sep=sep, nrows=6, dtype=str)
+        df_h = pd.read_csv(io.BytesIO(raw), sep=sep, skiprows=skiprows, nrows=6, dtype=str)
         first_row = df_h.columns.tolist()
         looks_like_data = sum(
             1 for v in first_row
@@ -90,22 +150,37 @@ def sniff(raw: bytes) -> SniffResult:
         has_header = True
 
     if has_header:
-        df = pd.read_csv(io.BytesIO(raw), sep=sep, dtype=str)
+        df = pd.read_csv(io.BytesIO(raw), sep=sep, skiprows=skiprows, dtype=str)
         raw_cols = list(df.columns)
     else:
-        df = pd.read_csv(io.BytesIO(raw), sep=sep, header=None, dtype=str)
+        df = pd.read_csv(io.BytesIO(raw), sep=sep, header=None, skiprows=skiprows, dtype=str)
         raw_cols = [f"col_{i}" for i in range(len(df.columns))]
         df.columns = raw_cols
 
     norm_cols = [_normalize_col(c) for c in raw_cols]
     sample = [list(map(str, row.values)) for _, row in df.head(5).iterrows()]
 
+    # Try to detect a currency code (e.g. "PLN", "EUR") from sample values.
+    # Looks for a standalone 3-letter uppercase token in any cell.
+    _cur_pat = re.compile(r'\b([A-Z]{3})\b')
+    detected_currency = ""
+    for row in sample:
+        for cell in row:
+            m = _cur_pat.search(str(cell))
+            if m:
+                detected_currency = m.group(1)
+                break
+        if detected_currency:
+            break
+
     return SniffResult(
-        raw_columns  = raw_cols,
-        norm_columns = norm_cols,
-        has_header   = has_header,
-        sample_rows  = sample,
-        row_count    = len(df),
+        raw_columns        = raw_cols,
+        norm_columns       = norm_cols,
+        has_header         = has_header,
+        sample_rows        = sample,
+        row_count          = len(df),
+        skiprows           = skiprows,
+        detected_currency  = detected_currency,
     )
 
 
@@ -195,6 +270,36 @@ class UploadResult:
         return self.error is None
 
 
+# ── Amount parser ─────────────────────────────────────────────────────────────
+
+def _parse_amount(raw) -> float:
+    """
+    Parse a monetary value that may include a currency suffix and either
+    European (1.234,56) or US (1,234.56) number formatting.
+
+    Examples:
+        "-33,31 PLN"  → -33.31
+        "-1.234,56"   → -1234.56
+        "1,234.56"    →  1234.56
+        "-33.31"      → -33.31
+    """
+    cleaned = re.sub(r"[^\d,.\-+]", "", str(raw).strip())
+    if not cleaned or cleaned in ("-", "+"):
+        return 0.0
+    last_comma = cleaned.rfind(",")
+    last_dot   = cleaned.rfind(".")
+    if last_comma > last_dot:
+        # European: comma is the decimal separator
+        cleaned = cleaned.replace(".", "").replace(",", ".")
+    else:
+        # US or unambiguous: comma is the thousands separator
+        cleaned = cleaned.replace(",", "")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
+
+
 # ── Consolidated table writer ─────────────────────────────────────────────────
 
 def _resolve_person(row: pd.Series, rule, member_col: str | None, default_person_ids: list[int]) -> list[int]:
@@ -270,6 +375,8 @@ def write_to_consolidated(
           f"{'debit_col=' + debit_col + ' credit_col=' + credit_col if is_credit else 'amount_col=' + amount_col} "
           f"rows={len(df)} df_cols={list(df.columns)}")
 
+    currency = getattr(rule, "currency", "") or ""
+
     inserted = 0
     skipped_date = 0
     rows_by_year: dict[int, list[dict]] = {}
@@ -294,14 +401,12 @@ def write_to_consolidated(
 
         if is_credit:
             try:
-                dbt = float(str(row.get(debit_col, 0) or 0).replace(",", ""))
-                if pd.isna(dbt): dbt = 0.0
-            except ValueError:
+                dbt = _parse_amount(row.get(debit_col, 0) or 0)
+            except Exception:
                 dbt = 0.0
             try:
-                crd = float(str(row.get(credit_col, 0) or 0).replace(",", ""))
-                if pd.isna(crd): crd = 0.0
-            except ValueError:
+                crd = _parse_amount(row.get(credit_col, 0) or 0)
+            except Exception:
                 crd = 0.0
             rows_by_year[year].append({
                 "account_key":      account_key,
@@ -313,11 +418,12 @@ def write_to_consolidated(
                 "source_file":      source_file,
                 "family_id":        family_id,
                 "uploaded_by":      uploaded_by or None,
+                "currency":         currency,
             })
         else:
             try:
-                amt = float(str(row.get(amount_col, 0) or 0).replace(",", ""))
-            except ValueError:
+                amt = _parse_amount(row.get(amount_col, 0) or 0)
+            except Exception:
                 amt = 0.0
             rows_by_year[year].append({
                 "account_key":      account_key,
@@ -328,6 +434,7 @@ def write_to_consolidated(
                 "source_file":      source_file,
                 "family_id":        family_id,
                 "uploaded_by":      uploaded_by or None,
+                "currency":         currency,
             })
 
     if skipped_date:
@@ -359,11 +466,11 @@ def write_to_consolidated(
                         INSERT INTO {tbl}
                             (account_key, transaction_date, description,
                              debit, credit, person, source_file,
-                             family_id, uploaded_by)
+                             family_id, uploaded_by, currency)
                         VALUES
                             (:account_key, :transaction_date, :description,
                              :debit, :credit, :person, :source_file,
-                             :family_id, :uploaded_by)
+                             :family_id, :uploaded_by, :currency)
                         ON CONFLICT DO NOTHING
                     """)
                 else:
@@ -371,11 +478,11 @@ def write_to_consolidated(
                         INSERT INTO {tbl}
                             (account_key, transaction_date, description,
                              amount, person, source_file,
-                             family_id, uploaded_by)
+                             family_id, uploaded_by, currency)
                         VALUES
                             (:account_key, :transaction_date, :description,
                              :amount, :person, :source_file,
-                             :family_id, :uploaded_by)
+                             :family_id, :uploaded_by, :currency)
                         ON CONFLICT DO NOTHING
                     """)
 

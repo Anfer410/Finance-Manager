@@ -49,6 +49,7 @@ def run_migrations() -> None:
             _create_transaction_tables(conn, schema)
             _create_transaction_flags_table(conn, schema)
             _migrate_transaction_flags_add_potential_transfer(conn, schema)
+            _migrate_add_currency(conn, schema)
             _migrate_configs_if_needed(conn, schema)
         print("[migration] Startup migrations complete.")
     except Exception as ex:
@@ -531,6 +532,7 @@ def _create_transaction_tables(conn, schema: str) -> None:
     for tbl in ("transactions_debit", "transactions_credit"):
         conn.execute(text(f"ALTER TABLE {schema}.{tbl} ADD COLUMN IF NOT EXISTS family_id INTEGER REFERENCES {schema}.families(id)"))
         conn.execute(text(f"ALTER TABLE {schema}.{tbl} ADD COLUMN IF NOT EXISTS uploaded_by INTEGER REFERENCES {schema}.app_users(id)"))
+        conn.execute(text(f"ALTER TABLE {schema}.{tbl} ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT ''"))
 
     # Pre-create partitions: past 5 years + next 2
     current_year = date.today().year
@@ -615,6 +617,14 @@ def _create_transaction_flags_table(conn, schema: str) -> None:
         CREATE INDEX IF NOT EXISTS idx_transaction_flags_lookup
         ON {schema}.transaction_flags (family_id, flag_type, tx_table, user_kept)
     """))
+
+
+def _migrate_add_currency(conn, schema: str) -> None:
+    """Idempotently add currency column to consolidated transaction tables."""
+    for tbl in ("transactions_debit", "transactions_credit"):
+        conn.execute(text(
+            f"ALTER TABLE {schema}.{tbl} ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT ''"
+        ))
 
 
 def _migrate_transaction_flags_add_potential_transfer(conn, schema: str) -> None:

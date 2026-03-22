@@ -49,19 +49,20 @@ def frame(title: str, version: str, get_logo_func=None):
         ui.label(title).classes('app-name')
         ui.space()
         # Ensure a valid currency is always selected
-        _cur_sel = auth.current_selected_currency()
-        if not _cur_sel or _cur_sel not in currencies:
-            _cur_sel = currencies[0]
-            auth.set_selected_currency(_cur_sel)
-        ui.select(
-            options={c: c for c in currencies},
-            value=_cur_sel,
-            label='Currency',
-            on_change=lambda e: (
-                auth.set_selected_currency(e.value),
-                ui.run_javascript('window.location.reload()'),
-            ),
-        ).props('outlined dense').classes('w-36 mr-2')
+        if currencies:
+            _cur_sel = auth.current_selected_currency()
+            if not _cur_sel or _cur_sel not in currencies:
+                _cur_sel = currencies[0]
+                auth.set_selected_currency(_cur_sel)
+            ui.select(
+                options={c: c for c in currencies},
+                value=_cur_sel,
+                label='Currency',
+                on_change=lambda e: (
+                    auth.set_selected_currency(e.value),
+                    ui.run_javascript('window.location.reload()'),
+                ),
+            ).props('outlined dense').classes('w-36 mr-2')
         with ui.dropdown_button('', icon='account_circle') \
                 .classes('mr-4 header-account-btn') \
                 .props('flat push no-icon-animation auto-close unelevated'):

@@ -67,14 +67,37 @@ def _family_filter() -> tuple[str, dict]:
     return "AND family_id = :_fid", {"_fid": auth.current_family_id()}
 
 
+def _currency_filter() -> tuple[str, dict]:
+    """Returns (sql_clause, params_dict) for filtering by the selected display currency.
+    Returns ('', {}) when no currency is selected (show all)."""
+    cur = auth.current_selected_currency()
+    if not cur:
+        return "", {}
+    return "AND currency = :_cur", {"_cur": cur}
+
+
+# ── Available currencies ──────────────────────────────────────────────────────
+
+def get_currencies() -> list[str]:
+    """Returns distinct non-empty currency codes present in the family's spend data."""
+    family_clause, family_params = _family_filter()
+    rows = _q(
+        f"SELECT DISTINCT currency FROM {V_ALL_SPEND} "
+        f"WHERE currency != '' {family_clause} ORDER BY currency",
+        **family_params
+    )
+    return [r[0] for r in rows]
+
+
 # ── Available years ───────────────────────────────────────────────────────────
 
 def get_years() -> list[int]:
-    family_clause, family_params = _family_filter()
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
     rows = _q(
         f"SELECT DISTINCT EXTRACT(YEAR FROM transaction_date)::INT AS y "
-        f"FROM {V_ALL_SPEND} WHERE 1=1 {family_clause} ORDER BY y DESC",
-        **family_params
+        f"FROM {V_ALL_SPEND} WHERE 1=1 {family_clause} {currency_clause} ORDER BY y DESC",
+        **family_params, **currency_params
     )
     return [r[0] for r in rows] or [datetime.now().year]
 
@@ -86,23 +109,24 @@ def _spend_income_kpi(
     year: int | None = None,
     persons: list[int] | None = None,
 ) -> dict:
-    person_clause, person_params = _persons_filter(persons)
-    family_clause, family_params = _family_filter()
+    person_clause,   person_params   = _persons_filter(persons)
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
     year_clause = "EXTRACT(YEAR FROM transaction_date) = :year" if year else "1=1"
     year_params = {"year": year} if year else {}
 
     rows = _q(f"""
         SELECT COALESCE(SUM(amount), 0) AS spend
         FROM {view}
-        WHERE {year_clause} {person_clause} {family_clause}
-    """, **year_params, **person_params, **family_params)
+        WHERE {year_clause} {person_clause} {family_clause} {currency_clause}
+    """, **year_params, **person_params, **family_params, **currency_params)
     spend = float(rows[0][0]) if rows else 0.0
 
     income_rows = _q(f"""
         SELECT COALESCE(SUM(amount), 0) AS income
         FROM {V_INCOME}
-        WHERE {year_clause} {person_clause} {family_clause}
-    """, **year_params, **person_params, **family_params)
+        WHERE {year_clause} {person_clause} {family_clause} {currency_clause}
+    """, **year_params, **person_params, **family_params, **currency_params)
     income = float(income_rows[0][0]) if income_rows else 0.0
 
     return _kpi(spend, income)
@@ -118,24 +142,25 @@ def get_yearly_kpi(year: int, persons: list[int] | None = None) -> dict:
 # ── Monthly spend + income series ─────────────────────────────────────────────
 
 def get_monthly_spend_series(year: int, persons: list[int] | None = None) -> dict:
-    person_clause, person_params = _persons_filter(persons)
-    family_clause, family_params = _family_filter()
+    person_clause,   person_params   = _persons_filter(persons)
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
 
     spend_rows = _q(f"""
         SELECT EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS spend
         FROM {V_ALL_SPEND}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause}
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause} {currency_clause}
         GROUP BY m ORDER BY m
-    """, year=year, **person_params, **family_params)
+    """, year=year, **person_params, **family_params, **currency_params)
 
     income_rows = _q(f"""
         SELECT EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS income
         FROM {V_INCOME}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause}
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause} {currency_clause}
         GROUP BY m ORDER BY m
-    """, year=year, **person_params, **family_params)
+    """, year=year, **person_params, **family_params, **currency_params)
 
     spend_by_m  = {r[0]: float(r[1]) for r in spend_rows}
     income_by_m = {r[0]: float(r[1]) for r in income_rows}
@@ -173,24 +198,25 @@ def get_year_over_year_monthly_spend_series(
     start = date(today.year - year_back, 1, 1)
     end   = today.replace(day=1)
 
-    person_clause, person_params = _persons_filter(persons)
-    family_clause, family_params = _family_filter()
+    person_clause,   person_params   = _persons_filter(persons)
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
 
     spend_rows = _q(f"""
         SELECT DATE_TRUNC('month', transaction_date)::DATE AS mo,
                COALESCE(SUM(amount), 0)
         FROM {V_ALL_SPEND}
-        WHERE transaction_date >= :start {person_clause} {family_clause}
+        WHERE transaction_date >= :start {person_clause} {family_clause} {currency_clause}
         GROUP BY mo ORDER BY mo
-    """, start=start, **person_params, **family_params)
+    """, start=start, **person_params, **family_params, **currency_params)
 
     income_rows = _q(f"""
         SELECT DATE_TRUNC('month', transaction_date)::DATE AS mo,
                COALESCE(SUM(amount), 0)
         FROM {V_INCOME}
-        WHERE transaction_date >= :start {person_clause} {family_clause}
+        WHERE transaction_date >= :start {person_clause} {family_clause} {currency_clause}
         GROUP BY mo ORDER BY mo
-    """, start=start, **person_params, **family_params)
+    """, start=start, **person_params, **family_params, **currency_params)
 
     month_dates: list[date] = []
     cur = start
@@ -220,18 +246,19 @@ def get_year_over_year_monthly_spend_series(
 # ── Spend per bank series ─────────────────────────────────────────────────────
 
 def get_spend_per_bank_series(year: int, persons: list[int] | None = None) -> dict:
-    person_clause, person_params = _persons_filter(persons)
-    family_clause, family_params = _family_filter()
+    person_clause,   person_params   = _persons_filter(persons)
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
 
     rows = _q(f"""
         SELECT bank,
                EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS spend
         FROM {V_ALL_SPEND}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause}
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause} {currency_clause}
         GROUP BY bank, m
         ORDER BY bank, m
-    """, year=year, **person_params, **family_params)
+    """, year=year, **person_params, **family_params, **currency_params)
 
     banks: dict[str, list[float]] = {}
     for bank, m, spend in rows:
@@ -248,8 +275,9 @@ def get_employer_income_series(year: int, persons: list[int] | None = None) -> d
     from services.transaction_config import load_config
     cfg = load_config(auth.current_family_id())
 
-    person_clause, person_params = _persons_filter(persons)
-    family_clause, family_params = _family_filter()
+    person_clause,   person_params   = _persons_filter(persons)
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
 
     if cfg.employer_pattern_strings:
         employer_clause = "(" + " OR ".join(
@@ -262,9 +290,9 @@ def get_employer_income_series(year: int, persons: list[int] | None = None) -> d
             FROM {V_INCOME}
             WHERE EXTRACT(YEAR FROM transaction_date) = :year
               AND {employer_clause}
-              {person_clause} {family_clause}
+              {person_clause} {family_clause} {currency_clause}
             GROUP BY m ORDER BY m
-        """, year=year, **person_params, **family_params)
+        """, year=year, **person_params, **family_params, **currency_params)
 
         other_rows = _q(f"""
             SELECT EXTRACT(MONTH FROM transaction_date)::INT AS m,
@@ -272,18 +300,18 @@ def get_employer_income_series(year: int, persons: list[int] | None = None) -> d
             FROM {V_INCOME}
             WHERE EXTRACT(YEAR FROM transaction_date) = :year
               AND NOT {employer_clause}
-              {person_clause} {family_clause}
+              {person_clause} {family_clause} {currency_clause}
             GROUP BY m ORDER BY m
-        """, year=year, **person_params, **family_params)
+        """, year=year, **person_params, **family_params, **currency_params)
     else:
         payroll_rows = []
         other_rows   = _q(f"""
             SELECT EXTRACT(MONTH FROM transaction_date)::INT AS m,
                    COALESCE(SUM(amount), 0) AS income
             FROM {V_INCOME}
-            WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause}
+            WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause} {currency_clause}
             GROUP BY m ORDER BY m
-        """, year=year, **person_params, **family_params)
+        """, year=year, **person_params, **family_params, **currency_params)
 
     payroll_by_m = {r[0]: float(r[1]) for r in payroll_rows}
     other_by_m   = {r[0]: float(r[1]) for r in other_rows}
@@ -300,16 +328,17 @@ def get_employer_income_series(year: int, persons: list[int] | None = None) -> d
 
 def get_spend_by_category(year: int, persons: list[int] | None = None) -> dict:
     """Total spend per category for the year, sorted descending."""
-    person_clause, person_params = _persons_filter(persons)
-    family_clause, family_params = _family_filter()
+    person_clause,   person_params   = _persons_filter(persons)
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
 
     rows = _q(f"""
         SELECT category, cost_type, COALESCE(SUM(amount), 0) AS total
         FROM {V_ALL_SPEND}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause}
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause} {currency_clause}
         GROUP BY category, cost_type
         ORDER BY total DESC
-    """, year=year, **person_params, **family_params)
+    """, year=year, **person_params, **family_params, **currency_params)
 
     from data.category_rules import load_category_config
     cfg_cat   = load_category_config(auth.current_family_id())
@@ -325,17 +354,18 @@ def get_spend_by_category(year: int, persons: list[int] | None = None) -> dict:
 
 def get_category_trend(year: int, persons: list[int] | None = None) -> dict:
     """Monthly spend per category — for stacked bar trend chart."""
-    person_clause, person_params = _persons_filter(persons)
-    family_clause, family_params = _family_filter()
+    person_clause,   person_params   = _persons_filter(persons)
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
 
     rows = _q(f"""
         SELECT category, EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS total
         FROM {V_ALL_SPEND}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause}
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause} {currency_clause}
         GROUP BY category, m
         ORDER BY category, m
-    """, year=year, **person_params, **family_params)
+    """, year=year, **person_params, **family_params, **currency_params)
 
     from data.category_rules import load_category_config
     cfg_cat   = load_category_config(auth.current_family_id())
@@ -358,17 +388,18 @@ def get_category_trend(year: int, persons: list[int] | None = None) -> dict:
 
 def get_fixed_vs_variable(year: int, persons: list[int] | None = None) -> dict:
     """Monthly fixed vs variable spend split."""
-    person_clause, person_params = _persons_filter(persons)
-    family_clause, family_params = _family_filter()
+    person_clause,   person_params   = _persons_filter(persons)
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
 
     rows = _q(f"""
         SELECT cost_type, EXTRACT(MONTH FROM transaction_date)::INT AS m,
                COALESCE(SUM(amount), 0) AS total
         FROM {V_ALL_SPEND}
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause}
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {person_clause} {family_clause} {currency_clause}
         GROUP BY cost_type, m
         ORDER BY cost_type, m
-    """, year=year, **person_params, **family_params)
+    """, year=year, **person_params, **family_params, **currency_params)
 
     fixed    = [0.0] * 12
     variable = [0.0] * 12
@@ -388,33 +419,35 @@ def get_fixed_vs_variable(year: int, persons: list[int] | None = None) -> dict:
 
 def get_persons() -> list[str]:
     """Distinct person_name values across all spend (resolved from INTEGER[] user IDs)."""
-    family_clause, family_params = _family_filter()
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
     rows = _q(f"""
         SELECT DISTINCT u.display_name
         FROM {_SCHEMA}.app_users u
         WHERE u.id IN (
             SELECT DISTINCT unnest(person)
             FROM {V_ALL_SPEND}
-            WHERE cardinality(person) > 0 {family_clause}
+            WHERE cardinality(person) > 0 {family_clause} {currency_clause}
         )
         ORDER BY u.display_name
-    """, **family_params)
+    """, **family_params, **currency_params)
     return [r[0] for r in rows]
 
 
 def get_persons_with_ids() -> list[dict]:
     """Return [{id, name}, …] for users that appear in any spend transaction."""
-    family_clause, family_params = _family_filter()
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
     rows = _q(f"""
         SELECT DISTINCT u.id, u.display_name
         FROM {_SCHEMA}.app_users u
         WHERE u.id IN (
             SELECT DISTINCT unnest(person)
             FROM {V_ALL_SPEND}
-            WHERE cardinality(person) > 0 {family_clause}
+            WHERE cardinality(person) > 0 {family_clause} {currency_clause}
         )
         ORDER BY u.display_name
-    """, **family_params)
+    """, **family_params, **currency_params)
     return [{'id': r[0], 'name': r[1]} for r in rows]
 
 
@@ -432,7 +465,8 @@ def get_spend_by_person_monthly(
 
     Returns {'months': [...], 'persons': {name: [v1..vN], ...}}.
     """
-    family_clause, family_params = _family_filter()
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
 
     if date_from is not None and date_to is not None:
         rows = _q(f"""
@@ -444,10 +478,10 @@ def get_spend_by_person_monthly(
             FROM {V_ALL_SPEND} s
             JOIN LATERAL unnest(s.person) AS pid ON TRUE
             JOIN {_SCHEMA}.app_users u ON u.id = pid
-            WHERE transaction_date >= :df AND transaction_date < :dt {family_clause}
+            WHERE transaction_date >= :df AND transaction_date < :dt {family_clause} {currency_clause}
             GROUP BY u.display_name, label, month_start
             ORDER BY u.display_name, month_start
-        """, df=date_from, dt=date_to, **family_params)
+        """, df=date_from, dt=date_to, **family_params, **currency_params)
 
         # Single pass: collect ordered month labels and per-person spend together
         month_order: list[str] = []
@@ -479,10 +513,10 @@ def get_spend_by_person_monthly(
         FROM {V_ALL_SPEND} s
         JOIN LATERAL unnest(s.person) AS pid ON TRUE
         JOIN {_SCHEMA}.app_users u ON u.id = pid
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year {family_clause}
+        WHERE EXTRACT(YEAR FROM transaction_date) = :year {family_clause} {currency_clause}
         GROUP BY u.display_name, m
         ORDER BY u.display_name, m
-    """, year=year, **family_params)
+    """, year=year, **family_params, **currency_params)
 
     by_person_yr: dict[str, list[float]] = {}
     for name, m, spend in rows:
@@ -495,15 +529,16 @@ def get_spend_by_person_monthly(
 
 def get_filter_options(year: int) -> dict:
     """Distinct values for each filterable column for the given year — used by dropdown filters."""
-    family_clause, family_params = _family_filter()
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
 
     def _distinct(col: str) -> list[str]:
         rows = _q(f"""
             SELECT DISTINCT {col} FROM {V_ALL_SPEND}
             WHERE EXTRACT(YEAR FROM transaction_date) = :year
-              AND {col} IS NOT NULL {family_clause}
+              AND {col} IS NOT NULL {family_clause} {currency_clause}
             ORDER BY {col}
-        """, year=year, **family_params)
+        """, year=year, **family_params, **currency_params)
         return [str(r[0]) for r in rows]
 
     persons_rows = _q(f"""
@@ -513,10 +548,10 @@ def get_filter_options(year: int) -> dict:
             SELECT DISTINCT unnest(person)
             FROM {V_ALL_SPEND}
             WHERE EXTRACT(YEAR FROM transaction_date) = :year
-              AND cardinality(person) > 0 {family_clause}
+              AND cardinality(person) > 0 {family_clause} {currency_clause}
         )
         ORDER BY u.display_name
-    """, year=year, **family_params)
+    """, year=year, **family_params, **currency_params)
 
     return {
         "categories": _distinct("category"),
@@ -538,8 +573,9 @@ def get_weekly_transactions(
     from collections import defaultdict
     import datetime as dt
 
-    person_clause, person_params = _persons_filter(persons)
-    family_clause, family_params = _family_filter()
+    person_clause,   person_params   = _persons_filter(persons)
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
     category_filter = "AND category = :category" if category else ""
 
     rows = _q(f"""
@@ -552,9 +588,10 @@ def get_weekly_transactions(
         WHERE EXTRACT(YEAR FROM transaction_date) = :year
           {person_clause}
           {family_clause}
+          {currency_clause}
           {category_filter}
         ORDER BY transaction_date, category, amount DESC
-    """, year=year, **person_params, **family_params,
+    """, year=year, **person_params, **family_params, **currency_params,
        **( {"category": category} if category else {}))
 
     by_week: dict[str, list[dict]] = defaultdict(list)
@@ -645,8 +682,9 @@ def gettransactions_table(
     `filters` dict (simple mode): keys = cost_type, bank, from_date, to_date, category
     `search` string (advanced mode): supports category=x  type=x  from=  to=  free text
     """
-    person_clause, person_params = _persons_filter(persons)
-    family_clause, family_params = _family_filter()
+    person_clause,   person_params   = _persons_filter(persons)
+    family_clause,   family_params   = _family_filter()
+    currency_clause, currency_params = _currency_filter()
     category_filter = "AND category = :category" if category else ""
 
     extra_clauses: list[str] = []
@@ -719,10 +757,11 @@ def gettransactions_table(
         WHERE EXTRACT(YEAR FROM transaction_date) = :year
           {person_clause}
           {family_clause}
+          {currency_clause}
           {category_filter}
           {extra_filter}
         ORDER BY transaction_date DESC
-    """, year=year, **person_params, **family_params,
+    """, year=year, **person_params, **family_params, **currency_params,
        **( {"category": category} if category else {}),
        **extra_params)
 

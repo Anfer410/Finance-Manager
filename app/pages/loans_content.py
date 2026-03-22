@@ -21,7 +21,13 @@ from services.loan_service import (
 
 from components.finance_charts import spend_income_chart
 from data.finance_dashboard_data import get_year_over_year_monthly_spend_series
-from pages.loan_planning_content import _baseline_section
+from components.widgets.registry import REGISTRY_BY_ID
+import services.auth as _auth
+
+
+def _cur() -> str:
+    return _auth.current_currency_prefix()
+
 
 LOAN_TYPES  = ["mortgage", "auto", "student", "personal", "heloc", "other"]
 _TYPE_ICON  = {
@@ -49,7 +55,10 @@ def content() -> None:
             ui.icon("account_balance_wallet").classes("text-zinc-400 text-2xl")
             ui.label("Loans & Mortgages").classes("text-2xl font-bold text-zinc-800")
 
-        _baseline_section(family_id=family_id)
+        with ui.element("div").classes("card w-full"):
+            REGISTRY_BY_ID["financial_baseline"].render_standalone(
+                year=0, family_id=family_id, config={"months": 18}
+            )
         _overview_chart(family_id)
 
         @ui.refreshable
@@ -137,26 +146,26 @@ def _loan_card(loan: LoanRecord, on_refresh, family_id: int | None = None) -> No
                 ui.button(icon="edit",
                       on_click=lambda l=loan: _loan_dialog(l, on_refresh, family_id)) \
                     .props("flat round dense").classes("text-zinc-400")
-                ui.button(icon="delete_outline",
+            ui.button(icon="delete_outline",
                       on_click=lambda l=loan: _confirm_delete(l, on_refresh, family_id)) \
-                    .props("flat round dense").classes("text-red-300")
+                .props("flat round dense").classes("text-red-300")
 
         # ── KPI metrics ──────────────────────────────────────────────────────
         with ui.row().classes("gap-0 px-6 py-5 flex-wrap border-b border-zinc-50"):
             _metric("Balance",
-                    f"${loan.current_balance:,.0f}",
+                    f"{_cur()}{loan.current_balance:,.0f}",
                     f"as of {loan.balance_as_of.strftime('%b %d, %Y')}")
             _metric_sep()
             _metric("Payoff", stats.payoff_date.strftime("%b %Y"), time_str)
             _metric_sep()
-            _metric("Daily interest", f"${stats.daily_interest:,.2f}", "per day")
+            _metric("Daily interest", f"{_cur()}{stats.daily_interest:,.2f}", "per day")
             _metric_sep()
             _metric("Equity", f"{stats.equity_pct:.1f}%",
-                    f"${stats.principal_paid:,.0f} paid")
+                    f"{_cur()}{stats.principal_paid:,.0f} paid")
             _metric_sep()
             _metric("Interest remaining",
-                    f"${stats.total_interest_remaining:,.0f}",
-                    f"${stats.interest_paid:,.0f} paid to date")
+                    f"{_cur()}{stats.total_interest_remaining:,.0f}",
+                    f"{_cur()}{stats.interest_paid:,.0f} paid to date")
 
         # ── Chart + summary panel ────────────────────────────────────────────
         with ui.row().classes("gap-4 px-4 py-4 w-full items-start"):
@@ -180,7 +189,7 @@ def _loan_card(loan: LoanRecord, on_refresh, family_id: int | None = None) -> No
                                 .classes("text-zinc-400 font-mono text-xs w-24 flex-none")
                             ui.label(p["description"][:55]) \
                                 .classes("text-zinc-600 flex-1 truncate text-xs")
-                            ui.label(f"${p['amount']:,.2f}") \
+                            ui.label(f"{_cur()}{p['amount']:,.2f}") \
                                 .classes("text-zinc-800 font-semibold text-xs flex-none")
 
         # ── Amortization table ───────────────────────────────────────────────
@@ -220,7 +229,7 @@ def _balance_chart(stats: LoanStats) -> None:
             "trigger": "axis",
             "backgroundColor": "#fff", "borderColor": "#e4e4e7",
             "textStyle": {"color": "#09090b", "fontSize": 11},
-            ":formatter": "p => p[0].name + '<br/>' + p[0].marker + ' $' + p[0].value.toLocaleString(undefined,{maximumFractionDigits:0})",
+            ":formatter": f"p => p[0].name + '<br/>' + p[0].marker + ' {_cur()}' + p[0].value.toLocaleString(undefined,{{maximumFractionDigits:0}})",
         },
         "grid": {"left": "2%", "right": "2%", "top": "8%", "bottom": "8%", "containLabel": True},
         "xAxis": {
@@ -235,7 +244,7 @@ def _balance_chart(stats: LoanStats) -> None:
         "yAxis": {
             "type": "value",
             "splitLine": {"lineStyle": {"color": "#f4f4f5", "type": "dashed"}},
-            "axisLabel": {":formatter": "v => '$' + (v/1000).toFixed(0) + 'k'",
+            "axisLabel": {":formatter": f"v => '{_cur()}' + (v/1000).toFixed(0) + 'k'",
                           "color": "#71717a", "fontSize": 9},
         },
         "series": [{
@@ -264,13 +273,13 @@ def _summary_panel(loan: LoanRecord, stats: LoanStats) -> None:
                 ui.element("div").classes("bg-indigo-500 h-1.5 rounded-full") \
                     .style(f"width:{pct:.0f}%")
 
-        _srow("Original loan",  f"${loan.original_principal:,.0f}")
-        _srow("Remaining",      f"${loan.current_balance:,.0f}")
-        _srow("Monthly pmt",    f"${loan.monthly_payment:,.0f}")
+        _srow("Original loan",  f"{_cur()}{loan.original_principal:,.0f}")
+        _srow("Remaining",      f"{_cur()}{loan.current_balance:,.0f}")
+        _srow("Monthly pmt",    f"{_cur()}{loan.monthly_payment:,.0f}")
         if loan.monthly_insurance:
             pi = loan.monthly_payment - loan.monthly_insurance
-            _srow("  P&I",       f"${pi:,.0f}")
-            _srow("  Insurance", f"${loan.monthly_insurance:,.0f}")
+            _srow("  P&I",       f"{_cur()}{pi:,.0f}")
+            _srow("  Insurance", f"{_cur()}{loan.monthly_insurance:,.0f}")
         _srow("Interest rate",  f"{loan.interest_rate:.2f}%")
         _srow("Term",           f"{loan.term_months // 12}yr {loan.term_months % 12}mo")
         _srow("Start date",     loan.start_date.strftime("%b %Y"))
@@ -291,10 +300,10 @@ def _amortization_table(amort) -> None:
         {
             "month":     r.month_num,
             "date":      r.date.strftime("%b %Y"),
-            "payment":   f"${r.payment:,.2f}",
-            "principal": f"${r.principal:,.2f}",
-            "interest":  f"${r.interest:,.2f}",
-            "balance":   f"${r.balance:,.2f}",
+            "payment":   f"{_cur()}{r.payment:,.2f}",
+            "principal": f"{_cur()}{r.principal:,.2f}",
+            "interest":  f"{_cur()}{r.interest:,.2f}",
+            "balance":   f"{_cur()}{r.balance:,.2f}",
         }
         for r in amort[:48]
     ]

@@ -637,6 +637,79 @@ def _upload_manager_section() -> None:
     batch_table()
 
 
+def _backfill_currency_section() -> None:
+    from data.bank_rules import load_rules
+    from data.currencies import CURRENCY_OPTIONS
+    from services.upload_manager import backfill_currency
+    from services.view_manager import ViewManager
+    from data.db import get_engine, get_schema
+
+    fid   = auth.current_family_id()
+    rules = load_rules(fid) if fid else []
+
+    if not rules:
+        return
+
+    with _card('Backfill account currency', 'currency_exchange'):
+        _section_header('Backfill account currency', 'currency_exchange')
+        with ui.column().classes('px-6 py-5 gap-3 w-full'):
+            ui.label(
+                'Set the currency on all existing transactions for an account. '
+                'Use this when you add or change a currency on a bank rule after data was already uploaded.'
+            ).classes('text-xs text-zinc-400')
+
+            account_options = {r.prefix: f"{r.bank_name} ({r.prefix})" for r in rules}
+            selected_account = ui.select(
+                options=account_options,
+                label='Account',
+            ).props('outlined dense').classes('w-72')
+
+            currency_in = ui.select(
+                options=CURRENCY_OPTIONS,
+                label='Currency',
+                with_input=True,
+            ).props('outlined dense clearable').classes('w-72')
+
+            # Pre-fill currency when account selection changes
+            rule_map = {r.prefix: r for r in rules}
+
+            def _on_account_change(e):
+                rule = rule_map.get(e.value)
+                if rule and rule.currency and rule.currency in CURRENCY_OPTIONS:
+                    currency_in.set_value(rule.currency)
+
+            selected_account.on('update:model-value', _on_account_change)
+
+            feedback = ui.label('').classes('text-xs')
+
+            def _do_backfill():
+                ak  = selected_account.value
+                cur = currency_in.value or ''
+                if not ak:
+                    feedback.set_text('Select an account first.')
+                    return
+                if not cur:
+                    feedback.set_text('Select a currency first.')
+                    return
+                try:
+                    n = backfill_currency(ak, cur.strip().upper(), fid)
+                    # Also update the bank rule so future uploads use the same currency
+                    rules_updated = load_rules(fid)
+                    from data.bank_rules import save_rules
+                    for rule in rules_updated:
+                        if rule.prefix == ak:
+                            rule.currency = cur
+                    save_rules(rules_updated, fid)
+                    ViewManager(get_engine(), get_schema()).refresh()
+                    feedback.set_text(f'Updated {n} row(s) for "{ak}" → {cur}. Views refreshed.')
+                except Exception as ex:
+                    feedback.set_text(f'Error: {ex}')
+
+            ui.button('Apply', icon='sync', on_click=_do_backfill) \
+                .props('unelevated no-caps') \
+                .classes('bg-zinc-800 text-white rounded-lg px-4 self-start')
+
+
 def _refresh_views_section() -> None:
     with _card('Database views', 'storage'):
         _section_header('Database views', 'storage')
@@ -1604,5 +1677,6 @@ def content() -> None:
             
             with ui.tab_panel(tab_database):
                 with ui.column().classes('w-full gap-6'):
+                    _backfill_currency_section()
                     _refresh_views_section()
 

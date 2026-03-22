@@ -42,6 +42,11 @@ class BankRule:
     # Resolved to user IDs at upload time via app_users table.
     member_aliases: dict = field(default_factory=dict)
 
+    # ── Currency ───────────────────────────────────────────────────────────
+    # ISO 4217 code for the currency of this account, e.g. "PLN", "USD", "EUR".
+    # Empty string = not configured (single-currency families can leave this unset).
+    currency: str = ""
+
     # ── Column mapping (set by wizard, used by UploadPipeline) ──────────────
     # Maps logical role → actual normalised column name in this bank's CSV.
     # e.g. {"date": "trans_date", "amount": "transaction_amount"}

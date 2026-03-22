@@ -9,6 +9,7 @@ Manages dynamic raw_<account_key> archive tables in Postgres.
 - No Alembic involvement (these are archive tables, not schema tables)
 """
 
+import csv
 import json
 import re
 import uuid
@@ -66,6 +67,58 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         new_cols.append(name)
     df.columns = new_cols
     return df
+
+
+def _strip_trailing_delimiter(raw: bytes, sep: str) -> bytes:
+    """Remove a trailing separator from every line (e.g. "a;b;c;" → "a;b;c").
+    Some banks append a redundant delimiter at the end of each row, which pandas
+    would interpret as an extra empty column."""
+    text = raw.decode("utf-8", errors="replace")
+    cleaned = "\n".join(
+        line.rstrip().rstrip(sep) if line.rstrip().endswith(sep) else line
+        for line in text.splitlines()
+    )
+    return cleaned.encode("utf-8")
+
+
+def _find_data_start(lines: list[str], sep: str) -> int:
+    """
+    Return the line index where the largest consecutive block of same-width CSV
+    rows begins.  Bank files often have preamble sections with varying column
+    counts; the actual transaction data is the longest consistent block.
+    Blocks with fewer than 2 fields are ignored (single-value summary lines).
+    Returns 0 if no clear block is found.
+    """
+    counted = [
+        (i, len(line.strip().split(sep)))
+        for i, line in enumerate(lines)
+        if line.strip()
+    ]
+    if not counted:
+        return 0
+
+    best_start = 0
+    best_len   = 0
+    run_start  = 0
+    run_cnt    = counted[0][1]
+    run_len    = 1
+
+    for k in range(1, len(counted)):
+        _, cnt = counted[k]
+        if cnt == run_cnt:
+            run_len += 1
+        else:
+            if run_cnt >= 2 and run_len > best_len:
+                best_len   = run_len
+                best_start = counted[run_start][0]
+            run_start = k
+            run_cnt   = cnt
+            run_len   = 1
+
+    if run_cnt >= 2 and run_len > best_len:
+        best_start = counted[run_start][0]
+
+    return best_start
 
 
 BANK_CSV_PARSERS: dict[str, callable] = {}
@@ -129,11 +182,22 @@ def parse_csv(raw: bytes, prefix: str, column_map: dict | None = None) -> pd.Dat
     """
     import io
 
+    # Detect separator and preamble offset once, used across all paths below.
+    text = raw.decode("utf-8", errors="replace")
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096])
+        sep = dialect.delimiter
+    except Exception:
+        sep = ","
+    raw      = _strip_trailing_delimiter(raw, sep)
+    text     = raw.decode("utf-8", errors="replace")
+    skiprows = _find_data_start(text.splitlines(), sep)
+
     if column_map:
         actual_names = {v for v in column_map.values() if v}
 
         # Peek at first row with header to see if column names match what wizard recorded
-        df_peek = pd.read_csv(io.BytesIO(raw), dtype=str, nrows=0)
+        df_peek = pd.read_csv(io.BytesIO(raw), sep=sep, skiprows=skiprows, dtype=str, nrows=0)
         norm_headers = {
             re.sub(r"[^a-z0-9]+", "_", c.strip().lower()).strip("_")
             for c in df_peek.columns
@@ -141,12 +205,12 @@ def parse_csv(raw: bytes, prefix: str, column_map: dict | None = None) -> pd.Dat
         has_header = bool(actual_names & norm_headers)  # any overlap → has header
 
         if has_header:
-            df = pd.read_csv(io.BytesIO(raw), dtype=str)
+            df = pd.read_csv(io.BytesIO(raw), sep=sep, skiprows=skiprows, dtype=str)
             return _normalize_columns(df)
         else:
             # Headerless — read without header, assign col_0, col_1 ...
             # These match what the wizard stored in column_map
-            df = pd.read_csv(io.BytesIO(raw), header=None, dtype=str)
+            df = pd.read_csv(io.BytesIO(raw), sep=sep, header=None, skiprows=skiprows, dtype=str)
             df.columns = [f"col_{i}" for i in range(len(df.columns))]
             return df  # already normalised — col_N names are clean
 
@@ -162,7 +226,7 @@ def parse_csv(raw: bytes, prefix: str, column_map: dict | None = None) -> pd.Dat
         return parser(raw)
 
     # Generic fallback — read with header
-    df = pd.read_csv(io.BytesIO(raw), dtype=str)
+    df = pd.read_csv(io.BytesIO(raw), sep=sep, skiprows=skiprows, dtype=str)
     return _normalize_columns(df)
 
 

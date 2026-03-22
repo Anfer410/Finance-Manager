@@ -41,10 +41,16 @@ from components.widgets.base import (
     Widget, WidgetType, TimeMode, RenderContext, ConfigField,
 )
 from components.widgets.kpi        import KPIWidget
+import services.auth as _auth
 from components.widgets.echart     import (
     EChartWidget, BarChartWidget, LineChartWidget, MixedChartWidget,
     StackedBarChartWidget, DonutChartWidget, AreaLineChartWidget,
 )
+
+
+def _cur() -> str:
+    """Currency prefix for labels — e.g. 'PLN ' or '' when showing all currencies."""
+    return _auth.current_currency_prefix()
 
 
 # ── Shared rendering helpers ───────────────────────────────────────────────────
@@ -62,14 +68,14 @@ def _render_spend_income_kpi(kpi: dict, title: str, icon: str) -> None:
         ui.icon(icon).style('font-size:1.2rem;color:var(--muted-fg)')
     with ui.row().classes('items-center justify-between'):
         ui.label('Spend').classes('text-xs text-muted')
-        ui.label(f"${kpi['spend']:,.0f}") \
+        ui.label(f"{_cur()}{kpi['spend']:,.0f}") \
           .classes('text-sm font-semibold').style(f'color:{C_SPEND}')
     with ui.row().classes('items-center justify-between'):
         ui.label('Income').classes('text-xs text-muted')
-        ui.label(f"${kpi['income']:,.0f}") \
+        ui.label(f"{_cur()}{kpi['income']:,.0f}") \
           .classes('text-sm font-semibold').style(f'color:{C_INCOME}')
     ui.separator().classes('my-2')
-    ui.label(f"{'▲' if net >= 0 else '▼'} ${abs(net):,.0f}") \
+    ui.label(f"{'▲' if net >= 0 else '▼'} {_cur()}{abs(net):,.0f}") \
       .classes('text-xl font-bold').style(f'color:{net_color}')
     ui.label('net').classes('text-xs text-muted')
 
@@ -287,7 +293,7 @@ class _PersonSpend(BarChartWidget):
                 'label': {
                     'show': True, 'position': 'top',
                     'color': '#71717a', 'fontSize': 10,
-                    ':formatter': 'v => v.value > 0 ? "$" + (v.value/1000).toFixed(1) + "k" : ""',
+                    ':formatter': f'v => v.value > 0 ? "{_cur()}" + (v.value/1000).toFixed(1) + "k" : ""',
                 },
             })
 
@@ -304,7 +310,7 @@ class _PersonSpend(BarChartWidget):
             'yAxis': {
                 'type': 'value',
                 'splitLine': {'lineStyle': {'color': '#f4f4f5', 'type': 'dashed'}},
-                'axisLabel': {':formatter': 'v => "$" + v.toLocaleString()',
+                'axisLabel': {':formatter': f'v => "{_cur()}" + v.toLocaleString()',
                               'color': '#71717a', 'fontSize': 11},
             },
             'series': series,
@@ -432,10 +438,10 @@ class _LoanKPI(KPIWidget):
             ui.icon('account_balance_wallet').style('font-size:1.2rem;color:var(--muted-fg)')
         with ui.row().classes('items-center justify-between'):
             ui.label('Total balance').classes('text-xs text-muted')
-            ui.label(f'${total_balance:,.0f}').classes('text-sm font-semibold text-zinc-800')
+            ui.label(f'{_cur()}{total_balance:,.0f}').classes('text-sm font-semibold text-zinc-800')
         with ui.row().classes('items-center justify-between'):
             ui.label('Monthly payments').classes('text-xs text-muted')
-            ui.label(f'${total_monthly:,.0f}').classes('text-sm font-semibold text-zinc-800')
+            ui.label(f'{_cur()}{total_monthly:,.0f}').classes('text-sm font-semibold text-zinc-800')
         ui.separator().classes('my-2')
         with ui.row().classes('items-center gap-2'):
             ui.label(f'DTI {dti:.1f}%').classes('text-xl font-bold text-zinc-800')
@@ -514,7 +520,7 @@ class _LoanBalances(AreaLineChartWidget):
                 'backgroundColor': '#fff', 'borderColor': '#e4e4e7',
                 'textStyle': {'color': '#09090b', 'fontSize': 11},
                 ':formatter': "params => params[0].name + '<br/>' + params.map(p => "
-                              "p.marker + ' ' + p.seriesName + ': $' + "
+                              f"p.marker + ' ' + p.seriesName + ': {_cur()}' + "
                               "p.value[1].toLocaleString(undefined,{maximumFractionDigits:0})"
                               ").join('<br/>')",
             },
@@ -534,7 +540,7 @@ class _LoanBalances(AreaLineChartWidget):
             'yAxis': {
                 'type': 'value',
                 'splitLine': {'lineStyle': {'color': '#f4f4f5', 'type': 'dashed'}},
-                'axisLabel': {':formatter': "v => '$' + (v/1000).toFixed(0) + 'k'",
+                'axisLabel': {':formatter': f"v => '{_cur()}' + (v/1000).toFixed(0) + 'k'",
                               'color': '#71717a', 'fontSize': 9},
             },
             'series': series,
@@ -576,13 +582,13 @@ class _LoanDetailKPI(KPIWidget):
                 ui.label(label).classes('text-xs text-muted')
                 ui.label(value).classes('text-sm font-semibold text-zinc-800')
 
-        _row('Balance',          f'${loan.current_balance:,.0f}')
-        _row('Monthly payment',  f'${loan.monthly_payment:,.0f}')
+        _row('Balance',          f'{_cur()}{loan.current_balance:,.0f}')
+        _row('Monthly payment',  f'{_cur()}{loan.monthly_payment:,.0f}')
         _row('Interest rate',    f'{loan.interest_rate:.2f}%')
         _row('Payoff date',      stats.payoff_date.strftime('%b %Y'))
 
         ui.separator().classes('my-2')
-        _row('Interest remaining', f'${stats.total_interest_remaining:,.0f}')
+        _row('Interest remaining', f'{_cur()}{stats.total_interest_remaining:,.0f}')
         _row('Equity',             f'{100 - equity_pct:.1f}%')
 
 
@@ -646,7 +652,7 @@ class _LoanAmortization(AreaLineChartWidget):
             'yAxis': {
                 'type': 'value',
                 'splitLine': {'lineStyle': {'color': '#f4f4f5', 'type': 'dashed'}},
-                'axisLabel': {':formatter': "v => '$' + v.toLocaleString()",
+                'axisLabel': {':formatter': f"v => '{_cur()}' + v.toLocaleString()",
                               'color': '#71717a', 'fontSize': 9},
             },
             'series': [
@@ -735,13 +741,13 @@ class _FinancialBaseline(KPIWidget):
             def _sep() -> None:
                 ui.element('div').classes('w-px bg-zinc-100 self-stretch mr-5')
 
-            _stat('Avg monthly income',  f"${baseline['avg_income']:,.0f}",  'per month')
+            _stat('Avg monthly income',  f"{_cur()}{baseline['avg_income']:,.0f}",  'per month')
             _sep()
-            _stat('Avg monthly spend',   f"${baseline['avg_spend']:,.0f}",   'per month')
+            _stat('Avg monthly spend',   f"{_cur()}{baseline['avg_spend']:,.0f}",   'per month')
             _sep()
-            _stat('Avg surplus',         f"${baseline['avg_surplus']:,.0f}", 'after expenses')
+            _stat('Avg surplus',         f"{_cur()}{baseline['avg_surplus']:,.0f}", 'after expenses')
             _sep()
-            _stat('Total debt payments', f"${baseline['monthly_debt']:,.0f}", 'per month')
+            _stat('Total debt payments', f"{_cur()}{baseline['monthly_debt']:,.0f}", 'per month')
             _sep()
 
             # DTI with badge
@@ -753,7 +759,7 @@ class _FinancialBaseline(KPIWidget):
                             .classes('text-xs px-1.5 py-0.5 rounded-full font-medium') \
                             .style(f'background:{dti_color}22;color:{dti_color}'):
                         ui.label(dti_label)
-                ui.label(f'${headroom:,.0f} headroom').classes('text-xs text-zinc-300')
+                ui.label(f'{_cur()}{headroom:,.0f} headroom').classes('text-xs text-zinc-300')
 
         # ── DTI gauge bar ─────────────────────────────────────────────────────
         with ui.column().classes('gap-1 w-full'):

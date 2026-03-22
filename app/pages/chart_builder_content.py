@@ -44,7 +44,7 @@ _TRUNC_OPTIONS = {
 }
 
 _FORMAT_OPTIONS = {
-    'dollar':  'Dollar ($)',
+    'dollar':  'Currency amount',
     'number':  'Number',
     'percent': 'Percent (%)',
     'none':    'None',

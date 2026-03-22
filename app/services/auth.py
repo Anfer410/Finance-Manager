@@ -265,6 +265,25 @@ def update_session_selected_persons(persons: list[int]) -> None:
         save_selected_persons(uid, persons)
 
 
+def current_selected_currency() -> str:
+    """Returns the currency the user has selected for dashboard display, or '' for all."""
+    try:
+        result = app.storage.user.get("dashboard_currency", "") or ""
+        return result if isinstance(result, str) else ""
+    except RuntimeError:
+        return ""
+
+
+def set_selected_currency(currency: str) -> None:
+    app.storage.user["dashboard_currency"] = currency
+
+
+def current_currency_prefix() -> str:
+    """Returns 'PLN ' (code + space) when a currency is selected, '' for all."""
+    cur = current_selected_currency()
+    return f"{cur} " if cur else ""
+
+
 # ── Login attempt ─────────────────────────────────────────────────────────────
 
 def attempt_login(username: str, password: str) -> tuple[bool, str]:

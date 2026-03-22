@@ -112,7 +112,8 @@ def test_label_format_dollar():
     data = {'x': ['Jan 2024'], 'series': {'amount': [100.0]}}
     config = {'chart_type': 'bar', 'label_format': 'dollar', 'show_legend': False}
 
-    with patch.object(renderer, 'ui', ui):
+    with patch.object(renderer, 'ui', ui), \
+         patch.object(renderer._auth, 'current_currency_prefix', return_value='$ '):
         renderer.render_custom_chart(config, data)
 
     opts = ui.echart.call_args[0][0]

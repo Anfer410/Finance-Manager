@@ -52,7 +52,7 @@ def frame(title: str, version: str, get_logo_func=None):
         if currencies:
             _cur_sel = auth.current_selected_currency()
             if not _cur_sel or _cur_sel not in currencies:
-                _cur_sel = currencies[0]
+                _cur_sel = "USD" if "USD" in currencies else currencies[0]
                 auth.set_selected_currency(_cur_sel)
             ui.select(
                 options={c: c for c in currencies},

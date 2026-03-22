@@ -44,10 +44,14 @@ def with_base_layout(route_handler):
         if not auth.is_authenticated():
             ui.navigate.to("/login")
             return
-        if not auth.get_user_by_id(auth.current_user_id()):
+        fresh_user = auth.get_user_by_id(auth.current_user_id())
+        if not fresh_user:
             auth.logout()
             ui.navigate.to("/login")
             return
+        # Refresh session if family data is missing (stale pre-family session)
+        if auth.current_family_id() is None and fresh_user.family_id is not None:
+            auth.login(fresh_user)
 
         ui.colors(primary='#18181b', secondary='#f4f4f5', positive='#4caf50',
                   negative='#ef4444', warning='#f59e0b', info='#3b82f6', accent='#e4e4e7')

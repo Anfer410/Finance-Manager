@@ -431,8 +431,16 @@ def get_baseline(months: int = 12, family_id: int | None = None) -> dict:
     fid_clause = "AND family_id = :fid" if family_id is not None else ""
     fid_param  = {"fid": family_id} if family_id is not None else {}
 
-    spend_rows  = _q(f"SELECT COALESCE(SUM(amount),0) FROM {schema}.v_all_spend WHERE transaction_date >= :s {fid_clause}", s=start, **fid_param)
-    income_rows = _q(f"SELECT COALESCE(SUM(amount),0) FROM {schema}.v_income     WHERE transaction_date >= :s {fid_clause}", s=start, **fid_param)
+    try:
+        import services.auth as auth
+        cur = auth.current_selected_currency()
+    except Exception:
+        cur = ""
+    cur_clause = "AND currency = :_cur" if cur else ""
+    cur_param  = {"_cur": cur} if cur else {}
+
+    spend_rows  = _q(f"SELECT COALESCE(SUM(amount),0) FROM {schema}.v_all_spend WHERE transaction_date >= :s {fid_clause} {cur_clause}", s=start, **fid_param, **cur_param)
+    income_rows = _q(f"SELECT COALESCE(SUM(amount),0) FROM {schema}.v_income     WHERE transaction_date >= :s {fid_clause} {cur_clause}", s=start, **fid_param, **cur_param)
 
     avg_spend   = round(float(spend_rows[0][0])  / months, 2) if spend_rows  else 0.0
     avg_income  = round(float(income_rows[0][0]) / months, 2) if income_rows else 0.0

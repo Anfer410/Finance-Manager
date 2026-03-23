@@ -1,28 +1,20 @@
 # CHANGELOG
 
 
-## v2.4.0-rc.1 (2026-03-23)
+## v2.4.0 (2026-03-23)
+
+### Features
+
+- Occurrence-based deduplication
+  ([`eed259c`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/eed259ca7b12095ef847217b3c5b4bbf32e1a399))
+
+
+## v2.3.2 (2026-03-22)
 
 ### Bug Fixes
 
 - Currency dropdown default USD, stale session refresh, baseline filter
-  ([`236678b`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/236678b505f4b868b4313e8b09d4a006333c4bb2))
-
-- Default currency selection prefers USD over alphabetical first (PLN) - Refresh stale sessions
-  missing family_id without forcing logout/login - Apply currency filter to get_baseline() so
-  financial baseline widget respects the selected currency
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-- Use fetch + reset --hard in version-bump to avoid diverged branch failure
-  ([`33dfd09`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/33dfd09d50cbfe25b67771e4219d06dfdd62f514))
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-### Features
-
-- Occurrence-based dedup for repeated same-value transactions
-  ([`69f42c9`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/69f42c90127ff84e50c6bdd2e645bbe652c1afe5))
+  ([`d27b14d`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/d27b14dc09e3cf3f199e7eea228824b4bd9238cc))
 
 
 ## v2.3.1 (2026-03-22)

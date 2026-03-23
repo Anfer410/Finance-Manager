@@ -179,5 +179,5 @@ sync-develop:
     - git fetch origin
     - git checkout develop
     - git reset --hard origin/develop
-    - "git merge origin/main --no-edit --no-ff -m 'chore: sync develop with main after release'"
+    - "git merge origin/main --no-edit --no-ff -X theirs -m 'chore: sync develop with main after release'"
     - git push origin develop

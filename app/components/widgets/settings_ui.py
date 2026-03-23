@@ -30,6 +30,7 @@ def open_widget_settings_dialog(
     Modifies a local copy of config; calls on_save only when the user clicks Save.
     """
     from nicegui import ui
+    from services.ui_inputs import labeled_input, labeled_select
 
     # Working copy — we mutate this freely; only commit on Save
     cfg   = dict(current_config)
@@ -82,10 +83,12 @@ def open_widget_settings_dialog(
 
                 # ── Widget label ──────────────────────────────────────────────
                 _section_header('Widget Label', 'label')
-                label_input = ui.input(
+                label_input = labeled_input(
+                    'Widget Label',
                     placeholder=widget_def.title,
                     value=cfg.get('_label', '') or '',
-                ).props('outlined dense').classes('w-full mb-4')
+                    classes='w-full mb-4',
+                )
                 ui.label(
                     'Leave blank to use the default title.'
                 ).classes('text-xs text-zinc-400 -mt-3 mb-4')
@@ -116,45 +119,49 @@ def open_widget_settings_dialog(
                                 48: '4 years (48 mo)',
                                 60: '5 years (60 mo)',
                             }
-                            ui.select(
+                            labeled_select(
+                                'Lookback Period',
                                 trailing_opts,
                                 value=int(cfg.get('trailing_months', 24)),
-                                label='Lookback Period',
                                 on_change=lambda e: cfg.update(
                                     {'trailing_months': e.value}
                                 ),
-                            ).props('outlined dense').classes('w-full mt-2')
+                                classes='w-full mt-2',
+                            )
 
                         elif mode == 'year':
-                            ui.select(
+                            labeled_select(
+                                'Year',
                                 available_years,
                                 value=int(cfg.get('year', page_year)),
-                                label='Year',
                                 on_change=lambda e: cfg.update({'year': e.value}),
-                            ).props('outlined dense').classes('w-full mt-2')
+                                classes='w-full mt-2',
+                            )
 
                         elif mode == 'date_range':
-                            ui.input(
+                            labeled_input(
                                 'From (YYYY-MM-DD)',
                                 value=cfg.get('date_from', ''),
                                 on_change=lambda e: cfg.update({'date_from': e.value}),
-                            ).props('outlined dense').classes('w-full mt-2')
-                            ui.input(
+                                classes='w-full mt-2',
+                            )
+                            labeled_input(
                                 'To (YYYY-MM-DD)',
                                 value=cfg.get('date_to', ''),
                                 on_change=lambda e: cfg.update({'date_to': e.value}),
-                            ).props('outlined dense').classes('w-full mt-2')
+                                classes='w-full mt-2',
+                            )
 
                     def _on_time_mode(e):
                         cfg['time_mode'] = e.value
                         _time_sub_fields.refresh()
 
-                    ui.select(
+                    labeled_select(
+                        'Mode',
                         time_mode_opts,
                         value=cfg.get('time_mode', 'page_year'),
-                        label='Mode',
                         on_change=_on_time_mode,
-                    ).props('outlined dense').classes('w-full')
+                    )
                     _time_sub_fields()
                     ui.element('div').classes('mb-4')
 
@@ -190,12 +197,13 @@ def open_widget_settings_dialog(
                 # ── Legend position ───────────────────────────────────────────
                 if widget_def.widget_type.value not in ('kpi', 'table'):
                     _section_header('Legend', 'legend_toggle')
-                    ui.select(
+                    labeled_select(
+                        'Legend Position',
                         {'top': 'Top', 'bottom': 'Bottom', 'left': 'Left', 'right': 'Right'},
                         value=cfg.get('legend_position', 'top'),
-                        label='Legend Position',
                         on_change=lambda e: cfg.update({'legend_position': e.value}),
-                    ).props('outlined dense').classes('w-full mb-4')
+                        classes='w-full mb-4',
+                    )
 
                 # ── Loan selector ─────────────────────────────────────────────
                 if widget_def.supports_loan_select:
@@ -206,12 +214,13 @@ def open_widget_settings_dialog(
                         for ln in loans:
                             loan_opts[ln.id] = ln.name
                         current_loan = cfg.get('loan_id')
-                        ui.select(
+                        labeled_select(
+                            'Show loan',
                             loan_opts,
                             value=current_loan,
-                            label='Show loan',
                             on_change=lambda e: cfg.update({'loan_id': e.value}),
-                        ).props('outlined dense').classes('w-full mb-4')
+                            classes='w-full mb-4',
+                        )
 
                 # ── Custom config_schema fields ───────────────────────────────
                 if widget_def.config_schema:
@@ -234,10 +243,13 @@ def open_widget_settings_dialog(
                         elif fld.type == 'select':
                             opts = dict(zip(fld.options, fld.option_labels)) \
                                    if fld.option_labels else {o: str(o) for o in fld.options}
-                            ui.select(
-                                opts, value=val, label=fld.label,
+                            labeled_select(
+                                fld.label,
+                                opts,
+                                value=val,
                                 on_change=lambda e, k=key: cfg.update({k: e.value}),
-                            ).props('outlined dense').classes('w-full mb-3')
+                                classes='w-full mb-3',
+                            )
 
                         elif fld.type == 'toggle':
                             ui.checkbox(

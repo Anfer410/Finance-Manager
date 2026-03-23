@@ -25,9 +25,10 @@ from data.bank_config import BankConfig, load_banks, save_banks
 from services.notifications import notify
 from services.upload_pipeline import (
     sniff, suggest_mapping, ColumnMapping,
-    REQUIRED_ROLES, SniffResult, _strip_trailing_delimiter, _parse_amount,
+    REQUIRED_ROLES, SniffResult, _strip_trailing_delimiter, _parse_amount, _parse_date,
 )
 from data.db import get_engine, get_schema
+from services.ui_inputs import labeled_input, labeled_select
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -46,6 +47,18 @@ MATCH_TYPE_OPTIONS = {
     "startswith": "Starts with",
     "endswith":   "Ends with",
     "contains":   "Contains  (* wildcards ok)",
+}
+
+# Keys are strptime format strings; empty string = auto-detect.
+DATE_FORMAT_OPTIONS: dict[str, str] = {
+    "":           "Auto-detect",
+    "%Y-%m-%d":   "YYYY-MM-DD  (e.g. 2026-02-15)",
+    "%Y%m%d":     "YYYYMMDD  (e.g. 20260215)",
+    "%m/%d/%Y":   "MM/DD/YYYY  (e.g. 02/15/2026)",
+    "%d/%m/%Y":   "DD/MM/YYYY  (e.g. 15/02/2026)",
+    "%m-%d-%Y":   "MM-DD-YYYY  (e.g. 02-15-2026)",
+    "%d-%m-%Y":   "DD-MM-YYYY  (e.g. 15-02-2026)",
+    "%d.%m.%Y":   "DD.MM.YYYY  (e.g. 15.02.2026)",
 }
 
 ACCOUNT_COLORS = {
@@ -120,17 +133,17 @@ def _create_staging_table(state: dict) -> bool:
     state["staged_df"] = df
 
     # ── Build normalised rows ──────────────────────────────────────────────────
-    date_col = mapping.date or ""
-    desc_col = mapping.description or ""
+    date_col    = mapping.date or ""
+    desc_col    = mapping.description or ""
+    date_format = state["bank_details"].get("date_format", "") or ""
     rows: list[dict] = []
 
     for _, row in df.iterrows():
         raw_date = row.get(date_col)
         if pd.isna(raw_date) or str(raw_date).strip() in ("", "NaN", "nan"):
             continue
-        try:
-            txn_date = pd.to_datetime(str(raw_date), dayfirst=False).date()
-        except Exception:
+        txn_date = _parse_date(str(raw_date), date_format)
+        if txn_date is None:
             continue
         desc = str(row.get(desc_col, "")).strip()
 
@@ -341,34 +354,33 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                         "text-zinc-600 text-sm font-medium"
                     )
                 else:
-                    bank_sel = ui.select(
+                    bank_sel = labeled_select(
+                        'Bank',
                         select_options,
                         value=initial_sel,
-                    ).classes("w-full").props("outlined dense")
+                    )
 
             # New bank name input (shown only when "+ New bank…" is selected)
             new_bank_col = ui.column().classes("w-full gap-1")
             new_bank_col.set_visibility(initial_sel == _NEW)
             with new_bank_col:
-                ui.label("New bank name").classes("text-sm font-medium text-zinc-700")
-                ui.label("The institution name, e.g. Citi, Wells Fargo, Capital One.") \
-                    .classes("text-xs text-zinc-400")
-                new_bank_in = ui.input(
-                    placeholder="e.g. Capital One",
-                    value=state.get("new_bank_name", ""),
-                ).classes("w-full").props("outlined dense")
+                new_bank_in = labeled_input(
+                    'New bank name',
+                    hint='The institution name, e.g. Citi, Wells Fargo, Capital One.',
+                    placeholder='e.g. Capital One',
+                    value=state.get('new_bank_name', ''),
+                )
 
             # Account alias
-            with ui.column().classes("w-full gap-1"):
-                ui.label("Account alias").classes("text-sm font-medium text-zinc-700")
-                ui.label(
-                    "A short name for this specific account, e.g. Checking, Savings, "
-                    "Daily Spending. Combined with the bank name to form the raw table name."
-                ).classes("text-xs text-zinc-400")
-                alias_in = ui.input(
-                    placeholder="e.g. Checking",
-                    value=state["bank_details"].get("_alias", ""),
-                ).classes("w-full").props("outlined dense")
+            alias_in = labeled_input(
+                'Account alias',
+                hint=(
+                    'A short name for this specific account, e.g. Checking, Savings, '
+                    'Daily Spending. Combined with the bank name to form the raw table name.'
+                ),
+                placeholder='e.g. Checking',
+                value=state['bank_details'].get('_alias', ''),
+            )
 
             table_preview = ui.label("raw table: raw_") \
                 .classes("text-xs font-mono text-zinc-400 bg-zinc-50 "
@@ -472,31 +484,20 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                 with ui.row().classes("w-full gap-3 items-end"):
                     with ui.column().classes("gap-0.5 w-40 shrink-0"):
                         ui.label("Match type").classes("text-xs text-zinc-500")
-                        match_type_sel = ui.select(
+                        match_type_sel = labeled_select(
+                            'Match type',
                             MATCH_TYPE_OPTIONS,
                             value=state["bank_details"].get("match_type", "exact"),
-                        ).classes("w-full").props("outlined dense")
+                            compact=True,
+                        )
                     with ui.column().classes("gap-0.5 flex-1"):
-                        ui.label("Filename value").classes("text-xs text-zinc-500")
                         uploaded_stem = Path(state["filename"]).stem if state["filename"] else ""
-                        match_val_in = ui.input(
+                        match_val_in = labeled_input(
+                            'Filename value',
                             value=state["bank_details"].get("match_value", uploaded_stem),
                             placeholder="e.g. transaction_download",
-                        ).classes("w-full").props("outlined dense")
-
-                ui.separator()
-                ui.label("Currency") \
-                    .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
-                ui.label(
-                    "ISO 4217 code for this account's currency. "
-                    "Auto-detected from your sample — leave blank for single-currency families."
-                ).classes("text-xs text-zinc-400")
-                currency_in = ui.select(
-                    options=CURRENCY_OPTIONS,
-                    value=state["bank_details"].get("currency") or None,
-                    label="Currency",
-                    with_input=True,
-                ).classes("w-72").props("outlined dense clearable")
+                            compact=True,
+                        )
 
             async def on_sample(e: events.UploadEventArguments):
                 raw = await e.file.read()
@@ -514,9 +515,9 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                     # Pre-populate filename detection from the actual filename
                     stem = Path(e.file.name).stem
                     match_val_in.set_value(stem)
-                    # Auto-populate currency from sniff detection
+                    # Auto-store sniff-detected currency into state so step 3 can pre-fill it
                     if result.detected_currency and result.detected_currency in CURRENCY_OPTIONS:
-                        currency_in.set_value(result.detected_currency)
+                        state["bank_details"]["currency"] = result.detected_currency
                     filename_col.set_visibility(True)
                     next_btn.enable()
                 except Exception as ex:
@@ -548,7 +549,6 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                 return
             state["bank_details"]["match_type"]  = match_type_sel.value
             state["bank_details"]["match_value"] = mval
-            state["bank_details"]["currency"]    = (currency_in.value or "").strip().upper()
             _advance(_next_step(2))
 
         next_btn.on("click", advance_step2)
@@ -688,6 +688,36 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                                     ):
                                         ui.label(str(cell)[:24])
 
+            ui.separator()
+            ui.label("Date format") \
+                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
+            ui.label(
+                "How dates are written in this bank's CSV. "
+                "Check the date column in the preview above and pick the matching format. "
+                "Auto-detect works for most standard formats."
+            ).classes("text-xs text-zinc-400")
+            date_fmt_sel = labeled_select(
+                'Date format',
+                DATE_FORMAT_OPTIONS,
+                value=state["bank_details"].get("date_format") or "",
+                classes='w-80',
+            )
+
+            ui.separator()
+            ui.label("Currency") \
+                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
+            ui.label(
+                "ISO 4217 code for this account's currency. "
+                "Auto-detected from your sample — leave blank for single-currency families."
+            ).classes("text-xs text-zinc-400")
+            currency_in = labeled_select(
+                'Currency',
+                CURRENCY_OPTIONS,
+                value=state["bank_details"].get("currency") or None,
+                with_input=True,
+                classes='w-72',
+            ).props('clearable')
+
         def advance_step3():
             acct = acct_sel.value
             state["account_type"] = acct
@@ -711,6 +741,8 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                 )
                 return
             state["bank_details"]["member_name_column"] = (state["mapping"].member_name or "")
+            state["bank_details"]["date_format"]        = date_fmt_sel.value or ""
+            state["bank_details"]["currency"]           = (currency_in.value or "").strip().upper()
             _advance(_next_step(3))
 
         next_btn.on("click", advance_step3)
@@ -786,12 +818,14 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                         "(uppercased automatically), then pick the matching user."
                     ).classes("text-xs text-zinc-400")
                 with ui.row().classes("w-full items-end gap-2"):
-                    raw_val_in = ui.input(placeholder="e.g. JOHN") \
-                        .classes("flex-1").props("outlined dense")
-                    user_sel = ui.select(
-                        user_opt_labels, label=None,
+                    raw_val_in = labeled_input('Raw member value', placeholder='e.g. JOHN', compact=True, classes='flex-1')
+                    user_sel = labeled_select(
+                        'User',
+                        user_opt_labels,
                         value=user_opt_labels[0] if user_opt_labels else None,
-                    ).classes("flex-1").props("outlined dense")
+                        compact=True,
+                        classes='flex-1',
+                    )
 
                     def add_alias():
                         rv  = raw_val_in.value.strip().upper()
@@ -882,6 +916,10 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                     d["match_type"] + ': "' + d["match_value"] + '"',
                     acct,
                 ]
+                if d.get("date_format"):
+                    chips.append("date: " + DATE_FORMAT_OPTIONS.get(d["date_format"], d["date_format"]))
+                if d.get("currency"):
+                    chips.append("currency: " + d["currency"])
                 if d.get("member_name_column"):
                     chips.append("member col: " + d["member_name_column"])
                 if d.get("member_aliases"):
@@ -931,6 +969,7 @@ def open_add_bank_wizard(on_done, preselected_bank_slug: str | None = None) -> N
                 match_value        = d["match_value"],
                 account_type       = acct,
                 currency           = d.get("currency", ""),
+                date_format        = d.get("date_format", ""),
                 member_name_column = d.get("member_name_column", ""),
                 member_aliases     = d.get("member_aliases", {}),
                 person_override    = d.get("person_override"),

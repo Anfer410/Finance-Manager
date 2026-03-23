@@ -16,6 +16,7 @@ from data.category_rules import (
 from services.view_manager import ViewManager
 from data.db import get_engine, get_schema
 from services.notifications import notify
+from services.ui_inputs import labeled_input, labeled_select
 from styles.dashboards import COST_TYPES, FIXED_COLOR, VAR_COLOR
 
 SCHEMA = get_schema()
@@ -41,8 +42,7 @@ def content() -> None:
         ui.label('Rule preview').classes('section-title mb-2')
         ui.label('Test how a description resolves to a category.').classes('text-xs text-muted mb-3')
         with ui.row().classes('items-center gap-3'):
-            preview_input  = ui.input(placeholder='e.g. KROGER #344 JOHNS CREEK GA') \
-                .props('outlined dense').classes('flex-1')
+            preview_input  = labeled_input('Description', placeholder='e.g. KROGER #344 JOHNS CREEK GA', compact=True, classes='flex-1')
             preview_result = ui.label('').classes('text-sm font-semibold')
 
             def _preview(_=None) -> None:
@@ -132,8 +132,8 @@ def content() -> None:
 def _add_category_dialog(cfg: CategoryConfig, refresh_fn) -> None:
     with ui.dialog() as dlg, ui.card().classes('w-80 gap-3'):
         ui.label('Add category').classes('text-base font-semibold')
-        name_in  = ui.input('Name', placeholder='e.g. Entertainment').props('outlined dense').classes('w-full')
-        type_in  = ui.select(COST_TYPES, value='variable', label='Cost type').props('outlined dense').classes('w-full')
+        name_in  = labeled_input('Name', placeholder='e.g. Entertainment')
+        type_in  = labeled_select('Cost type', COST_TYPES, value='variable')
         color_in = ui.color_input(label='Color', value='#d1d5db').classes('w-full')
         with ui.row().classes('justify-end gap-2 w-full'):
             ui.button('Cancel', on_click=dlg.close).props('flat')
@@ -150,7 +150,7 @@ def _add_category_dialog(cfg: CategoryConfig, refresh_fn) -> None:
 def _edit_category_dialog(cat: Category, cfg: CategoryConfig, refresh_fn) -> None:
     with ui.dialog() as dlg, ui.card().classes('w-80 gap-3'):
         ui.label(f'Edit — {cat.name}').classes('text-base font-semibold')
-        type_in  = ui.select(COST_TYPES, value=cat.cost_type, label='Cost type').props('outlined dense').classes('w-full')
+        type_in  = labeled_select('Cost type', COST_TYPES, value=cat.cost_type)
         color_in = ui.color_input(label='Color', value=cat.color).classes('w-full')
         with ui.row().classes('justify-end gap-2 w-full'):
             ui.button('Cancel', on_click=dlg.close).props('flat')
@@ -172,8 +172,8 @@ def _delete_category(cat: Category, cfg: CategoryConfig, cat_fn, rule_fn) -> Non
 def _add_rule_dialog(cfg: CategoryConfig, refresh_fn) -> None:
     with ui.dialog() as dlg, ui.card().classes('w-96 gap-3'):
         ui.label('Add rule').classes('text-base font-semibold')
-        pattern_in  = ui.input('Pattern', placeholder='e.g. KROGER or LYFT.*RIDE').props('outlined dense').classes('w-full')
-        cat_in      = ui.select(cfg.category_names(), label='Category').props('outlined dense').classes('w-full')
+        pattern_in  = labeled_input('Pattern', placeholder='e.g. KROGER or LYFT.*RIDE')
+        cat_in      = labeled_select('Category', cfg.category_names())
         is_regex_in = ui.checkbox('Regular expression (regex)')
         priority_in = ui.number('Priority (lower = checked first)', value=100, min=1, max=9999).props('outlined dense').classes('w-full')
         with ui.row().classes('justify-end gap-2 w-full'):
@@ -196,8 +196,8 @@ def _add_rule_dialog(cfg: CategoryConfig, refresh_fn) -> None:
 def _edit_rule_dialog(rule: CategoryRule, cfg: CategoryConfig, refresh_fn) -> None:
     with ui.dialog() as dlg, ui.card().classes('w-96 gap-3'):
         ui.label('Edit rule').classes('text-base font-semibold')
-        pattern_in  = ui.input('Pattern', value=rule.pattern).props('outlined dense').classes('w-full')
-        cat_in      = ui.select(cfg.category_names(), value=rule.category, label='Category').props('outlined dense').classes('w-full')
+        pattern_in  = labeled_input('Pattern', value=rule.pattern)
+        cat_in      = labeled_select('Category', cfg.category_names(), value=rule.category)
         is_regex_in = ui.checkbox('Regular expression (regex)', value=rule.is_regex)
         priority_in = ui.number('Priority', value=rule.priority, min=1, max=9999).props('outlined dense').classes('w-full')
         with ui.row().classes('justify-end gap-2 w-full'):

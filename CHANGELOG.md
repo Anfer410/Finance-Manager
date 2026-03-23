@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v2.4.1-rc.3 (2026-03-23)
+
+### Bug Fixes
+
+- Only strip trailing delimiters when the header row also ends with sep
+  ([`fff6298`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/fff6298bb0d49eb65b432bed8da1affb7efc7a75))
+
+Previously _strip_trailing_delimiter ran unconditionally, which broke Capital One credit CSVs: debit
+  rows end with a trailing comma (empty Credit field) but credit rows do not. Stripping debit rows
+  made them one field shorter than the header, causing _find_data_start to misidentify a data row as
+  the header and pandas to error "Expected 6 fields, saw 7" on the first credit row.
+
+Fix: skip stripping entirely when the header does not end with sep. A trailing sep on data rows in
+  that case represents a legitimate empty final field, not a redundant delimiter. This covers both
+  the column_map path and the generic fallback path.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+
 ## v2.4.1-rc.2 (2026-03-23)
 
 ### Bug Fixes

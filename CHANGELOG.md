@@ -1,12 +1,78 @@
 # CHANGELOG
 
 
+## v2.4.2-rc.1 (2026-03-23)
+
+### Chores
+
+- Sync develop with main after release
+  ([`b8e6da1`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/b8e6da1636caaa9f73aedd45d94b867e1aa1a41d))
+
+
 ## v2.4.1 (2026-03-23)
 
 ### Bug Fixes
 
 - Don't strip trailing delimiters before dispatching to registered bank parsers
   ([`af8c80a`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/af8c80a9902d3b630d16c91604ad538b39608d97))
+
+### Chores
+
+- Remove legacy registered bank parsers (cap1, wf, citi)
+  ([`7eebf54`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/7eebf547508283d4107f0fd26c8c91a6a3f76851))
+
+All bank rules are now configured via the upload wizard with column_map set, so the registered
+  parser dispatch path is dead code. Removing BANK_CSV_PARSERS, register_parser, _parse_wells_fargo,
+  _parse_capital_one, and _parse_citi simplifies parse_csv to a single generic path covering both
+  column_map and headerless files.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+
+## v2.4.1-rc.3 (2026-03-23)
+
+### Bug Fixes
+
+- Only strip trailing delimiters when the header row also ends with sep
+  ([`fff6298`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/fff6298bb0d49eb65b432bed8da1affb7efc7a75))
+
+Previously _strip_trailing_delimiter ran unconditionally, which broke Capital One credit CSVs: debit
+  rows end with a trailing comma (empty Credit field) but credit rows do not. Stripping debit rows
+  made them one field shorter than the header, causing _find_data_start to misidentify a data row as
+  the header and pandas to error "Expected 6 fields, saw 7" on the first credit row.
+
+Fix: skip stripping entirely when the header does not end with sep. A trailing sep on data rows in
+  that case represents a legitimate empty final field, not a redundant delimiter. This covers both
+  the column_map path and the generic fallback path.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+
+## v2.4.1-rc.2 (2026-03-23)
+
+### Bug Fixes
+
+- Don't strip trailing delimiters before dispatching to registered bank parsers
+  ([`1ec2621`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/1ec2621df393d6e04dc674f259c688843f711eb4))
+
+Capital One credit CSVs have debit rows ending with a trailing comma and credit rows without one.
+  Stripping before parsing created mixed column widths (6 vs 7 fields), causing _find_data_start to
+  misidentify a debit data row as the header. Subsequent credit rows then triggered "Expected 6
+  fields, saw 7".
+
+Registered parsers (cap1, wf, citi) now receive original unstripped bytes. Stripping and preamble
+  detection only run for column_map and generic fallback paths where consistent column widths are
+  guaranteed.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+
+## v2.4.1-rc.1 (2026-03-23)
+
+### Bug Fixes
+
+- Release job
+  ([`d17f15b`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/d17f15b6d23507b9465533faa1d40bdb18ec9f7d))
 
 
 ## v2.4.0 (2026-03-23)

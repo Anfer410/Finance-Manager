@@ -72,11 +72,20 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 def _strip_trailing_delimiter(raw: bytes, sep: str) -> bytes:
     """Remove a trailing separator from every line (e.g. "a;b;c;" → "a;b;c").
     Some banks append a redundant delimiter at the end of each row, which pandas
-    would interpret as an extra empty column."""
+    would interpret as an extra empty column.
+
+    Only strips when the first non-empty line (the header) also ends with sep.
+    If the header does NOT end with sep, a trailing sep on data rows represents
+    an empty final field (e.g. Capital One debit rows with no Credit value) and
+    must be preserved — stripping would create inconsistent column widths."""
     text = raw.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    header = next((l for l in lines if l.strip()), "")
+    if not header.rstrip().endswith(sep):
+        return raw
     cleaned = "\n".join(
         line.rstrip().rstrip(sep) if line.rstrip().endswith(sep) else line
-        for line in text.splitlines()
+        for line in lines
     )
     return cleaned.encode("utf-8")
 
@@ -121,112 +130,54 @@ def _find_data_start(lines: list[str], sep: str) -> int:
     return best_start
 
 
-BANK_CSV_PARSERS: dict[str, callable] = {}
-
-def register_parser(prefix: str):
-    """Decorator to register a bank-specific CSV parser."""
-    def decorator(fn):
-        BANK_CSV_PARSERS[prefix] = fn
-        return fn
-    return decorator
-
-
-@register_parser("wf")
-def _parse_wells_fargo(raw: bytes) -> pd.DataFrame:
-    """
-    Wells Fargo CSVs have NO header row.
-    Standard layout: Date, Amount, *, Check Number, Description (5 cols)
-    Some exports have a 6th trailing column — handled gracefully.
-    """
-    import io
-    WF_COLS = ["transaction_date", "amount", "flag", "check_number", "description"]
-    df = pd.read_csv(io.BytesIO(raw), header=None, dtype=str)
-    n = len(df.columns)
-    if n <= len(WF_COLS):
-        df.columns = WF_COLS[:n]
-    else:
-        # Extra columns beyond the standard 5 get generic names
-        df.columns = WF_COLS + [f"col_{i}" for i in range(n - len(WF_COLS))]
-    return _normalize_columns(df)
-
-
-@register_parser("cap1")
-def _parse_capital_one(raw: bytes) -> pd.DataFrame:
-    import io
-    df = pd.read_csv(io.BytesIO(raw))
-    return _normalize_columns(df)
-
-
-@register_parser("citi")
-def _parse_citi(raw: bytes) -> pd.DataFrame:
-    import io
-    df = pd.read_csv(io.BytesIO(raw))
-    return _normalize_columns(df)
-
-
 def parse_csv(raw: bytes, prefix: str, column_map: dict | None = None) -> pd.DataFrame:
     """
     Parse raw CSV bytes into a DataFrame with normalised column names.
 
     When column_map is provided (set by the wizard on BankRule.column_map):
-      - It maps role → actual_col_name as the wizard recorded from the sample file
-      - For headered files:  actual_col_name is the real header text, e.g. "Trans Date"
-      - For headerless files: actual_col_name is "col_0", "col_1" ... (sniff() output)
-      - We detect which case we're in by checking if any actual_col_name appears in
-        the normalised first row.  If yes → has header.  If no → headerless, read with
-        header=None and assign col_0, col_1 ... so the names match column_map keys.
+      - For headered files: reads with header; normalises column names.
+      - For headerless files: reads with header=None; assigns col_0, col_1 ...
+        matching what the wizard stored in column_map.
+      - Detects which case applies by checking if any column_map value appears
+        in the normalised first row headers.
 
-    Without column_map (legacy banks configured before the wizard):
-      - Try registered bank-specific parsers keyed by prefix
-      - Fall back to generic read_csv with header
+    Without column_map: generic read_csv with header detection.
+
+    In both cases, strips genuinely redundant trailing delimiters (only when
+    the header row itself ends with sep) and skips any bank preamble rows.
     """
     import io
 
-    # Detect separator and preamble offset once, used across all paths below.
     text = raw.decode("utf-8", errors="replace")
     try:
         dialect = csv.Sniffer().sniff(text[:4096])
         sep = dialect.delimiter
     except Exception:
         sep = ","
-    raw      = _strip_trailing_delimiter(raw, sep)
-    text     = raw.decode("utf-8", errors="replace")
-    skiprows = _find_data_start(text.splitlines(), sep)
+
+    raw_stripped = _strip_trailing_delimiter(raw, sep)
+    text_stripped = raw_stripped.decode("utf-8", errors="replace")
+    skiprows = _find_data_start(text_stripped.splitlines(), sep)
 
     if column_map:
         actual_names = {v for v in column_map.values() if v}
 
-        # Peek at first row with header to see if column names match what wizard recorded
-        df_peek = pd.read_csv(io.BytesIO(raw), sep=sep, skiprows=skiprows, dtype=str, nrows=0)
+        df_peek = pd.read_csv(io.BytesIO(raw_stripped), sep=sep, skiprows=skiprows, dtype=str, nrows=0)
         norm_headers = {
             re.sub(r"[^a-z0-9]+", "_", c.strip().lower()).strip("_")
             for c in df_peek.columns
         }
-        has_header = bool(actual_names & norm_headers)  # any overlap → has header
+        has_header = bool(actual_names & norm_headers)
 
         if has_header:
-            df = pd.read_csv(io.BytesIO(raw), sep=sep, skiprows=skiprows, dtype=str)
+            df = pd.read_csv(io.BytesIO(raw_stripped), sep=sep, skiprows=skiprows, dtype=str)
             return _normalize_columns(df)
         else:
-            # Headerless — read without header, assign col_0, col_1 ...
-            # These match what the wizard stored in column_map
-            df = pd.read_csv(io.BytesIO(raw), sep=sep, header=None, skiprows=skiprows, dtype=str)
+            df = pd.read_csv(io.BytesIO(raw_stripped), sep=sep, header=None, skiprows=skiprows, dtype=str)
             df.columns = [f"col_{i}" for i in range(len(df.columns))]
-            return df  # already normalised — col_N names are clean
+            return df
 
-    # Legacy path (banks added before the wizard had column mapping)
-    parser = BANK_CSV_PARSERS.get(prefix)
-    if parser is None:
-        for reg_prefix, reg_parser in BANK_CSV_PARSERS.items():
-            if prefix.startswith(reg_prefix):
-                parser = reg_parser
-                break
-
-    if parser:
-        return parser(raw)
-
-    # Generic fallback — read with header
-    df = pd.read_csv(io.BytesIO(raw), sep=sep, skiprows=skiprows, dtype=str)
+    df = pd.read_csv(io.BytesIO(raw_stripped), sep=sep, skiprows=skiprows, dtype=str)
     return _normalize_columns(df)
 
 

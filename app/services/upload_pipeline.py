@@ -77,11 +77,20 @@ def _normalize_col(name: str) -> str:
 def _strip_trailing_delimiter(raw: bytes, sep: str) -> bytes:
     """Remove a trailing separator from every line (e.g. "a;b;c;" → "a;b;c").
     Some banks append a redundant delimiter at the end of each row, which pandas
-    would interpret as an extra empty column."""
+    would interpret as an extra empty column.
+
+    Only strips when the first non-empty line (the header) also ends with sep.
+    If the header does NOT end with sep, a trailing sep on data rows represents
+    an empty final field (e.g. Capital One debit rows with no Credit value) and
+    must be preserved — stripping would create inconsistent column widths."""
     text = raw.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    header = next((l for l in lines if l.strip()), "")
+    if not header.rstrip().endswith(sep):
+        return raw
     cleaned = "\n".join(
         line.rstrip().rstrip(sep) if line.rstrip().endswith(sep) else line
-        for line in text.splitlines()
+        for line in lines
     )
     return cleaned.encode("utf-8")
 

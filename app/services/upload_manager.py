@@ -228,6 +228,182 @@ def backfill_currency(account_key: str, currency: str, family_id: int) -> int:
     return total
 
 
+# ── Date migration ────────────────────────────────────────────────────────────
+
+# When a rule had no date_format set (""), pandas used dayfirst=False, which
+# treats ambiguous dates (e.g. "03/02/2026") as MM/DD/YYYY.
+_AUTO_EFFECTIVE_FMT = "%m/%d/%Y"
+
+
+def _redate_one(d: date, from_fmt: str, to_fmt: str) -> date | None:
+    """
+    Re-interpret a stored date under a different format assumption.
+
+    Reconstructs the original CSV string by formatting *d* with *from_fmt*
+    (the format that was incorrectly applied), then parses that string with
+    *to_fmt* (the correct format).  Returns the corrected date, or None if
+    the result is invalid or unchanged.
+    """
+    from services.upload_pipeline import _parse_date
+    effective_from = from_fmt or _AUTO_EFFECTIVE_FMT
+    try:
+        original_str = d.strftime(effective_from)
+    except Exception:
+        return None
+    new_d = _parse_date(original_str, to_fmt)
+    return new_d if (new_d and new_d != d) else None
+
+
+def preview_redate(
+    account_key: str,
+    from_format:  str,
+    to_format:    str,
+    family_id:    int,
+    sample_limit: int = 20,
+) -> dict:
+    """
+    Return a preview of what redate_account() would do, without committing.
+
+    Returns:
+        {
+          "samples":           list[{"old": date, "new": date | None}],  # up to sample_limit distinct dates
+          "total_rows":        int,   # total rows for this account
+          "updatable":         int,   # rows whose date would change
+          "skipped_invalid":   int,   # dates that can't be re-parsed or are unchanged
+          "skipped_cross_year":int,   # would cross a partition year boundary
+        }
+    """
+    schema = _schema()
+    engine = _engine()
+    samples: list[dict] = []
+    total = updatable = skipped_invalid = skipped_cross_year = 0
+
+    with engine.connect() as conn:
+        for tbl_base, amt_cols in (
+            ("transactions_debit",  "amount, occurrence"),
+            ("transactions_credit", "debit, credit, occurrence"),
+        ):
+            tbl = f"{schema}.{tbl_base}"
+            rows = conn.execute(text(f"""
+                SELECT transaction_date, {amt_cols}, description
+                FROM   {tbl}
+                WHERE  account_key = :ak AND family_id = :fid
+            """), {"ak": account_key, "fid": family_id}).fetchall()
+
+            total += len(rows)
+            seen_dates: set[date] = set()
+
+            for row in rows:
+                old_d = row.transaction_date
+                new_d = _redate_one(old_d, from_format, to_format)
+                if new_d is None:
+                    skipped_invalid += 1
+                    continue
+                if new_d.year != old_d.year:
+                    skipped_cross_year += 1
+                    continue
+                updatable += 1
+                if old_d not in seen_dates and len(samples) < sample_limit:
+                    seen_dates.add(old_d)
+                    samples.append({"old": old_d, "new": new_d})
+
+    samples.sort(key=lambda r: r["old"])
+    return {
+        "samples":            samples,
+        "total_rows":         total,
+        "updatable":          updatable,
+        "skipped_invalid":    skipped_invalid,
+        "skipped_cross_year": skipped_cross_year,
+    }
+
+
+def redate_account(
+    account_key: str,
+    from_format:  str,
+    to_format:    str,
+    family_id:    int,
+) -> dict:
+    """
+    Re-parse all stored transaction_dates for an account using a different
+    format assumption, and UPDATE the rows in place.
+
+    Returns {"updated": int, "skipped_invalid": int, "skipped_cross_year": int,
+             "skipped_conflict": int}.
+    """
+    schema = _schema()
+    engine = _engine()
+    updated = skipped_invalid = skipped_cross_year = skipped_conflict = 0
+
+    with engine.begin() as conn:
+        for tbl_base, amt_cols, conflict_cols in (
+            (
+                "transactions_debit",
+                "id, transaction_date, description, amount, occurrence",
+                ("description", "amount", "occurrence"),
+            ),
+            (
+                "transactions_credit",
+                "id, transaction_date, description, debit, credit, occurrence",
+                ("description", "debit", "credit", "occurrence"),
+            ),
+        ):
+            tbl = f"{schema}.{tbl_base}"
+            rows = conn.execute(text(f"""
+                SELECT {amt_cols}
+                FROM   {tbl}
+                WHERE  account_key = :ak AND family_id = :fid
+            """), {"ak": account_key, "fid": family_id}).fetchall()
+
+            for row in rows:
+                old_d = row.transaction_date
+                new_d = _redate_one(old_d, from_format, to_format)
+                if new_d is None:
+                    skipped_invalid += 1
+                    continue
+                if new_d.year != old_d.year:
+                    skipped_cross_year += 1
+                    continue
+
+                # Check for a conflicting row at the target date
+                where_parts = " AND ".join(
+                    f"{c} = :{c}" for c in conflict_cols
+                )
+                conflict = conn.execute(text(f"""
+                    SELECT 1 FROM {tbl}
+                    WHERE  account_key = :ak
+                      AND  family_id   = :fid
+                      AND  transaction_date = :new_date
+                      AND  {where_parts}
+                    LIMIT 1
+                """), {
+                    "ak":       account_key,
+                    "fid":      family_id,
+                    "new_date": new_d,
+                    **{c: getattr(row, c) for c in conflict_cols},
+                }).fetchone()
+
+                if conflict:
+                    skipped_conflict += 1
+                    continue
+
+                conn.execute(text(f"""
+                    UPDATE {tbl}
+                    SET    transaction_date = :new_date
+                    WHERE  id          = :row_id
+                      AND  account_key = :ak
+                      AND  family_id   = :fid
+                """), {"new_date": new_d, "row_id": row.id,
+                       "ak": account_key, "fid": family_id})
+                updated += 1
+
+    return {
+        "updated":            updated,
+        "skipped_invalid":    skipped_invalid,
+        "skipped_cross_year": skipped_cross_year,
+        "skipped_conflict":   skipped_conflict,
+    }
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _sanitize(name: str) -> str:

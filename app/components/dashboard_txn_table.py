@@ -12,6 +12,7 @@ from typing import Callable
 from nicegui import ui
 
 import data.finance_dashboard_data as _data
+from services.ui_inputs import labeled_input, labeled_select
 
 
 def render_txn_table(
@@ -59,35 +60,41 @@ def render_txn_table(
         if filter_state['mode'] == 'simple':
             with ui.row().classes('items-center gap-2 flex-wrap pb-3 border-b border-gray-100 mb-3'):
 
-                ui.select(
-                    options=['All categories'] + opts['categories'],
+                labeled_select(
+                    'Category',
+                    ['All categories'] + opts['categories'],
                     value=filter_state['category'] or 'All categories',
-                    label='Category',
                     on_change=lambda e: (
                         _fset('category', None if e.value == 'All categories' else e.value),
                         txn_table.refresh(),
                     ),
-                ).props('outlined dense').classes('w-44')
+                    compact=True,
+                    classes='w-44',
+                )
 
-                ui.select(
-                    options=['Any type'] + opts['cost_types'],
+                labeled_select(
+                    'Type',
+                    ['Any type'] + opts['cost_types'],
                     value=filter_state['cost_type'] or 'Any type',
-                    label='Type',
                     on_change=lambda e: (
                         _fset('cost_type', None if e.value == 'Any type' else e.value),
                         txn_table.refresh(),
                     ),
-                ).props('outlined dense').classes('w-32')
+                    compact=True,
+                    classes='w-32',
+                )
 
-                ui.select(
-                    options=['Any account'] + opts['banks'],
+                labeled_select(
+                    'Account',
+                    ['Any account'] + opts['banks'],
                     value=filter_state['bank'] or 'Any account',
-                    label='Account',
                     on_change=lambda e: (
                         _fset('bank', None if e.value == 'Any account' else e.value),
                         txn_table.refresh(),
                     ),
-                ).props('outlined dense').classes('w-44')
+                    compact=True,
+                    classes='w-44',
+                )
 
                 def _date_label() -> str:
                     f, t = filter_state['from_date'], filter_state['to_date']
@@ -96,8 +103,8 @@ def render_txn_table(
                     if t:         return f'Until {t}'
                     return ''
 
-                date_input = ui.input(label='Date range', value=_date_label()) \
-                    .props('outlined dense readonly').classes('w-56').style('cursor:pointer')
+                date_input = labeled_input('Date range', value=_date_label(), classes='w-56') \
+                    .props('readonly').style('cursor:pointer')
 
                 with date_input.add_slot('append'):
                     ui.icon('event').classes('cursor-pointer text-gray-400') \
@@ -159,11 +166,13 @@ def render_txn_table(
                     if key == 'Enter':
                         txn_table.refresh()
 
-                ui.input(
+                labeled_input(
+                    'Search',
                     placeholder='e.g.  costco   or   category=groceries  type=fixed  bank=chase  from=2025-01-01  to=2025-06-30  amount=50',
                     value=filter_state['search'],
                     on_change=lambda e: _fset('search', e.value or ''),
-                ).props('outlined dense clearable').classes('w-full').style('font-size:12px') \
+                    compact=True,
+                ).props('clearable').style('font-size:12px') \
                  .on('keydown', _on_search_keydown)
                 with ui.row().classes('gap-3 flex-wrap items-center'):
                     for hint in ['category=', 'type=fixed|variable', 'bank=', 'from=YYYY-MM-DD', 'to=YYYY-MM-DD', 'amount=']:

@@ -23,6 +23,7 @@ from components.finance_charts import spend_income_chart
 from data.finance_dashboard_data import get_year_over_year_monthly_spend_series
 from components.widgets.registry import REGISTRY_BY_ID
 import services.auth as _auth
+from services.ui_inputs import labeled_input, labeled_select
 
 
 def _cur() -> str:
@@ -372,8 +373,7 @@ def _loan_dialog(loan: LoanRecord | None, on_refresh, family_id: int | None = No
                 .props("flat round dense").classes("text-zinc-400")
 
         def _inp(label, value="", **kw):
-            return ui.input(label, value=value, **kw) \
-                .props("outlined dense").classes("w-full")
+            return labeled_input(label, value=value, **kw)
 
         def _num(label, value=0, fmt="%.2f", **kw):
             return ui.number(label, value=value, format=fmt, **kw) \
@@ -391,17 +391,17 @@ def _loan_dialog(loan: LoanRecord | None, on_refresh, family_id: int | None = No
 
         with ui.row().classes("gap-3 w-full"):
             with ui.column().classes("flex-1 gap-0"):
-                _lbl("Loan type")
-                type_in = ui.select(
-                    options=LOAN_TYPES,
+                type_in = labeled_select(
+                    'Loan type',
+                    LOAN_TYPES,
                     value=loan.loan_type if loan else "mortgage",
-                ).props("outlined dense").classes("w-full")
+                )
             with ui.column().classes("w-32 gap-0"):
-                _lbl("Rate type")
-                rate_type_in = ui.select(
-                    options=["fixed", "arm"],
+                rate_type_in = labeled_select(
+                    'Rate type',
+                    ["fixed", "arm"],
                     value=loan.rate_type if loan else "fixed",
-                ).props("outlined dense").classes("w-full")
+                )
 
         _lbl("Lender (optional)")
         lender_in = _inp("", loan.lender if loan else "")

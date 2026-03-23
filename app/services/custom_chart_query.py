@@ -110,6 +110,8 @@ def _compute_rolling_surplus(
     date_to,
     schema: str,
     family_id: int | None = None,
+    date_trunc: str = 'month',
+    currency: str = '',
 ) -> list:
     """Cumulative (income − spend) accumulated across x_ordered buckets."""
     params: dict = {}
@@ -117,6 +119,9 @@ def _compute_rolling_surplus(
     if family_id is not None:
         where_parts.append("family_id = :_fid")
         params['_fid'] = family_id
+    if currency:
+        where_parts.append("currency = :_cur")
+        params['_cur'] = currency
     if date_from is not None:
         where_parts.append("transaction_date >= :__df")
         params['__df'] = date_from
@@ -134,7 +139,7 @@ def _compute_rolling_surplus(
         with get_engine().connect() as conn:
             rows = conn.execute(text(sql), params).fetchall()
         return {
-            (_fmt_date(r[0]) if format_dates else (str(r[0]) if r[0] is not None else '')):
+            (_fmt_date(r[0], date_trunc) if format_dates else (str(r[0]) if r[0] is not None else '')):
             float(r[1]) if r[1] is not None else 0.0
             for r in rows
         }
@@ -164,6 +169,8 @@ def _execute_overlay_queries(
     date_to,
     schema: str,
     family_id: int | None = None,
+    date_trunc: str = 'month',
+    currency: str = '',
 ) -> dict:
     """Execute one series per overlay config and align to x_ordered."""
     overlay: dict[str, list] = {}
@@ -174,7 +181,7 @@ def _execute_overlay_queries(
         computed = ov.get('computed')
         if computed == 'rolling_surplus':
             overlay[label] = _compute_rolling_surplus(
-                x_expr, format_dates, x_ordered, date_from, date_to, schema, family_id,
+                x_expr, format_dates, x_ordered, date_from, date_to, schema, family_id, date_trunc, currency,
             )
             continue
         if computed:
@@ -196,6 +203,9 @@ def _execute_overlay_queries(
         if family_id is not None:
             ov_where_parts.append("family_id = :_fid")
             ov_params['_fid'] = family_id
+        if currency:
+            ov_where_parts.append("currency = :_cur")
+            ov_params['_cur'] = currency
         if date_from is not None:
             ov_where_parts.append("transaction_date >= :__odf")
             ov_params['__odf'] = date_from
@@ -211,7 +221,7 @@ def _execute_overlay_queries(
         with get_engine().connect() as conn:
             ov_rows = conn.execute(text(ov_sql), ov_params).fetchall()
         ov_map = {
-            (_fmt_date(r[0]) if format_dates else (str(r[0]) if r[0] is not None else '')):
+            (_fmt_date(r[0], date_trunc) if format_dates else (str(r[0]) if r[0] is not None else '')):
             float(r[1]) if r[1] is not None else 0.0
             for r in ov_rows
         }
@@ -221,6 +231,34 @@ def _execute_overlay_queries(
 
 def get_available_sources() -> list[str]:
     return sorted(ALLOWED_SOURCES)
+
+
+def get_chart_years(source: str = 'v_all_spend') -> list[int]:
+    """Return distinct years available in `source`, scoped by family only (no currency filter)."""
+    if source not in ALLOWED_SOURCES:
+        source = 'v_all_spend'
+    schema = get_schema()
+    try:
+        from services.auth import current_family_id as _current_family_id
+        fid = _current_family_id()
+        family_id: int | None = fid if isinstance(fid, int) else None
+    except Exception:
+        family_id = None
+
+    params: dict = {}
+    where = ''
+    if family_id is not None:
+        where = 'WHERE family_id = :_fid'
+        params['_fid'] = family_id
+
+    with get_engine().connect() as conn:
+        rows = conn.execute(text(
+            f"SELECT DISTINCT EXTRACT(YEAR FROM transaction_date)::INT AS y "
+            f"FROM {schema}.{source} {where} ORDER BY y DESC"
+        ), params).fetchall()
+
+    from datetime import date as _d
+    return [r[0] for r in rows] or [_d.today().year]
 
 
 def get_source_columns(source: str) -> list[str]:
@@ -286,13 +324,15 @@ def execute_chart_query(
         x_expr = x_column
         format_dates = False
 
-    # Scope to current family
+    # Scope to current family and selected currency
     try:
-        from services.auth import current_family_id as _current_family_id
+        from services.auth import current_family_id as _current_family_id, current_selected_currency as _current_selected_currency
         _fid = _current_family_id()
         family_id: int | None = _fid if isinstance(_fid, int) else None
+        currency: str = _current_selected_currency() or ''
     except Exception:
         family_id = None
+        currency = ''
 
     # Build WHERE clause from filters (only values go into params)
     where_parts = []
@@ -300,6 +340,9 @@ def execute_chart_query(
     if family_id is not None:
         where_parts.append("family_id = :_fid")
         params['_fid'] = family_id
+    if currency:
+        where_parts.append("currency = :_cur")
+        params['_cur'] = currency
     filters = config.get('filters') or []
     for i, f in enumerate(filters):
         col = f.get('column', '')
@@ -353,22 +396,29 @@ def execute_chart_query(
     person_map       = _get_person_name_map(family_id) if (x_is_person or series_is_person) else {}
 
     if series_column:
-        result = _pivot_series(rows, format_dates, y_column, person_map, x_is_person, series_is_person)
+        result = _pivot_series(rows, format_dates, y_column, person_map, x_is_person, series_is_person, date_trunc)
     else:
-        result = _single_series(rows, format_dates, y_column, person_map, x_is_person)
+        result = _single_series(rows, format_dates, y_column, person_map, x_is_person, date_trunc)
 
     overlay_cfgs = config.get('overlay_series') or []
     if overlay_cfgs:
         result['overlay'] = _execute_overlay_queries(
             overlay_cfgs, x_expr, format_dates,
-            result.get('x', []), date_from, date_to, schema, family_id,
+            result.get('x', []), date_from, date_to, schema, family_id, date_trunc, currency,
         )
 
     return result
 
 
-def _fmt_date(val) -> str:
+def _fmt_date(val, date_trunc: str = 'month') -> str:
     try:
+        if date_trunc in ('day', 'week'):
+            return val.strftime('%b %d, %Y')
+        if date_trunc == 'quarter':
+            q = (val.month - 1) // 3 + 1
+            return f'Q{q} {val.year}'
+        if date_trunc == 'year':
+            return val.strftime('%Y')
         return val.strftime('%b %Y')
     except Exception:
         return str(val)
@@ -377,6 +427,7 @@ def _fmt_date(val) -> str:
 def _single_series(
     rows, format_dates: bool, y_column: str,
     person_map: dict | None = None, x_is_person: bool = False,
+    date_trunc: str = 'month',
 ) -> dict:
     x_vals = []
     y_vals = []
@@ -384,7 +435,7 @@ def _single_series(
         if x_is_person:
             x = _fmt_person(row[0], person_map or {})
         else:
-            x = _fmt_date(row[0]) if format_dates else str(row[0]) if row[0] is not None else ''
+            x = _fmt_date(row[0], date_trunc) if format_dates else str(row[0]) if row[0] is not None else ''
         y = float(row[1]) if row[1] is not None else 0.0
         x_vals.append(x)
         y_vals.append(y)
@@ -394,6 +445,7 @@ def _single_series(
 def _pivot_series(
     rows, format_dates: bool, y_column: str,
     person_map: dict | None = None, x_is_person: bool = False, series_is_person: bool = False,
+    date_trunc: str = 'month',
 ) -> dict:
     # Collect ordered x values and series names
     x_ordered: list = []
@@ -416,7 +468,7 @@ def _pivot_series(
         if x_is_person:
             x_key = _fmt_person(x_raw, _pmap)
         else:
-            x_key = _fmt_date(x_raw) if format_dates else str(x_raw) if x_raw is not None else ''
+            x_key = _fmt_date(x_raw, date_trunc) if format_dates else str(x_raw) if x_raw is not None else ''
 
         if x_key not in seen_x:
             seen_x.add(x_key)

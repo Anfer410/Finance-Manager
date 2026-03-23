@@ -47,6 +47,11 @@ class BankRule:
     # Empty string = not configured (single-currency families can leave this unset).
     currency: str = ""
 
+    # ── Date format ────────────────────────────────────────────────────────
+    # strptime format string for the date column, e.g. "%Y-%m-%d", "%d/%m/%Y".
+    # Empty string = auto-detect (pandas inference with dayfirst=False).
+    date_format: str = ""
+
     # ── Column mapping (set by wizard, used by UploadPipeline) ──────────────
     # Maps logical role → actual normalised column name in this bank's CSV.
     # e.g. {"date": "trans_date", "amount": "transaction_amount"}

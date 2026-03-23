@@ -155,3 +155,29 @@ push-to-ghcr:
       fi
     - docker tag $GITLAB_IMAGE:latest $GHCR_IMAGE:latest
     - docker push $GHCR_IMAGE:latest
+
+# ── Merge main back into develop ──────────────────────────────────────────────
+# After a release, main has the semantic-release version bump commit.
+# This job merges main → develop so the two branches stay in sync.
+
+sync-develop:
+  stage: release
+  tags:
+    - shell
+  needs:
+    - job: push-to-ghcr
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_MESSAGE !~ /^chore: release/'
+      when: on_success
+    - when: never
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - git config user.email "gitlab-ci@$CI_SERVER_HOST"
+    - git config user.name "GitLab CI"
+    - git remote set-url origin "https://oauth2:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+    - git fetch origin
+    - git checkout develop
+    - git reset --hard origin/develop
+    - "git merge origin/main --no-edit --no-ff -m 'chore: sync develop with main after release'"
+    - git push origin develop

@@ -26,6 +26,7 @@ from services.family_service import (
 )
 from services.notifications import notify
 from nicegui import ui
+from services.ui_inputs import labeled_input, labeled_select
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -93,11 +94,11 @@ def _edit_member_dialog(m: FamilyMember, family_id: int, on_change) -> None:
             ui.label(f'Edit — {m.display_name}').classes('text-base font-semibold text-zinc-800')
             ui.button(icon='close', on_click=dlg.close).props('flat round dense').classes('text-zinc-400')
 
-        role_select = ui.select(
-            label='Family role',
-            options={'head': 'Family Head', 'member': 'Member'},
+        role_select = labeled_select(
+            'Family role',
+            {'head': 'Family Head', 'member': 'Member'},
             value=m.family_role,
-        ).props('outlined dense').classes('w-full')
+        )
 
         @ui.refreshable
         def feedback():
@@ -186,8 +187,7 @@ def _my_family_section(family_id: int) -> None:
 def _rename_family_dialog(family_id: int, current_name: str, on_change) -> None:
     with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
         ui.label('Rename Family').classes('text-base font-semibold text-zinc-800')
-        name_input = ui.input(label='Family name', value=current_name) \
-            .props('outlined dense').classes('w-full')
+        name_input = labeled_input('Family name', value=current_name)
 
         def save():
             n = name_input.value.strip()
@@ -215,13 +215,12 @@ def _add_user_dialog(family_id: int, on_change) -> None:
     with ui.dialog() as dlg, ui.card().classes('w-96 rounded-2xl p-6 gap-4'):
         ui.label('Add User to Family').classes('text-base font-semibold text-zinc-800')
 
-        user_select = ui.select(label='User', options=options) \
-            .props('outlined dense').classes('w-full')
-        role_select = ui.select(
-            label='Role',
-            options={'member': 'Member', 'head': 'Family Head'},
+        user_select = labeled_select('User', options)
+        role_select = labeled_select(
+            'Role',
+            {'member': 'Member', 'head': 'Family Head'},
             value='member',
-        ).props('outlined dense').classes('w-full')
+        )
 
         def save():
             if not user_select.value:
@@ -279,8 +278,7 @@ def _create_family_dialog(on_change) -> None:
         ui.label('Create New Family').classes('text-base font-semibold text-zinc-800')
         ui.label('Config will be seeded from the Default Family.') \
             .classes('text-xs text-zinc-400')
-        name_input = ui.input(label='Family name', placeholder='e.g. The Smiths') \
-            .props('outlined dense').classes('w-full')
+        name_input = labeled_input('Family name', placeholder='e.g. The Smiths')
 
         def save():
             n = name_input.value.strip()

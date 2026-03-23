@@ -10,6 +10,7 @@ import re as _re2
 from sqlalchemy import text
 
 import services.auth as auth
+from services.ui_inputs import labeled_input, labeled_select
 
 def _cur() -> str:
     return auth.current_currency_prefix()
@@ -25,7 +26,9 @@ from components.bank_wizard_component import (
     open_add_bank_wizard,
     ACCOUNT_COLORS,
     MATCH_TYPE_OPTIONS,
+    DATE_FORMAT_OPTIONS,
 )
+from data.currencies import CURRENCY_OPTIONS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -358,21 +361,12 @@ def _open_transaction_search_dialog(
                 _refresh(reset=True)
 
         with ui.row().classes("items-end gap-3 px-6 py-3 border-b border-zinc-100 bg-zinc-50 shrink-0 flex-wrap"):
-            with ui.column().classes("gap-0.5"):
-                ui.label("Search").classes("text-xs text-zinc-500")
-                search_in = ui.input(placeholder="any column...") \
-                    .classes("w-64").props("outlined dense clearable") \
-                    .on('keydown', _on_search_enter)
-            with ui.column().classes("gap-0.5"):
-                ui.label("From").classes("text-xs text-zinc-500")
-                from_in = ui.input(placeholder="YYYY-MM-DD") \
-                    .classes("w-36").props("outlined dense clearable") \
-                    .on('keydown', _on_search_enter)
-            with ui.column().classes("gap-0.5"):
-                ui.label("To").classes("text-xs text-zinc-500")
-                to_in = ui.input(placeholder="YYYY-MM-DD") \
-                    .classes("w-36").props("outlined dense clearable") \
-                    .on('keydown', _on_search_enter)
+            search_in = labeled_input('Search', placeholder="any column...", compact=True, classes='w-64') \
+                .props('clearable').on('keydown', _on_search_enter)
+            from_in = labeled_input('From', placeholder="YYYY-MM-DD", compact=True, classes='w-36') \
+                .props('clearable').on('keydown', _on_search_enter)
+            to_in = labeled_input('To', placeholder="YYYY-MM-DD", compact=True, classes='w-36') \
+                .props('clearable').on('keydown', _on_search_enter)
             ui.button("Search", icon="search", on_click=lambda: _refresh(reset=True)) \
                 .props("unelevated dense no-caps") \
                 .classes("bg-zinc-800 text-white rounded-lg px-3 self-end")
@@ -497,6 +491,206 @@ def _open_transaction_search_dialog(
 # Edit / delete account dialog  (same as before, renamed "bank" → "account")
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _open_date_migration_wizard(rule: BankRule, on_done):
+    """
+    Two-step dialog: pick source/target date format → preview → apply.
+    Rewrites transaction_date for all rows in the account where the date was
+    incorrectly parsed under a different format assumption.
+    """
+    from services.upload_manager import preview_redate, redate_account
+    from services.view_manager import ViewManager
+
+    # "parsed as" options: same list but the auto entry gets a clearer label
+    PARSED_AS_OPTIONS = {
+        "": 'Auto-detect (treated ambiguous dates as MM/DD/YYYY)',
+        **{k: v for k, v in DATE_FORMAT_OPTIONS.items() if k != ""},
+    }
+
+    # Pre-fill "parsed as" from the current rule setting
+    default_from = rule.date_format or ""
+
+    preview_result: dict = {}
+
+    with ui.dialog().props("persistent") as dlg, \
+         ui.card().classes("w-[640px] rounded-2xl p-0 gap-0 overflow-hidden"):
+
+        with ui.row().classes(
+            "items-center justify-between px-6 py-4 border-b border-zinc-100"
+        ):
+            with ui.row().classes("items-center gap-3"):
+                ui.icon("date_range").classes("text-zinc-400 text-xl")
+                with ui.column().classes("gap-0"):
+                    ui.label("Migrate existing dates").classes(
+                        "text-base font-semibold text-zinc-800"
+                    )
+                    ui.label(rule.bank_name + "  ·  " + rule.prefix).classes(
+                        "text-xs text-zinc-400 font-mono"
+                    )
+            ui.button(icon="close", on_click=dlg.close) \
+                .props("flat round dense").classes("text-zinc-400")
+
+        with ui.scroll_area().style("max-height:70vh"):
+          with ui.column().classes("px-6 py-5 gap-5 w-full"):
+
+            ui.label(
+                "Dates in the consolidated table were stored using the wrong format. "
+                "Select what format they were incorrectly parsed as and what they "
+                "actually are. A preview shows sample corrections before you apply."
+            ).classes("text-xs text-zinc-400")
+
+            ui.separator()
+            ui.label("Format mismatch") \
+                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
+
+            with ui.row().classes("w-full gap-4 items-end"):
+                with ui.column().classes("flex-1 gap-1"):
+                    from_sel = labeled_select(
+                        'Stored / parsed as (wrong)',
+                        PARSED_AS_OPTIONS,
+                        value=default_from,
+                    )
+
+                ui.icon("arrow_forward").classes("text-zinc-400 text-xl mb-2 shrink-0")
+
+                with ui.column().classes("flex-1 gap-1"):
+                    to_sel = labeled_select(
+                        'Actually in (correct)',
+                        {k: v for k, v in DATE_FORMAT_OPTIONS.items() if k != ""},
+                        value=None,
+                    )
+
+            ui.separator()
+            ui.label("Preview") \
+                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
+
+            stats_row  = ui.row().classes("flex-wrap gap-4")
+            preview_container = ui.column().classes("w-full gap-1")
+            apply_btn_ref: dict = {"btn": None}
+
+            @ui.refreshable
+            def render_preview():
+                stats_row.clear()
+                preview_container.clear()
+
+                if not preview_result:
+                    with preview_container:
+                        ui.label("Click Preview to see what would change.") \
+                            .classes("text-xs text-zinc-400 italic")
+                    if apply_btn_ref["btn"]:
+                        apply_btn_ref["btn"].disable()
+                    return
+
+                p = preview_result
+                with stats_row:
+                    for label, val, color in [
+                        ("Will update",     p["updatable"],          "text-green-600"),
+                        ("No change / invalid", p["skipped_invalid"], "text-zinc-400"),
+                        ("Cross-year (skipped)", p["skipped_cross_year"], "text-amber-500"),
+                        ("Total rows",      p["total_rows"],         "text-zinc-600"),
+                    ]:
+                        with ui.column().classes("gap-0"):
+                            ui.label(str(val)).classes(
+                                f"text-lg font-semibold {color}"
+                            )
+                            ui.label(label).classes("text-xs text-zinc-400")
+
+                with preview_container:
+                    if p["samples"]:
+                        with ui.element("table").classes(
+                            "w-full text-xs font-mono border-collapse"
+                        ):
+                            with ui.element("thead"):
+                                with ui.element("tr"):
+                                    for hdr in ("Stored (wrong)", "Corrected"):
+                                        with ui.element("th").classes(
+                                            "text-left px-3 py-1.5 bg-zinc-50 border "
+                                            "border-zinc-100 text-zinc-500 font-semibold"
+                                        ):
+                                            ui.label(hdr)
+                            with ui.element("tbody"):
+                                for s in p["samples"]:
+                                    with ui.element("tr"):
+                                        with ui.element("td").classes(
+                                            "px-3 py-1 border border-zinc-100 text-red-400"
+                                        ):
+                                            ui.label(str(s["old"]))
+                                        with ui.element("td").classes(
+                                            "px-3 py-1 border border-zinc-100 text-green-600"
+                                        ):
+                                            ui.label(str(s["new"]))
+                    else:
+                        ui.label("No dates would change with this combination.") \
+                            .classes("text-xs text-zinc-400 italic")
+
+                if apply_btn_ref["btn"]:
+                    if p["updatable"] > 0:
+                        apply_btn_ref["btn"].enable()
+                    else:
+                        apply_btn_ref["btn"].disable()
+
+            render_preview()
+
+            def do_preview():
+                fval = from_sel.value if from_sel.value is not None else ""
+                tval = to_sel.value or ""
+                if not tval:
+                    notify("Select the correct format first.", type="warning", position="top")
+                    return
+                if fval == tval:
+                    notify(
+                        "The two formats are the same — nothing to migrate.",
+                        type="warning", position="top",
+                    )
+                    return
+                fid = auth.current_family_id()
+                try:
+                    result = preview_redate(rule.prefix, fval, tval, fid)
+                    preview_result.clear()
+                    preview_result.update(result)
+                    render_preview.refresh()
+                except Exception as ex:
+                    notify(f"Preview failed: {ex}", type="warning", position="top")
+
+            ui.button("Preview", icon="preview", on_click=do_preview) \
+                .props("unelevated no-caps") \
+                .classes("bg-zinc-100 text-zinc-700 rounded-lg px-4 self-start")
+
+        with ui.row().classes(
+            "items-center justify-between px-6 py-4 border-t border-zinc-100"
+        ):
+            ui.button("Cancel", on_click=dlg.close) \
+                .props("flat no-caps").classes("text-zinc-500")
+
+            apply_btn = ui.button(
+                "Apply migration", icon="check",
+                on_click=lambda: _do_apply(),
+            ).props("unelevated no-caps") \
+             .classes("bg-zinc-800 text-white px-4 rounded-lg")
+            apply_btn.disable()
+            apply_btn_ref["btn"] = apply_btn
+
+    def _do_apply():
+        fval = from_sel.value if from_sel.value is not None else ""
+        tval = to_sel.value or ""
+        fid  = auth.current_family_id()
+        try:
+            result = redate_account(rule.prefix, fval, tval, fid)
+            ViewManager(get_engine(), get_schema()).refresh()
+            parts = [f"{result['updated']} row(s) updated"]
+            if result["skipped_conflict"]:
+                parts.append(f"{result['skipped_conflict']} conflict(s) skipped")
+            if result["skipped_cross_year"]:
+                parts.append(f"{result['skipped_cross_year']} cross-year skipped")
+            dlg.close()
+            notify("Migration complete: " + ", ".join(parts) + ".",
+                   type="positive", position="top")
+            on_done()
+        except Exception as ex:
+            notify(f"Migration failed: {ex}", type="warning", position="top")
+
+    dlg.open()
+
+
 def _open_edit_account_dialog(rule: BankRule, on_save, on_delete):
     """Edit an existing BankRule (account) or delete it."""
     all_users    = auth.get_all_users()
@@ -531,12 +725,11 @@ def _open_edit_account_dialog(rule: BankRule, on_save, on_delete):
             ui.label("Account details") \
                 .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
 
-            with ui.column().classes("w-full gap-1"):
-                ui.label("Bank name").classes("text-sm font-medium text-zinc-700")
-                ui.label("The institution name. Changing this does not rename the raw table.") \
-                    .classes("text-xs text-zinc-400")
-                bank_name_in = ui.input(value=rule.bank_name, placeholder="e.g. Citi") \
-                    .classes("w-full").props("outlined dense")
+            bank_name_in = labeled_input(
+                'Bank name',
+                hint='The institution name. Changing this does not rename the raw table.',
+                value=rule.bank_name, placeholder='e.g. Citi',
+            )
 
             with ui.column().classes("w-full gap-1"):
                 ui.label("Account alias").classes("text-sm font-medium text-zinc-700")
@@ -558,18 +751,57 @@ def _open_edit_account_dialog(rule: BankRule, on_save, on_delete):
                 .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
 
             with ui.column().classes("w-full gap-1"):
-                ui.label("Match type").classes("text-sm font-medium text-zinc-700")
-                match_type_sel = ui.select(
-                    MATCH_TYPE_OPTIONS, value=rule.match_type,
-                ).classes("w-full").props("outlined dense")
+                match_type_sel = labeled_select(
+                    'Match type',
+                    MATCH_TYPE_OPTIONS,
+                    value=rule.match_type,
+                )
 
+            match_val_in = labeled_input(
+                'Filename value',
+                hint='Matched against the uploaded filename without its extension.',
+                value=rule.match_value, placeholder='e.g. transaction_download',
+            )
+
+            ui.separator()
+            ui.label("Date format") \
+                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
             with ui.column().classes("w-full gap-1"):
-                ui.label("Filename value").classes("text-sm font-medium text-zinc-700")
-                ui.label("Matched against the uploaded filename without its extension.") \
-                    .classes("text-xs text-zinc-400")
-                match_val_in = ui.input(
-                    value=rule.match_value, placeholder="e.g. transaction_download"
-                ).classes("w-full").props("outlined dense")
+                ui.label("Date format").classes("text-sm font-medium text-zinc-700")
+                ui.label(
+                    "How dates are written in this bank's CSV. "
+                    "Applies to future uploads only."
+                ).classes("text-xs text-zinc-400")
+                with ui.row().classes("items-center gap-3"):
+                    date_fmt_sel = labeled_select(
+                        'Date format',
+                        DATE_FORMAT_OPTIONS,
+                        value=rule.date_format or "",
+                        classes='w-80',
+                    )
+                    ui.button(
+                        "Migrate existing dates…", icon="date_range",
+                        on_click=lambda: _open_date_migration_wizard(
+                            rule, on_done=lambda: None
+                        ),
+                    ).props("flat no-caps").classes("text-zinc-500 text-sm")
+
+            ui.separator()
+            ui.label("Currency") \
+                .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
+            with ui.column().classes("w-full gap-1"):
+                ui.label("Currency").classes("text-sm font-medium text-zinc-700")
+                ui.label(
+                    "ISO 4217 currency code. Changing this will backfill all existing "
+                    "transactions for this account."
+                ).classes("text-xs text-zinc-400")
+                currency_sel = labeled_select(
+                    'Currency',
+                    CURRENCY_OPTIONS,
+                    value=rule.currency or None,
+                    with_input=True,
+                    classes='w-72',
+                ).props('clearable')
 
             credit_col = ui.column().classes("w-full gap-4")
             with credit_col:
@@ -587,15 +819,14 @@ def _open_edit_account_dialog(rule: BankRule, on_save, on_delete):
                      .classes("text-zinc-400 hover:text-zinc-700") \
                      .tooltip("Browse transactions to find payment description pattern")
 
-                with ui.column().classes("w-full gap-1"):
-                    ui.label("Payment description pattern").classes("text-sm font-medium text-zinc-700")
-                    ui.label(
-                        "Optional: only needed for banks that format payment rows as debit > 0 "
-                        "instead of credit > 0 in their CSV."
-                    ).classes("text-xs text-zinc-400")
-                    payment_desc_in = ui.input(
-                        value=rule.payment_description, placeholder="e.g. ONLINE PAYMENT"
-                    ).classes("w-full").props("outlined dense")
+                payment_desc_in = labeled_input(
+                    'Payment description pattern',
+                    hint=(
+                        'Optional: only needed for banks that format payment rows as debit > 0 '
+                        'instead of credit > 0 in their CSV.'
+                    ),
+                    value=rule.payment_description, placeholder='e.g. ONLINE PAYMENT',
+                )
 
             credit_col.set_visibility(is_credit)
 
@@ -643,12 +874,14 @@ def _open_edit_account_dialog(rule: BankRule, on_save, on_delete):
                 render_aliases()
 
                 with ui.row().classes("w-full items-end gap-2 mt-1"):
-                    raw_val_in = ui.input(placeholder="e.g. JOHN") \
-                        .classes("flex-1").props("outlined dense")
-                    user_sel = ui.select(
+                    raw_val_in = labeled_input('Raw member value', placeholder='e.g. JOHN', compact=True, classes='flex-1')
+                    user_sel = labeled_select(
+                        'User',
                         user_opt_labels,
                         value=user_opt_labels[0] if user_opt_labels else None,
-                    ).classes("flex-1").props("outlined dense")
+                        compact=True,
+                        classes='flex-1',
+                    )
 
                     def add_alias():
                         rv  = raw_val_in.value.strip().upper()
@@ -711,14 +944,31 @@ def _open_edit_account_dialog(rule: BankRule, on_save, on_delete):
         if not bname or not mval:
             notify("Bank name and filename value are required.", type="warning", position="top")
             return
-        rule.bank_name                = bname
-        rule.match_type               = match_type_sel.value
-        rule.match_value              = mval
+
+        prev_currency = rule.currency or ""
+        new_currency  = (currency_sel.value or "").strip().upper()
+
+        rule.bank_name           = bname
+        rule.match_type          = match_type_sel.value
+        rule.match_value         = mval
+        rule.date_format         = date_fmt_sel.value or ""
+        rule.currency            = new_currency
         rule.payment_description = payment_desc_in.value.strip() if is_credit else ""
-        rule.member_aliases           = {a["raw_value"]: a["user_id"] for a in alias_rows}
-        rule.person_override          = sorted(override_ids) if override_sw.value and override_ids else None
+        rule.member_aliases      = {a["raw_value"]: a["user_id"] for a in alias_rows}
+        rule.person_override     = sorted(override_ids) if override_sw.value and override_ids else None
         dlg.close()
         on_save(rule)
+
+        if new_currency and new_currency != prev_currency:
+            try:
+                from services.upload_manager import backfill_currency
+                from services.view_manager import ViewManager
+                fid = auth.current_family_id()
+                n = backfill_currency(rule.prefix, new_currency, fid)
+                ViewManager(get_engine(), get_schema()).refresh()
+                notify(f"Backfilled {n} row(s) to {new_currency}.", type="positive", position="top")
+            except Exception as ex:
+                notify(f"Currency backfill failed: {ex}", type="warning", position="top")
 
     def _confirm_delete():
         with ui.dialog() as confirm_dlg, \
@@ -762,12 +1012,11 @@ def _open_bank_settings_dialog(bank: BankConfig, on_save, on_delete, bank_rules:
             ui.label("Bank details") \
                 .classes("text-xs font-semibold text-zinc-400 uppercase tracking-wide")
 
-            with ui.column().classes("w-full gap-1"):
-                ui.label("Bank name").classes("text-sm font-medium text-zinc-700")
-                ui.label("Display name for this bank — does not affect table names.") \
-                    .classes("text-xs text-zinc-400")
-                name_in = ui.input(value=bank.name, placeholder="e.g. Capital One") \
-                    .classes("w-full").props("outlined dense")
+            name_in = labeled_input(
+                'Bank name',
+                hint='Display name for this bank — does not affect table names.',
+                value=bank.name, placeholder='e.g. Capital One',
+            )
 
             ui.label("slug: " + bank.slug) \
                 .classes("text-xs font-mono text-zinc-400 bg-zinc-50 "
@@ -840,11 +1089,11 @@ def _open_create_bank_dialog(on_save):
                 .props("flat round dense").classes("text-zinc-400")
 
         with ui.column().classes("px-6 py-5 gap-3 w-full"):
-            ui.label("Bank name").classes("text-sm font-medium text-zinc-700")
-            ui.label("The institution name, e.g. Chase, Capital One, Citi.") \
-                .classes("text-xs text-zinc-400")
-            name_in = ui.input(placeholder="e.g. Chase") \
-                .classes("w-full").props("outlined dense autofocus")
+            name_in = labeled_input(
+                'Bank name',
+                hint='The institution name, e.g. Chase, Capital One, Citi.',
+                placeholder='e.g. Chase',
+            ).props('autofocus')
 
         with ui.row().classes("items-center justify-end gap-2 px-6 py-4 border-t border-zinc-100"):
             ui.button("Cancel", on_click=dlg.close) \
@@ -1020,23 +1269,19 @@ def _transfers_tab_content(on_refresh: callable) -> None:
                 ui.button(icon="close", on_click=dlg.close) \
                     .props("flat round dense").classes("text-zinc-400")
             with ui.column().classes("px-6 py-5 gap-4 w-full"):
-                with ui.column().classes("w-full gap-1"):
-                    ui.label("Label").classes("text-sm font-medium text-zinc-700")
-                    ui.input(
-                        value=prefill_lbl,
-                        placeholder="e.g. Jessica Savings",
-                        on_change=lambda e: lbl_ref.update({"value": e.value}),
-                    ).classes("w-full").props("outlined dense")
-                with ui.column().classes("w-full gap-1"):
-                    ui.label("Pattern").classes("text-sm font-medium text-zinc-700")
-                    ui.label(
-                        "Transactions containing this text are excluded from spend."
-                    ).classes("text-xs text-zinc-400")
-                    ui.input(
-                        value=prefill_pat,
-                        placeholder="e.g. XXXXXX5045",
-                        on_change=lambda e: pat_ref.update({"value": e.value}),
-                    ).classes("w-full").props("outlined dense")
+                labeled_input(
+                    'Label',
+                    value=prefill_lbl,
+                    placeholder='e.g. Jessica Savings',
+                    on_change=lambda e: lbl_ref.update({'value': e.value}),
+                )
+                labeled_input(
+                    'Pattern',
+                    hint='Transactions containing this text are excluded from spend.',
+                    value=prefill_pat,
+                    placeholder='e.g. XXXXXX5045',
+                    on_change=lambda e: pat_ref.update({'value': e.value}),
+                )
             with ui.row().classes(
                 "items-center justify-end gap-2 px-6 py-4 border-t border-zinc-100"
             ):
@@ -1086,21 +1331,17 @@ def _transfers_tab_content(on_refresh: callable) -> None:
                 ui.button(icon="close", on_click=dlg.close) \
                     .props("flat round dense").classes("text-zinc-400")
             with ui.column().classes("px-6 py-5 gap-4 w-full"):
-                with ui.column().classes("w-full gap-1"):
-                    ui.label("Label").classes("text-sm font-medium text-zinc-700")
-                    ui.input(
-                        value=entry.label,
-                        on_change=lambda e: lbl_ref.update({"value": e.value}),
-                    ).classes("w-full").props("outlined dense")
-                with ui.column().classes("w-full gap-1"):
-                    ui.label("Pattern").classes("text-sm font-medium text-zinc-700")
-                    ui.label(
-                        "Transactions containing this text are excluded from spend."
-                    ).classes("text-xs text-zinc-400")
-                    ui.input(
-                        value=entry.pattern,
-                        on_change=lambda e: pat_ref.update({"value": e.value}),
-                    ).classes("w-full").props("outlined dense")
+                labeled_input(
+                    'Label',
+                    value=entry.label,
+                    on_change=lambda e: lbl_ref.update({'value': e.value}),
+                )
+                labeled_input(
+                    'Pattern',
+                    hint='Transactions containing this text are excluded from spend.',
+                    value=entry.pattern,
+                    on_change=lambda e: pat_ref.update({'value': e.value}),
+                )
             with ui.row().classes(
                 "items-center justify-end gap-2 px-6 py-4 border-t border-zinc-100"
             ):
@@ -1236,8 +1477,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
             on_refresh()
 
         with ui.row().classes("gap-2 items-center mt-2"):
-            new_pat_in = ui.input(placeholder="e.g. TRANSFER") \
-                .classes("w-48").props("outlined dense") \
+            new_pat_in = labeled_input('Pattern', placeholder='e.g. TRANSFER', compact=True, classes='w-48') \
                 .on("change", lambda e: new_pat_ref.update({"value": e.args})) \
                 .on("keydown.enter", lambda _: _add_detection_pattern())
             ui.button("Add", icon="add", on_click=_add_detection_pattern) \
@@ -1338,24 +1578,22 @@ def _transfers_tab_content(on_refresh: callable) -> None:
                             "matching the pattern will be excluded automatically."
                         ).classes("text-xs text-zinc-400")
 
-                        with ui.column().classes("w-full gap-1"):
-                            ui.label("Label").classes("text-sm font-medium text-zinc-700")
-                            ui.input(
-                                placeholder="e.g. Jessica Savings",
-                                value="",
-                                on_change=lambda e: lbl_ref.update({"value": e.value}),
-                            ).classes("w-full").props("outlined dense")
+                        labeled_input(
+                            'Label',
+                            placeholder='e.g. Jessica Savings',
+                            value='',
+                            on_change=lambda e: lbl_ref.update({'value': e.value}),
+                        )
 
-                        with ui.column().classes("w-full gap-1"):
-                            ui.label("Pattern").classes("text-sm font-medium text-zinc-700")
-                            ui.label(
-                                "Transactions whose description contains this text will "
-                                "be excluded from spend."
-                            ).classes("text-xs text-zinc-400")
-                            ui.input(
-                                value=pat_ref["value"],
-                                on_change=lambda e: pat_ref.update({"value": e.value}),
-                            ).classes("w-full").props("outlined dense")
+                        labeled_input(
+                            'Pattern',
+                            hint=(
+                                'Transactions whose description contains this text will '
+                                'be excluded from spend.'
+                            ),
+                            value=pat_ref['value'],
+                            on_change=lambda e: pat_ref.update({'value': e.value}),
+                        )
 
                     with ui.row().classes(
                         "items-center justify-end gap-2 px-6 py-4 border-t border-zinc-100"

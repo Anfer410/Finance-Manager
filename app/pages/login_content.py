@@ -7,6 +7,7 @@ Registered in main.py as @ui.page('/login').
 
 from nicegui import ui
 import services.auth as auth
+from services.ui_inputs import labeled_input
 
 
 def content() -> None:
@@ -41,18 +42,18 @@ def content() -> None:
 
         with ui.element("div").classes("login-card"):
 
-            ui.label("Username")
-            username_input = ui.input(
-                label="Username",
-                placeholder="Enter your username",
-            ).props("outlined dense").classes("w-full mb-3")
-            ui.label("Password")
-            password_input = ui.input(
-                label="Password",
-                placeholder="Enter your password",
+            username_input = labeled_input(
+                'Username',
+                placeholder='Enter your username',
+                classes='w-full mb-3',
+            )
+            password_input = labeled_input(
+                'Password',
+                placeholder='Enter your password',
                 password=True,
                 password_toggle_button=True,
-            ).props("outlined dense").classes("w-full mb-4")
+                classes='w-full mb-4',
+            )
 
             @ui.refreshable
             def error_label() -> None:

@@ -9,12 +9,13 @@ from __future__ import annotations
 from nicegui import ui, app
 
 from services.auth import current_user_id
+from services.ui_inputs import labeled_input, labeled_select
 from services.custom_chart_repo import (
     get_custom_chart, create_custom_chart, update_custom_chart,
 )
 from services.custom_chart_query import (
     get_available_sources, get_source_columns, execute_chart_query,
-    COMPUTED_OVERLAYS,
+    COMPUTED_OVERLAYS, get_chart_years,
 )
 from services.dashboard_config import list_dashboards, add_widget
 from components.custom_chart_renderer import render_custom_chart
@@ -195,19 +196,18 @@ def content() -> None:
                 mode_toggle.set_value('Save as...')
                 mode_toggle.disable()
 
-            name_input = ui.input(
+            name_input = labeled_input(
                 'Chart Name',
                 value=save_name_ref['v'],
                 on_change=lambda e: save_name_ref.update({'v': e.value}),
-            ).classes('w-full')
+            )
 
-            dash_select = ui.select(
+            dash_select = labeled_select(
+                'Add to Dashboard (optional)',
                 dash_options,
-                label='Add to Dashboard (optional)',
                 value=None,
                 on_change=lambda e: save_dash_ref.update({'v': e.value}),
-            ).classes('w-full')
-            dash_select.props('clearable')
+            ).props('clearable')
 
             with ui.row().classes('w-full justify-end gap-2'):
                 ui.button('Cancel', on_click=dlg.close).props('flat')
@@ -217,6 +217,7 @@ def content() -> None:
                     if save_dash_ref['v']:
                         chart_id = f"custom:{state['editing_id']}"
                         add_widget(int(save_dash_ref['v']), chart_id, col_span=2, row_span=1)
+                        app.storage.user['active_dashboard_id'] = int(save_dash_ref['v'])
                     dlg.close()
                     ui.navigate.to('/')
 
@@ -273,11 +274,11 @@ def content() -> None:
             with ui.column().classes('w-full pr-2 gap-3'):
                 ui.label('Data Source').classes('text-xs font-semibold text-zinc-500 uppercase tracking-wide')
 
-                source_select = ui.select(
+                source_select = labeled_select(
+                    'Source',
                     get_available_sources(),
                     value=state['data_source'],
-                    label='Source',
-                ).classes('w-full')
+                )
 
                 ui.separator()
                 ui.label('Columns').classes('text-xs font-semibold text-zinc-500 uppercase tracking-wide')
@@ -317,12 +318,12 @@ def content() -> None:
                         ui.label('Chart Type').classes(
                             'text-xs font-semibold text-zinc-500 uppercase tracking-wide'
                         )
-                        ui.select(
+                        labeled_select(
+                            'Type',
                             _CHART_TYPE_OPTIONS,
                             value=state['chart_type'],
-                            label='Type',
                             on_change=lambda e: _on_chart_type(e.value),
-                        ).classes('w-full')
+                        )
 
                         ui.separator()
 
@@ -343,57 +344,58 @@ def content() -> None:
                                     .classes('text-sm text-zinc-400 py-4')
                                 return
 
+                            
                             with ui.column().classes('w-full gap-3'):
-                                ui.select(
+                                labeled_select(
+                                    'X Axis',
                                     col_opts,
                                     value=_valid(state.get('x_column'), col_opts),
-                                    label='X Axis',
                                     on_change=lambda e: _update_state_refresh('x_column', e.value),
-                                ).classes('w-full')
+                                )
 
-                                ui.select(
+                                labeled_select(
+                                    'Y Axis',
                                     col_opts,
                                     value=_valid(state.get('y_column'), col_opts),
-                                    label='Y Axis',
                                     on_change=lambda e: _update_state('y_column', e.value),
-                                ).classes('w-full')
+                                )
 
-                                ui.select(
+                                labeled_select(
+                                    'Aggregation',
                                     _AGG_OPTIONS,
                                     value=state.get('y_agg', 'sum'),
-                                    label='Aggregation',
                                     on_change=lambda e: _update_state('y_agg', e.value),
-                                ).classes('w-full')
+                                )
 
-                                ui.select(
+                                labeled_select(
+                                    'Series Column (optional)',
                                     col_opts_none,
                                     value=_valid(state.get('series_column') or '', col_opts_none),
-                                    label='Series Column (optional)',
                                     on_change=lambda e: _update_state(
                                         'series_column', e.value or None
                                     ),
-                                ).classes('w-full')
+                                )
 
                                 if state.get('x_column') == 'transaction_date':
-                                    ui.select(
+                                    labeled_select(
+                                        'Date Grouping',
                                         _TRUNC_OPTIONS,
                                         value=state.get('date_trunc', 'month'),
-                                        label='Date Grouping',
                                         on_change=lambda e: _update_state('date_trunc', e.value),
-                                    ).classes('w-full')
+                                    )
 
-                                ui.select(
+                                labeled_select(
+                                    'Label Format',
                                     _FORMAT_OPTIONS,
                                     value=state.get('label_format', 'dollar'),
-                                    label='Label Format',
                                     on_change=lambda e: _update_state('label_format', e.value),
-                                ).classes('w-full')
+                                )
 
-                                ui.input(
+                                labeled_input(
                                     'Chart Height',
                                     value=state.get('chart_height', '300px'),
                                     on_change=lambda e: _update_state('chart_height', e.value),
-                                ).classes('w-full')
+                                )
 
                                 ui.switch(
                                     'Show Legend',
@@ -401,51 +403,52 @@ def content() -> None:
                                     on_change=lambda e: _update_state('show_legend', e.value),
                                 )
 
-                                ui.select(
+                                labeled_select(
+                                    'Legend Position',
                                     {'top': 'Top', 'bottom': 'Bottom', 'left': 'Left', 'right': 'Right'},
                                     value=state.get('legend_position', 'top'),
-                                    label='Legend Position',
                                     on_change=lambda e: _update_state('legend_position', e.value),
-                                ).classes('w-full')
+                                )
 
                                 # ── Time Range ────────────────────────────────
                                 ui.separator()
                                 ui.label('Time Range').classes(
                                     'text-xs font-semibold text-zinc-500 uppercase tracking-wide'
                                 )
-                                ui.select(
+                                labeled_select(
+                                    'Date Filter',
                                     _TIME_MODE_OPTIONS,
                                     value=state.get('time_mode', 'all_time'),
-                                    label='Date Filter',
                                     on_change=lambda e: _update_state_refresh('time_mode', e.value),
-                                ).classes('w-full')
+                                )
                                 _tm = state.get('time_mode', 'all_time')
                                 if _tm == 'trailing':
-                                    ui.select(
+                                    labeled_select(
+                                        'Lookback Period',
                                         _TRAILING_OPTIONS,
                                         value=int(state.get('trailing_months', 12)),
-                                        label='Lookback Period',
                                         on_change=lambda e: _update_state('trailing_months', e.value),
-                                    ).classes('w-full')
+                                    )
                                 elif _tm == 'year':
-                                    ui.input(
-                                        'Year (YYYY)',
-                                        value=str(state.get('fixed_year') or ''),
-                                        on_change=lambda e: _update_state(
-                                            'fixed_year', int(e.value) if e.value.isdigit() else None
-                                        ),
-                                    ).classes('w-full')
+                                    _years = get_chart_years(state.get('data_source', 'v_all_spend'))
+                                    _cur_year = state.get('fixed_year') or (_years[0] if _years else None)
+                                    labeled_select(
+                                        'Year',
+                                        {y: str(y) for y in _years},
+                                        value=_cur_year,
+                                        on_change=lambda e: _update_state('fixed_year', e.value),
+                                    )
                                 elif _tm == 'date_range':
-                                    ui.input(
+                                    labeled_input(
                                         'From (YYYY-MM-DD)',
                                         value=state.get('date_from', ''),
                                         on_change=lambda e: _update_state('date_from', e.value),
-                                    ).classes('w-full')
-                                    ui.input(
+                                    )
+                                    labeled_input(
                                         'To (YYYY-MM-DD)',
                                         value=state.get('date_to', ''),
                                         on_change=lambda e: _update_state('date_to', e.value),
-                                    ).classes('w-full')
+                                    )
 
                                 # ── Filters ───────────────────────────────────
                                 def _add_filter() -> None:
@@ -473,23 +476,28 @@ def content() -> None:
                                         return
                                     for idx, f in enumerate(state['filters']):
                                         with ui.row().classes('w-full gap-1 items-center flex-wrap'):
-                                            ui.select(
+                                            labeled_select(
+                                                'Col',
                                                 col_opts,
                                                 value=f.get('column', ''),
-                                                label='Col',
                                                 on_change=lambda e, i=idx: _update_filter(i, 'column', e.value),
-                                            ).classes('flex-1 min-w-0')
-                                            ui.select(
+                                                compact=True,
+                                                classes='flex-1 min-w-0',
+                                            )
+                                            labeled_select(
+                                                'Op',
                                                 {o: o for o in _OP_OPTIONS},
                                                 value=f.get('op', '='),
-                                                label='Op',
                                                 on_change=lambda e, i=idx: _update_filter(i, 'op', e.value),
+                                                compact=True,
+                                                classes='',
                                             ).style('width:80px')
-                                            ui.input(
+                                            labeled_input(
                                                 'Value',
                                                 value=f.get('value', ''),
                                                 on_change=lambda e, i=idx: _update_filter(i, 'value', e.value),
-                                            ).classes('flex-1 min-w-0')
+                                                classes='flex-1 min-w-0',
+                                            )
                                             ui.button(
                                                 icon='close',
                                                 on_click=lambda _, i=idx: _remove_filter(i),
@@ -546,24 +554,24 @@ def content() -> None:
                                                     icon='close',
                                                     on_click=lambda _, i=idx: _remove_overlay(i),
                                                 ).props('flat round dense size=xs').classes('text-red-400')
-                                            ui.input(
+                                            labeled_input(
                                                 'Label',
                                                 value=ov.get('label', 'Line'),
                                                 on_change=lambda e, i=idx: _update_overlay(i, 'label', e.value),
-                                            ).props('outlined dense').classes('w-full')
-                                            ui.select(
+                                            )
+                                            labeled_select(
+                                                'Type',
                                                 _OVERLAY_TYPE_OPTIONS,
                                                 value=ov_type,
-                                                label='Type',
                                                 on_change=lambda e, i=idx: _update_overlay(i, '_type', e.value),
-                                            ).props('outlined dense').classes('w-full')
+                                            )
                                             if ov_type == 'computed':
-                                                ui.select(
+                                                labeled_select(
+                                                    'Formula',
                                                     _COMPUTED_OVERLAY_OPTIONS,
                                                     value=ov.get('computed', 'rolling_surplus'),
-                                                    label='Formula',
                                                     on_change=lambda e, i=idx: _update_overlay(i, 'computed', e.value),
-                                                ).props('outlined dense').classes('w-full')
+                                                )
                                             else:
                                                 ov_src = ov.get('data_source', 'v_all_spend')
                                                 try:
@@ -571,24 +579,24 @@ def content() -> None:
                                                 except Exception:
                                                     ov_cols = []
                                                 ov_col_opts = {c: c for c in ov_cols}
-                                                ui.select(
+                                                labeled_select(
+                                                    'Source',
                                                     get_available_sources(),
                                                     value=ov_src,
-                                                    label='Source',
                                                     on_change=lambda e, i=idx: _update_overlay(i, 'data_source', e.value),
-                                                ).props('outlined dense').classes('w-full')
-                                                ui.select(
+                                                )
+                                                labeled_select(
+                                                    'Y Column',
                                                     ov_col_opts,
                                                     value=ov.get('y_column', 'amount'),
-                                                    label='Y Column',
                                                     on_change=lambda e, i=idx: _update_overlay(i, 'y_column', e.value),
-                                                ).props('outlined dense').classes('w-full')
-                                                ui.select(
+                                                )
+                                                labeled_select(
+                                                    'Aggregation',
                                                     _AGG_OPTIONS,
                                                     value=ov.get('y_agg', 'sum'),
-                                                    label='Aggregation',
                                                     on_change=lambda e, i=idx: _update_overlay(i, 'y_agg', e.value),
-                                                ).props('outlined dense').classes('w-full')
+                                                )
 
                                 ui.separator()
                                 with ui.row().classes('w-full items-center justify-between'):

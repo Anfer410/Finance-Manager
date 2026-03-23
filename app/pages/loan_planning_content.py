@@ -18,6 +18,7 @@ from services.loan_service import (
 
 from components.widgets.registry import REGISTRY_BY_ID
 import services.auth as _auth
+from services.ui_inputs import labeled_select
 
 
 def _cur() -> str:
@@ -168,11 +169,12 @@ def _extra_payment_section(family_id: int | None = None) -> None:
             loan_options = {loan.name: loan for loan in loans}
 
             with ui.row().classes("gap-4 w-full flex-wrap items-end"):
-                loan_select = ui.select(
-                    label="Select loan",
-                    options=list(loan_options.keys()),
+                loan_select = labeled_select(
+                    'Select loan',
+                    list(loan_options.keys()),
                     value=loans[0].name,
-                ).props("outlined dense").classes("flex-1 min-w-48")
+                    classes='flex-1 min-w-48',
+                )
                 extra_in = ui.number("Extra monthly payment ($)", value=200, min=0, format="%.0f") \
                     .props("outlined dense").classes("flex-1 min-w-36")
 

@@ -209,6 +209,59 @@ class TestUploadPipelineRun:
             )
         assert result.error is not None
 
+    # ── occurrence-based dedup ────────────────────────────────────────────────
+
+    def test_repeated_transactions_both_inserted(self, pg_engine, schema):
+        """Two rows with identical (date, description, amount) in the same upload
+        are genuine transactions and must both be stored (occurrence 1 and 2)."""
+        df = pd.DataFrame({
+            "date":        [date(2024, 4, 1), date(2024, 4, 1)],
+            "description": ["Car Wash", "Car Wash"],
+            "amount":      [5.00, 5.00],
+        })
+        try:
+            result = self._run(_DEBIT_RULE, df)
+            assert result.inserted == 2
+            assert result.skipped == 0
+        finally:
+            _cleanup(pg_engine, schema, "test_chk")
+
+    def test_repeated_transactions_second_upload_deduplicates(self, pg_engine, schema):
+        """Re-uploading a file with repeated transactions inserts nothing the second time."""
+        df = pd.DataFrame({
+            "date":        [date(2024, 4, 2), date(2024, 4, 2), date(2024, 4, 2)],
+            "description": ["Car Wash", "Car Wash", "Car Wash"],
+            "amount":      [5.00, 5.00, 5.00],
+        })
+        try:
+            first = self._run(_DEBIT_RULE, df)
+            second = self._run(_DEBIT_RULE, df)
+            assert first.inserted == 3
+            assert second.inserted == 0
+        finally:
+            _cleanup(pg_engine, schema, "test_chk")
+
+    def test_partial_overlap_inserts_only_new(self, pg_engine, schema):
+        """First upload has 1 Car Wash; second upload has 2 → only the second
+        occurrence is new and gets inserted."""
+        df_one = pd.DataFrame({
+            "date":        [date(2024, 4, 3)],
+            "description": ["Car Wash"],
+            "amount":      [5.00],
+        })
+        df_two = pd.DataFrame({
+            "date":        [date(2024, 4, 3), date(2024, 4, 3)],
+            "description": ["Car Wash", "Car Wash"],
+            "amount":      [5.00, 5.00],
+        })
+        try:
+            first = self._run(_DEBIT_RULE, df_one)
+            second = self._run(_DEBIT_RULE, df_two)
+            assert first.inserted == 1
+            assert second.inserted == 1   # only occ=2 is new
+        finally:
+            _cleanup(pg_engine, schema, "test_chk")
+
     # ── explicit col_mapping override ─────────────────────────────────────────
 
     def test_run_with_explicit_col_mapping(self, pg_engine, schema):

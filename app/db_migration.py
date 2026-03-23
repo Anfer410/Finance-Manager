@@ -50,6 +50,7 @@ def run_migrations() -> None:
             _create_transaction_flags_table(conn, schema)
             _migrate_transaction_flags_add_potential_transfer(conn, schema)
             _migrate_add_currency(conn, schema)
+            _migrate_add_occurrence(conn, schema)
             _migrate_configs_if_needed(conn, schema)
         print("[migration] Startup migrations complete.")
     except Exception as ex:
@@ -504,6 +505,7 @@ def _create_transaction_tables(conn, schema: str) -> None:
             transaction_date DATE          NOT NULL,
             description      TEXT          NOT NULL DEFAULT '',
             amount           NUMERIC(14,2) NOT NULL DEFAULT 0,
+            occurrence       SMALLINT      NOT NULL DEFAULT 1,
             person           INTEGER[]     NOT NULL DEFAULT ARRAY[]::INTEGER[],
             source_file      TEXT          NOT NULL DEFAULT '',
             inserted_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
@@ -520,6 +522,7 @@ def _create_transaction_tables(conn, schema: str) -> None:
             description      TEXT          NOT NULL DEFAULT '',
             debit            NUMERIC(14,2) NOT NULL DEFAULT 0,
             credit           NUMERIC(14,2) NOT NULL DEFAULT 0,
+            occurrence       SMALLINT      NOT NULL DEFAULT 1,
             person           INTEGER[]     NOT NULL DEFAULT ARRAY[]::INTEGER[],
             source_file      TEXT          NOT NULL DEFAULT '',
             inserted_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
@@ -533,6 +536,7 @@ def _create_transaction_tables(conn, schema: str) -> None:
         conn.execute(text(f"ALTER TABLE {schema}.{tbl} ADD COLUMN IF NOT EXISTS family_id INTEGER REFERENCES {schema}.families(id)"))
         conn.execute(text(f"ALTER TABLE {schema}.{tbl} ADD COLUMN IF NOT EXISTS uploaded_by INTEGER REFERENCES {schema}.app_users(id)"))
         conn.execute(text(f"ALTER TABLE {schema}.{tbl} ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT ''"))
+        conn.execute(text(f"ALTER TABLE {schema}.{tbl} ADD COLUMN IF NOT EXISTS occurrence SMALLINT NOT NULL DEFAULT 1"))
 
     # Pre-create partitions: past 5 years + next 2
     current_year = date.today().year
@@ -564,13 +568,13 @@ def _ensure_year_partitions(conn, schema: str, years) -> None:
                 conn.execute(text(f"""
                     CREATE UNIQUE INDEX IF NOT EXISTS uq_{part}
                     ON {schema}.{part}
-                    (account_key, transaction_date, description, amount)
+                    (account_key, transaction_date, description, amount, occurrence)
                 """))
             else:
                 conn.execute(text(f"""
                     CREATE UNIQUE INDEX IF NOT EXISTS uq_{part}
                     ON {schema}.{part}
-                    (account_key, transaction_date, description, debit, credit)
+                    (account_key, transaction_date, description, debit, credit, occurrence)
                 """))
 
 
@@ -625,6 +629,62 @@ def _migrate_add_currency(conn, schema: str) -> None:
         conn.execute(text(
             f"ALTER TABLE {schema}.{tbl} ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT ''"
         ))
+
+
+def _migrate_add_occurrence(conn, schema: str) -> None:
+    """
+    Idempotently update existing per-year partition unique indexes to include
+    occurrence, enabling multiple same-value transactions (e.g. two identical
+    charges on the same day) to coexist.
+
+    The occurrence column is added to the parent tables in _create_transaction_tables
+    (which auto-propagates to all child partitions via PG declarative partitioning).
+    This function only rebuilds the per-partition indexes.
+
+    Existing rows all receive occurrence = 1 (the column default), which is
+    correct — the old constraint already deduplicated them to at most one row
+    per (key, date, description, amount).
+    """
+    current_year = date.today().year
+    for year in range(current_year - 10, current_year + 5):
+        for tbl in ("transactions_debit", "transactions_credit"):
+            part = f"{tbl}_{year}"
+            exists = conn.execute(text("""
+                SELECT 1 FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = :schema AND c.relname = :part
+            """), {"schema": schema, "part": part}).fetchone()
+            if not exists:
+                continue
+
+            # Drop the old index only if it doesn't already include occurrence.
+            conn.execute(text(f"""
+                DO $$ BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM pg_indexes
+                        WHERE schemaname = '{schema}'
+                          AND tablename = '{part}'
+                          AND indexname = 'uq_{part}'
+                          AND indexdef NOT LIKE '%occurrence%'
+                    ) THEN
+                        DROP INDEX {schema}.uq_{part};
+                    END IF;
+                END $$
+            """))
+
+            if tbl == "transactions_debit":
+                conn.execute(text(f"""
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_{part}
+                    ON {schema}.{part}
+                    (account_key, transaction_date, description, amount, occurrence)
+                """))
+            else:
+                conn.execute(text(f"""
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_{part}
+                    ON {schema}.{part}
+                    (account_key, transaction_date, description, debit, credit, occurrence)
+                """))
+    print("[migration] Occurrence-based dedup indexes applied.")
 
 
 def _migrate_transaction_flags_add_potential_transfer(conn, schema: str) -> None:

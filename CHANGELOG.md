@@ -1,26 +1,12 @@
 # CHANGELOG
 
 
-## v2.3.1-rc.1 (2026-03-22)
+## v2.3.2 (2026-03-22)
 
 ### Bug Fixes
 
-- Currencies
-  ([`5414f5d`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/5414f5d11a6d7960a96b5263c6a48c3563db7a9a))
-
 - Currency dropdown default USD, stale session refresh, baseline filter
-  ([`771adea`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/771adea0967880c48b105b7786d7cf518680b76a))
-
-- Default currency selection prefers USD over alphabetical first (PLN) - Refresh stale sessions
-  missing family_id without forcing logout/login - Apply currency filter to get_baseline() so
-  financial baseline widget respects the selected currency
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-- Use fetch + reset --hard in version-bump to avoid diverged branch failure
-  ([`96a735e`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/96a735e452ad786befaaf8fcc20b146d07b1f587))
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+  ([`d27b14d`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/d27b14dc09e3cf3f199e7eea228824b4bd9238cc))
 
 
 ## v2.3.1 (2026-03-22)

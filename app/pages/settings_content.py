@@ -14,6 +14,7 @@ from nicegui import ui
 from datetime import datetime
 
 from services.notifications import notify
+from services.ui_inputs import labeled_input, labeled_select
 from services.transaction_config import load_config, save_config
 from services.raw_table_manager import default_manager
 from services.config_repo import load_archive_enabled, save_archive_enabled
@@ -34,11 +35,6 @@ def _section_header(title: str, icon: str) -> None:
         ui.label(title).classes('text-base font-semibold text-zinc-700')
 
 
-def _field(label: str, **props) -> ui.input:
-    return ui.input(label=label).props('outlined dense').classes('w-full').props(**props) if props else \
-           ui.input(label=label).props('outlined dense').classes('w-full')
-
-
 # ── Profile section (all users) ───────────────────────────────────────────────
 
 def _profile_section() -> None:
@@ -52,8 +48,7 @@ def _profile_section() -> None:
         _section_header('My Profile', 'person')
         with ui.column().classes('px-6 py-5 gap-4 w-full'):
 
-            display_input = ui.input(label='Display name', value=user.display_name) \
-                .props('outlined dense').classes('w-full max-w-sm')
+            display_input = labeled_input('Display name', value=user.display_name, classes='w-full max-w-sm')
 
             ui.label(f'Username: {user.username}').classes('text-sm text-zinc-400')
             ui.label(f'Role: {"Instance Admin" if user.is_instance_admin else ("Family Head" if user.family_role == "head" else "Member")}').classes('text-sm text-zinc-400')
@@ -62,8 +57,8 @@ def _profile_section() -> None:
             ui.label('Change password').classes('text-sm font-medium text-zinc-600')
 
             with ui.row().classes('gap-3 w-full flex-wrap'):
-                new_pw  = ui.input(label='New password',     password=True, password_toggle_button=True).props('outlined dense').classes('w-56')
-                conf_pw = ui.input(label='Confirm password', password=True, password_toggle_button=True).props('outlined dense').classes('w-56')
+                new_pw  = labeled_input('New password',     password=True, password_toggle_button=True, classes='w-56')
+                conf_pw = labeled_input('Confirm password', password=True, password_toggle_button=True, classes='w-56')
 
             @ui.refreshable
             def profile_feedback():
@@ -152,26 +147,26 @@ def _edit_user_dialog(u: auth.AuthUser, on_change) -> None:
             ui.label(f'Edit — {u.username}').classes('text-base font-semibold text-zinc-800')
             ui.button(icon='close', on_click=dlg.close).props('flat round dense').classes('text-zinc-400')
 
-        display_input = ui.input(label='Display name', value=u.display_name) \
-            .props('outlined dense').classes('w-full')
+        display_input = labeled_input('Display name', value=u.display_name)
         active_toggle = ui.switch('Account active', value=u.is_active).classes('text-sm text-zinc-600')
 
         ui.separator()
         ui.label('Family').classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide')
-        family_select = ui.select(
-            label='Family', options=fam_opts,
+        family_select = labeled_select(
+            'Family',
+            fam_opts,
             value=str(u.family_id) if u.family_id else '',
-        ).props('outlined dense').classes('w-full')
-        role_select = ui.select(
-            label='Family role',
-            options={'member': 'Member', 'head': 'Family Head'},
+        )
+        role_select = labeled_select(
+            'Family role',
+            {'member': 'Member', 'head': 'Family Head'},
             value=u.family_role or 'member',
-        ).props('outlined dense').classes('w-full')
+        )
 
         ui.separator()
         ui.label('Reset password (optional)').classes('text-xs text-zinc-400')
-        new_pw  = ui.input(label='New password',     password=True, password_toggle_button=True).props('outlined dense').classes('w-full')
-        conf_pw = ui.input(label='Confirm password', password=True, password_toggle_button=True).props('outlined dense').classes('w-full')
+        new_pw  = labeled_input('New password',     password=True, password_toggle_button=True)
+        conf_pw = labeled_input('Confirm password', password=True, password_toggle_button=True)
 
         @ui.refreshable
         def dialog_feedback():
@@ -234,32 +229,27 @@ def _add_user_dialog(on_change) -> None:
 
         # ── Account info
         ui.label('Account info').classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide mt-1')
-        username_input = ui.input(label='Username', placeholder='e.g. jessica') \
-            .props('outlined dense').classes('w-full')
+        username_input = labeled_input('Username', placeholder='e.g. jessica')
         ui.label('Used to log in. Cannot be changed later.').classes('text-xs text-zinc-400 -mt-3 mb-1')
 
-        display_input = ui.input(label='Display name', placeholder='e.g. Jessica') \
-            .props('outlined dense').classes('w-full')
+        display_input = labeled_input('Display name', placeholder='e.g. Jessica')
         ui.label('Shown in the header and user list.').classes('text-xs text-zinc-400 -mt-3 mb-1')
 
         # ── Family
         ui.label('Family').classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide mt-2')
-        family_select = ui.select(label='Family', options=fam_opts, value='') \
-            .props('outlined dense').classes('w-full')
-        role_select = ui.select(
-            label='Family role',
-            options={'member': 'Member', 'head': 'Family Head'},
+        family_select = labeled_select('Family', fam_opts, value='')
+        role_select = labeled_select(
+            'Family role',
+            {'member': 'Member', 'head': 'Family Head'},
             value='member',
-        ).props('outlined dense').classes('w-full')
+        )
         ui.label('Family Head can manage settings and members.') \
             .classes('text-xs text-zinc-400 -mt-3 mb-1')
 
         # ── Password
         ui.label('Password').classes('text-xs font-semibold text-zinc-400 uppercase tracking-wide mt-2')
-        pw_input   = ui.input(label='Password',         password=True, password_toggle_button=True) \
-            .props('outlined dense').classes('w-full')
-        conf_input = ui.input(label='Confirm password', password=True, password_toggle_button=True) \
-            .props('outlined dense').classes('w-full')
+        pw_input   = labeled_input('Password',         password=True, password_toggle_button=True)
+        conf_input = labeled_input('Confirm password', password=True, password_toggle_button=True)
 
         @ui.refreshable
         def dialog_feedback():
@@ -386,10 +376,8 @@ def _aliases_section() -> None:
             render_alias_chips()
 
             with ui.row().classes('items-center gap-2'):
-                alias_name_in  = ui.input(label='Bank member name', placeholder='e.g. JOHN') \
-                    .props('outlined dense').classes('flex-1')
-                alias_value_in = ui.input(label='Person alias', placeholder='e.g. andy') \
-                    .props('outlined dense').classes('w-36')
+                alias_name_in  = labeled_input('Bank member name', placeholder='e.g. JOHN', classes='flex-1')
+                alias_value_in = labeled_input('Person alias', placeholder='e.g. andy', classes='w-36')
 
                 def _add_alias() -> None:
                     name  = alias_name_in.value.strip().upper()
@@ -469,10 +457,11 @@ def _employers_section() -> None:
             render_employer_chips()
 
             with ui.row().classes('items-center gap-2'):
-                pattern_in = ui.input(
-                    label='Payroll description pattern',
+                pattern_in = labeled_input(
+                    'Payroll description pattern',
                     placeholder='e.g. ACME CORP PAYROLL',
-                ).props('outlined dense').classes('flex-1')
+                    classes='flex-1',
+                )
 
                 def _add_employer() -> None:
                     val = pattern_in.value.strip().upper()
@@ -512,9 +501,12 @@ def _upload_manager_section() -> None:
             ui.label(b['source_file']).classes('text-xs font-mono text-zinc-400 truncate w-full')
             ui.label(f"{b['bank_name']} · {b['row_count']} rows").classes('text-xs text-zinc-400 -mt-2 mb-1')
 
-            person_select = ui.select(
-                label='Person(s)', options=user_opts, value=current_ids, multiple=True,
-            ).props('outlined dense use-chips').classes('w-full')
+            person_select = labeled_select(
+                'Person(s)',
+                user_opts,
+                value=current_ids,
+                multiple=True,
+            ).props('use-chips')
 
             @ui.refreshable
             def _fb():
@@ -659,16 +651,18 @@ def _backfill_currency_section() -> None:
             ).classes('text-xs text-zinc-400')
 
             account_options = {r.prefix: f"{r.bank_name} ({r.prefix})" for r in rules}
-            selected_account = ui.select(
-                options=account_options,
-                label='Account',
-            ).props('outlined dense').classes('w-72')
+            selected_account = labeled_select(
+                'Account',
+                account_options,
+                classes='w-72',
+            )
 
-            currency_in = ui.select(
-                options=CURRENCY_OPTIONS,
-                label='Currency',
+            currency_in = labeled_select(
+                'Currency',
+                CURRENCY_OPTIONS,
                 with_input=True,
-            ).props('outlined dense clearable').classes('w-72')
+                classes='w-72',
+            ).props('clearable')
 
             # Pre-fill currency when account selection changes
             rule_map = {r.prefix: r for r in rules}
@@ -811,11 +805,11 @@ def _edit_member_dialog(m, fid: int, on_change) -> None:
             ui.label(f'Edit — {m.display_name}').classes('text-base font-semibold text-zinc-800')
             ui.button(icon='close', on_click=dlg.close).props('flat round dense').classes('text-zinc-400')
 
-        role_select = ui.select(
-            label='Family role',
-            options={'head': 'Family Head', 'member': 'Member'},
+        role_select = labeled_select(
+            'Family role',
+            {'head': 'Family Head', 'member': 'Member'},
             value=m.family_role,
-        ).props('outlined dense').classes('w-full')
+        )
 
         def save_role():
             update_member_role(m.user_id, fid, role_select.value)
@@ -854,10 +848,12 @@ def _add_member_dialog(fid: int, unassigned: list, on_change) -> None:
 
     with ui.dialog() as dlg, ui.card().classes('w-96 rounded-2xl p-6 gap-4'):
         ui.label('Add Member').classes('text-base font-semibold text-zinc-800')
-        user_select = ui.select(label='User', options=options).props('outlined dense').classes('w-full')
-        role_select = ui.select(
-            label='Role', options={'member': 'Member', 'head': 'Family Head'}, value='member',
-        ).props('outlined dense').classes('w-full')
+        user_select = labeled_select('User', options)
+        role_select = labeled_select(
+            'Role',
+            {'member': 'Member', 'head': 'Family Head'},
+            value='member',
+        )
 
         def save():
             if user_select.value:
@@ -917,8 +913,7 @@ def _rename_family_dialog(fid: int, current_name: str, on_change) -> None:
     from services.family_service import rename_family
     with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
         ui.label('Rename Family').classes('text-base font-semibold text-zinc-800')
-        name_input = ui.input(label='Family name', value=current_name) \
-            .props('outlined dense').classes('w-full')
+        name_input = labeled_input('Family name', value=current_name)
 
         def save():
             n = name_input.value.strip()
@@ -939,8 +934,7 @@ def _create_family_dialog(on_change) -> None:
     with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
         ui.label('Create New Family').classes('text-base font-semibold text-zinc-800')
         ui.label('Config will be seeded from Default Family.').classes('text-xs text-zinc-400')
-        name_input = ui.input(label='Family name', placeholder='e.g. The Smiths') \
-            .props('outlined dense').classes('w-full')
+        name_input = labeled_input('Family name', placeholder='e.g. The Smiths')
 
         def save():
             n = name_input.value.strip()
@@ -1188,12 +1182,14 @@ def _finance_data_export_section() -> None:
             export_state   = {'person_id': 0}
 
             with ui.row().classes('items-center gap-2 w-full px-1 pb-1'):
-                ui.label('Person:').classes('text-xs text-zinc-500 shrink-0')
-                ui.select(
-                    options=person_options,
+                labeled_select(
+                    'Person',
+                    person_options,
                     value=0,
                     on_change=lambda e: export_state.update({'person_id': e.value}),
-                ).classes('w-44').props('outlined dense')
+                    compact=True,
+                    classes='w-44',
+                )
 
             ROWS = [
                 ('Debit transactions',  'account_balance',        'debit_transactions'),
@@ -1558,18 +1554,22 @@ def _raw_export_section() -> None:
             }
 
             with ui.row().classes('items-center gap-2 w-full px-1 pb-2 flex-wrap'):
-                ui.label('Person:').classes('text-xs text-zinc-500 shrink-0')
-                ui.select(
-                    options=person_options,
+                labeled_select(
+                    'Person',
+                    person_options,
                     value=raw_export_state['person_id'],
                     on_change=lambda e: raw_export_state.update({'person_id': e.value}),
-                ).classes('w-44').props('outlined dense')
-                ui.label('Account:').classes('text-xs text-zinc-500 shrink-0 ml-3')
-                ui.select(
-                    options=account_options,
+                    compact=True,
+                    classes='w-44',
+                )
+                labeled_select(
+                    'Account',
+                    account_options,
                     value=raw_export_state['account_key'],
                     on_change=lambda e: raw_export_state.update({'account_key': e.value}),
-                ).classes('w-56').props('outlined dense')
+                    compact=True,
+                    classes='w-56 ml-3',
+                )
 
             def _do_raw_download():
                 try:

@@ -7,7 +7,7 @@ from __future__ import annotations
 import pathlib
 from datetime import datetime
 
-from nicegui import ui
+from nicegui import ui, app
 from services.notifications import notify
 
 from services.dashboard_config import (
@@ -29,6 +29,7 @@ from components.dashboard_txn_table import render_txn_table
 
 from services.auth import current_user_id, current_selected_persons, current_family_id
 from services.family_service import get_family_members
+from services.ui_inputs import labeled_input, labeled_select
 
 import data.finance_dashboard_data as data
 
@@ -57,13 +58,21 @@ def content() -> None:
     years      = data.get_years()
     now        = datetime.now()
 
+    # Restore last active dashboard — validate it still exists and is accessible
+    _own_dash_ids    = {d['id'] for d in list_dashboards(user_id)}
+    _shared_dash_ids = {d['id'] for d in list_subscribed_shared(user_id)}
+    _stored_id       = app.storage.user.get('active_dashboard_id')
+    _valid_stored    = isinstance(_stored_id, int) and _stored_id in (_own_dash_ids | _shared_dash_ids)
+    _initial_id      = _stored_id if _valid_stored else get_or_create_default(user_id)
+    _initial_shared  = _valid_stored and _stored_id not in _own_dash_ids
+
     state = {
         'year':                years[0] if years else now.year,
         'category':            None,
         'edit_mode':           False,
-        'active_dashboard_id': get_or_create_default(user_id),
+        'active_dashboard_id': _initial_id,
         'edit_snapshot':       None,   # widget snapshot taken when entering edit mode
-        'is_shared_view':      False,  # True when viewing a dashboard owned by someone else
+        'is_shared_view':      _initial_shared,
     }
 
     # ── Drag-to-move/resize event bus ─────────────────────────────────────────
@@ -102,10 +111,15 @@ def content() -> None:
             ui.label('Spend & income across all accounts.').classes('text-sm text-muted')
 
         with ui.row().classes('items-center gap-2'):
-            ui.select(
-                options=years, value=state['year'], label='Year',
+            labeled_select(
+                'Year',
+                years,
+                inline=True,
+                value=state['year'],
                 on_change=lambda e: (state.update({'year': e.value}), _refresh_all()),
-            ).props('outlined dense').classes('w-28')
+                compact=True,
+                classes='w-28',
+            )
 
             ui.button('Refresh', icon='refresh', on_click=lambda: _refresh_all()) \
                 .props('flat no-caps').classes('button button-outline')
@@ -135,10 +149,11 @@ def content() -> None:
                     with ui.row().classes('items-center gap-0'):
                         ui.button(
                             db['name'],
+                            icon=('check_circle' if is_active else None),
                             on_click=lambda _, did=db['id']: _switch_dashboard(did, is_shared=False),
                         ).props('no-caps dense').classes(
                             'text-sm px-3 py-1 rounded-lg ' +
-                            ('bg-zinc-800 text-white' if is_active else 'text-zinc-500')
+                            ('bg-zinc-100 text-zinc-900' if is_active else 'text-zinc-500')
                         )
                         if edit:
                             if not db['is_default']:
@@ -162,10 +177,11 @@ def content() -> None:
                         with ui.element('div').classes('flex flex-col items-start'):
                             ui.button(
                                 sd['name'],
+                                icon=('check_circle' if is_active else None),
                                 on_click=lambda _, did=sd['id']: _switch_dashboard(did, is_shared=True),
                             ).props('no-caps dense').classes(
                                 'text-sm px-3 py-1 rounded-lg ' +
-                                ('bg-indigo-700 text-white' if is_active else 'text-indigo-400')
+                                ('bg-indigo-100 text-indigo-900' if is_active else 'text-indigo-400')
                             )
                         ui.icon('group').classes('text-indigo-300').style('font-size:0.9rem') \
                             .tooltip(f'Shared by {sd["owner_name"]}')
@@ -379,6 +395,8 @@ def content() -> None:
             edit_fab.refresh()
         state['is_shared_view'] = is_shared
         state['active_dashboard_id'] = dashboard_id
+        app.storage.user['active_dashboard_id'] = dashboard_id
+        ui.run_javascript(f"history.replaceState(null, '', '/?dashboard={dashboard_id}')")
         state['category'] = None
         edit_btn.set_visibility(not is_shared)
         category_chip.refresh()
@@ -391,8 +409,7 @@ def content() -> None:
     def _new_dashboard_dialog() -> None:
         with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
             ui.label('New Dashboard').classes('text-base font-semibold')
-            name_input = ui.input(placeholder='e.g. Personal, Savings') \
-                .props('outlined dense').classes('w-full')
+            name_input = labeled_input('Dashboard Name', placeholder='e.g. Personal, Savings')
             with ui.row().classes('justify-end gap-2 mt-1'):
                 ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
                 def _create() -> None:
@@ -409,7 +426,7 @@ def content() -> None:
     def _rename_dashboard_dialog(db: dict) -> None:
         with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
             ui.label('Rename Dashboard').classes('text-base font-semibold')
-            name_input = ui.input(value=db['name']).props('outlined dense').classes('w-full')
+            name_input = labeled_input('Dashboard Name', value=db['name'])
             with ui.row().classes('justify-end gap-2 mt-1'):
                 ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
                 def _save() -> None:

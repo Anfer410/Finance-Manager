@@ -12,6 +12,7 @@ from components.widgets import REGISTRY
 from services.custom_chart_repo import list_custom_charts, delete_custom_chart
 from services.dashboard_config import list_dashboards, add_widget
 from services.auth import current_user_id
+from services.ui_inputs import labeled_select
 
 # Widget types that map directly to chart-builder chart types
 _CLONABLE_TYPES = {'bar', 'line', 'mixed', 'stacked_bar', 'donut', 'area_line'}
@@ -34,7 +35,7 @@ def content() -> None:
         with ui.dialog() as dlg, \
              ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
             ui.label('Add to Dashboard').classes('text-lg font-semibold')
-            sel = ui.select(options, label='Dashboard').classes('w-full')
+            sel = labeled_select('Dashboard', options)
             with ui.row().classes('w-full justify-end gap-2'):
                 ui.button('Cancel', on_click=dlg.close).props('flat')
                 def _do_add():

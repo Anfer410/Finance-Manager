@@ -18,6 +18,7 @@ from services.family_service import (
 )
 from services.notifications import notify
 from nicegui import ui
+from services.ui_inputs import labeled_input, labeled_select
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -91,10 +92,8 @@ def _edit_user_dialog(u: auth.AuthUser, families: list, on_change) -> None:
             ui.button(icon='close', on_click=dlg.close) \
                 .props('flat round dense').classes('text-zinc-400')
 
-        display_input = ui.input(label='Display name', value=u.display_name) \
-            .props('outlined dense').classes('w-full')
-        person_input = ui.input(label='Person name (lowercase)', value=u.person_name) \
-            .props('outlined dense').classes('w-full')
+        display_input = labeled_input('Display name', value=u.display_name)
+        person_input = labeled_input('Person name (lowercase)', value=u.person_name)
         ui.label('Identifier used to tag transactions.') \
             .classes('text-xs text-zinc-400 -mt-3 mb-1')
 
@@ -105,33 +104,31 @@ def _edit_user_dialog(u: auth.AuthUser, families: list, on_change) -> None:
         ui.separator()
         ui.label('Family assignment').classes('text-sm font-medium text-zinc-600')
 
-        family_select = ui.select(
-            label='Family',
-            options={**{'': '— unassigned —'}, **family_options},
+        family_select = labeled_select(
+            'Family',
+            {**{'': '— unassigned —'}, **family_options},
             value=str(u.family_id) if u.family_id else '',
-        ).props('outlined dense').classes('w-full')
+        )
 
         if u.family_id:
-            role_select = ui.select(
-                label='Family role',
-                options={'member': 'Member', 'head': 'Family Head'},
+            role_select = labeled_select(
+                'Family role',
+                {'member': 'Member', 'head': 'Family Head'},
                 value=u.family_role or 'member',
-            ).props('outlined dense').classes('w-full')
+            )
         else:
-            role_select = ui.select(
-                label='Family role',
-                options={'member': 'Member', 'head': 'Family Head'},
+            role_select = labeled_select(
+                'Family role',
+                {'member': 'Member', 'head': 'Family Head'},
                 value='member',
-            ).props('outlined dense').classes('w-full')
+            )
 
         ui.separator()
         ui.label('Set temporary password (optional)').classes('text-xs text-zinc-400')
         ui.label('User will be forced to change it on next login.') \
             .classes('text-xs text-zinc-400')
-        new_pw  = ui.input(label='Temp password',     password=True,
-                           password_toggle_button=True).props('outlined dense').classes('w-full')
-        conf_pw = ui.input(label='Confirm password',  password=True,
-                           password_toggle_button=True).props('outlined dense').classes('w-full')
+        new_pw  = labeled_input('Temp password',     password=True, password_toggle_button=True)
+        conf_pw = labeled_input('Confirm password',  password=True, password_toggle_button=True)
 
         @ui.refreshable
         def feedback():
@@ -204,26 +201,24 @@ def _create_user_dialog(families: list, on_change) -> None:
     with ui.dialog() as dlg, ui.card().classes('w-96 rounded-2xl p-6 gap-4'):
         ui.label('Create New User').classes('text-base font-semibold text-zinc-800')
 
-        username_input = ui.input(label='Username').props('outlined dense').classes('w-full')
-        display_input  = ui.input(label='Display name').props('outlined dense').classes('w-full')
-        person_input   = ui.input(label='Person name (lowercase)') \
-            .props('outlined dense').classes('w-full')
-        pw_input  = ui.input(label='Password', password=True, password_toggle_button=True) \
-            .props('outlined dense').classes('w-full')
+        username_input = labeled_input('Username')
+        display_input  = labeled_input('Display name')
+        person_input   = labeled_input('Person name (lowercase)')
+        pw_input  = labeled_input('Password', password=True, password_toggle_button=True)
 
         ui.separator()
         ui.label('Family assignment').classes('text-sm font-medium text-zinc-600')
 
-        family_select = ui.select(
-            label='Family',
-            options={**{'': '— unassigned —'}, **family_options},
+        family_select = labeled_select(
+            'Family',
+            {**{'': '— unassigned —'}, **family_options},
             value=str(families[0].id) if families else '',
-        ).props('outlined dense').classes('w-full')
-        role_select = ui.select(
-            label='Role',
-            options={'member': 'Member', 'head': 'Family Head'},
+        )
+        role_select = labeled_select(
+            'Role',
+            {'member': 'Member', 'head': 'Family Head'},
             value='member',
-        ).props('outlined dense').classes('w-full')
+        )
 
         @ui.refreshable
         def feedback():

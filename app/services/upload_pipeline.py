@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import io
 import re
+from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime as _datetime
 from typing import Literal
 
 import pandas as pd
@@ -300,6 +302,31 @@ def _parse_amount(raw) -> float:
         return 0.0
 
 
+# ── Date parsing helper ───────────────────────────────────────────────────────
+
+def _parse_date(raw: str, date_format: str = ""):
+    """Parse a raw date string into a Python date.
+
+    If *date_format* is a non-empty strptime format string (e.g. ``"%d/%m/%Y"``)
+    it is used directly.  Otherwise pandas auto-detection is used with
+    ``dayfirst=False`` (i.e. MM/DD/YYYY assumed for ambiguous dates).
+
+    Returns ``None`` on failure.
+    """
+    s = str(raw).strip()
+    if not s or s in ("NaN", "nan"):
+        return None
+    if date_format:
+        try:
+            return _datetime.strptime(s, date_format).date()
+        except ValueError:
+            return None
+    try:
+        return pd.to_datetime(s, dayfirst=False).date()
+    except Exception:
+        return None
+
+
 # ── Consolidated table writer ─────────────────────────────────────────────────
 
 def _resolve_person(row: pd.Series, rule, member_col: str | None, default_person_ids: list[int]) -> list[int]:
@@ -375,7 +402,8 @@ def write_to_consolidated(
           f"{'debit_col=' + debit_col + ' credit_col=' + credit_col if is_credit else 'amount_col=' + amount_col} "
           f"rows={len(df)} df_cols={list(df.columns)}")
 
-    currency = getattr(rule, "currency", "") or ""
+    currency    = getattr(rule, "currency",    "") or ""
+    date_format = getattr(rule, "date_format", "") or ""
 
     inserted = 0
     skipped_date = 0
@@ -387,9 +415,8 @@ def write_to_consolidated(
         if pd.isna(raw_date) or str(raw_date).strip() in ("", "NaN", "nan"):
             skipped_date += 1
             continue
-        try:
-            txn_date = pd.to_datetime(str(raw_date), dayfirst=False).date()
-        except Exception:
+        txn_date = _parse_date(str(raw_date), date_format)
+        if txn_date is None:
             skipped_date += 1
             continue
 
@@ -443,6 +470,23 @@ def write_to_consolidated(
         print(f"[write_to_consolidated] no valid rows to insert — check date_col '{date_col}' exists in df")
         return 0
 
+    # Assign occurrence numbers within each year's batch.
+    # Rows are grouped by their dedup key; the Nth occurrence of a given key
+    # gets occurrence=N.  This lets repeated genuine transactions (e.g. two
+    # car-wash charges on the same day for the same amount) be stored as
+    # distinct rows while still deduplicating exact re-uploads of the same file.
+    for batch in rows_by_year.values():
+        occ: dict = defaultdict(int)
+        for row in batch:
+            if is_credit:
+                key = (row["account_key"], row["transaction_date"], row["description"],
+                       row["debit"], row["credit"])
+            else:
+                key = (row["account_key"], row["transaction_date"], row["description"],
+                       row["amount"])
+            occ[key] += 1
+            row["occurrence"] = occ[key]
+
     total_rows_to_insert = sum(len(b) for b in rows_by_year.values())
     print(f"[write_to_consolidated] years={list(rows_by_year.keys())} total_rows_to_insert={total_rows_to_insert}")
     # Sample first row to verify types going into DB
@@ -465,11 +509,11 @@ def write_to_consolidated(
                     sql = text(f"""
                         INSERT INTO {tbl}
                             (account_key, transaction_date, description,
-                             debit, credit, person, source_file,
+                             debit, credit, occurrence, person, source_file,
                              family_id, uploaded_by, currency)
                         VALUES
                             (:account_key, :transaction_date, :description,
-                             :debit, :credit, :person, :source_file,
+                             :debit, :credit, :occurrence, :person, :source_file,
                              :family_id, :uploaded_by, :currency)
                         ON CONFLICT DO NOTHING
                     """)
@@ -477,11 +521,11 @@ def write_to_consolidated(
                     sql = text(f"""
                         INSERT INTO {tbl}
                             (account_key, transaction_date, description,
-                             amount, person, source_file,
+                             amount, occurrence, person, source_file,
                              family_id, uploaded_by, currency)
                         VALUES
                             (:account_key, :transaction_date, :description,
-                             :amount, :person, :source_file,
+                             :amount, :occurrence, :person, :source_file,
                              :family_id, :uploaded_by, :currency)
                         ON CONFLICT DO NOTHING
                     """)

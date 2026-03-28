@@ -67,8 +67,13 @@ def content() -> None:
             with ui.row().classes('items-center justify-between mb-3'):
                 ui.label('Classification rules').classes('section-title')
                 ui.label('Checked in priority order — first match wins.').classes('text-xs text-muted')
-                ui.button(icon='add', on_click=lambda: _add_rule_dialog(cfg, rule_table)) \
-                    .props('flat round dense').classes('text-gray-500')
+                with ui.row().classes('gap-1'):
+                    ui.button(icon='delete_sweep',
+                              on_click=lambda: _clear_rules_dialog(cfg, rule_table)) \
+                        .props('flat round dense').classes('text-red-400') \
+                        .tooltip('Clear all rules')
+                    ui.button(icon='add', on_click=lambda: _add_rule_dialog(cfg, rule_table)) \
+                        .props('flat round dense').classes('text-gray-500')
 
             # Header
             with ui.row().classes('w-full px-1 pb-1 gap-2 text-xs text-muted font-medium'):
@@ -216,6 +221,21 @@ def _edit_rule_dialog(rule: CategoryRule, cfg: CategoryConfig, refresh_fn) -> No
 def _delete_rule(rule: CategoryRule, cfg: CategoryConfig, refresh_fn) -> None:
     cfg.rules = [r for r in cfg.rules if r is not rule]
     refresh_fn.refresh()
+
+
+def _clear_rules_dialog(cfg: CategoryConfig, refresh_fn) -> None:
+    with ui.dialog() as dlg, ui.card().classes('w-80 gap-3'):
+        ui.label('Clear all rules?').classes('text-base font-semibold')
+        ui.label('This removes all classification rules. You can add your own from scratch. '
+                 'Remember to save after clearing.').classes('text-sm text-gray-500')
+        with ui.row().classes('justify-end gap-2 w-full'):
+            ui.button('Cancel', on_click=dlg.close).props('flat')
+            def _ok():
+                cfg.rules = []
+                refresh_fn.refresh()
+                dlg.close()
+            ui.button('Clear all', on_click=_ok).props('unelevated').classes('bg-red-600 text-white')
+    dlg.open()
 
 
 def _save(vm, cfg: CategoryConfig) -> None:

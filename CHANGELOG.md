@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v2.4.3-rc.1 (2026-03-28)
+
+### Bug Fixes
+
+- Prevent default categories from reappearing after deletion; add clear-all rules button
+  ([`981a85b`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/981a85b2be96cb1deee88bdf55389e10a698c3b5))
+
+- Remove backfill loop in load_category_config that was re-injecting any missing default category on
+  every page load, causing deleted categories to reappear after reload - Add "Clear all rules"
+  button (delete_sweep icon) to the classification rules header with a confirmation dialog, allowing
+  users to wipe all default rules and start from scratch
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Chores
+
+- Sync develop with main after release
+  ([`986a266`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/986a266103a05e22aeafc914a72967311a7e5d4b))
+
+
 ## v2.4.2 (2026-03-23)
 
 

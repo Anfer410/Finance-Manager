@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v2.4.3-rc.2 (2026-03-28)
+
+### Bug Fixes
+
+- Make DB volume path configurable via DB_DATA_PATH env var
+  ([`ef75d52`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/ef75d52a151174c790dc1b73a57884447dfd8a4d))
+
+Allows the data volume mount point to be overridden via DB_DATA_PATH, falling back to the default
+  named volume when not set.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+
 ## v2.4.3-rc.1 (2026-03-28)
 
 ### Bug Fixes

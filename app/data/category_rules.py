@@ -531,13 +531,7 @@ def load_category_config(family_id: int) -> CategoryConfig:
         from services.config_repo import load_categories
         data = load_categories(family_id)
         if data:
-            cfg = CategoryConfig.from_dict(data)
-            # Backfill any missing default categories
-            existing_names = {c.name for c in cfg.categories}
-            for d in DEFAULT_CATEGORIES:
-                if d["name"] not in existing_names:
-                    cfg.categories.append(Category.from_dict(d))
-            return cfg
+            return CategoryConfig.from_dict(data)
     except Exception as e:
         print(f"[category_rules] DB load failed ({e}), falling back to file/defaults")
 

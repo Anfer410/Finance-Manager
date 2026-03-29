@@ -49,11 +49,11 @@ def labeled_input(
         **kwargs: Forwarded to ui.input (placeholder, value, password, on_change, etc.).
     """
     if compact:
-        with ui.column().classes('gap-0.5'):
+        with ui.column().classes('gap-0.5 min-w-32'):
             ui.label(label).classes('text-xs text-zinc-500')
             inp = ui.input(**kwargs).props('outlined dense').classes(classes)
     else:
-        with ui.column().classes('gap-1'):
+        with ui.column().classes('gap-1 min-w-40'):
             ui.label(label).classes('text-sm font-medium text-zinc-700')
             if hint:
                 ui.label(hint).classes('text-xs text-zinc-400')
@@ -87,15 +87,15 @@ def labeled_select(
     """
     if inline:
         label_cls = 'text-xs text-zinc-500 whitespace-nowrap' if compact else 'text-sm font-medium text-zinc-700 whitespace-nowrap'
-        with ui.row().classes('items-center gap-2'):
+        with ui.row().classes('items-center gap-2 min-w-32'):
             ui.label(label).classes(label_cls)
             sel = ui.select(options, **kwargs).props('outlined dense').classes(classes)
     elif compact:
-        with ui.column().classes('gap-0.5'):
+        with ui.column().classes('gap-0.5 min-w-32'):
             ui.label(label).classes('text-xs text-zinc-500')
             sel = ui.select(options, **kwargs).props('outlined dense').classes(classes)
     else:
-        with ui.column().classes('gap-1'):
+        with ui.column().classes('gap-1 min-w-40'):
             ui.label(label).classes('text-sm font-medium text-zinc-700')
             if hint:
                 ui.label(hint).classes('text-xs text-zinc-400')

@@ -76,6 +76,58 @@ def _currency_filter() -> tuple[str, dict]:
     return "AND currency = :_cur", {"_cur": cur}
 
 
+# ── Smart suggestions ─────────────────────────────────────────────────────────
+
+def get_uncategorized_clusters(family_id: int, min_count: int = 5, limit: int = 30) -> list[dict]:
+    """
+    Returns clusters of uncategorized (category='Other') transactions grouped by
+    a cleaned pattern extracted from the description. Clusters are ordered by
+    specificity (word count desc) then frequency (cnt desc) so that more-specific
+    patterns appear first, nudging the user to handle KROGER FUEL before KROGER.
+
+    Each row: {pattern, cnt, total, examples}
+      pattern  — cleaned token (e.g. "KROGER FUEL"), good default for a new rule
+      cnt      — number of transactions in the cluster
+      total    — summed spend amount
+      examples — up to 5 raw description samples
+    """
+    rows = _q(
+        f"""
+        SELECT
+            suggested_pattern,
+            COUNT(*)                                           AS cnt,
+            ROUND(SUM(amount)::numeric, 2)                    AS total,
+            (array_agg(description ORDER BY description))[1:5] AS examples
+        FROM (
+            SELECT
+                TRIM(regexp_replace(upper(description), '\\s*[#*/0-9].*$', '')) AS suggested_pattern,
+                description,
+                amount
+            FROM {V_ALL_SPEND}
+            WHERE family_id = :fid
+              AND category = 'Other'
+        ) sub
+        WHERE suggested_pattern != ''
+        GROUP BY suggested_pattern
+        HAVING COUNT(*) >= :min_count
+        ORDER BY
+            array_length(string_to_array(suggested_pattern, ' '), 1) DESC,
+            COUNT(*) DESC
+        LIMIT :lim
+        """,
+        fid=family_id, min_count=min_count, lim=limit,
+    )
+    return [
+        {
+            "pattern":  r[0],
+            "cnt":      r[1],
+            "total":    float(r[2]),
+            "examples": list(r[3]) if r[3] else [],
+        }
+        for r in rows
+    ]
+
+
 # ── Available currencies ──────────────────────────────────────────────────────
 
 def get_currencies() -> list[str]:
@@ -555,7 +607,7 @@ def get_filter_options(year: int) -> dict:
 
     return {
         "categories": _distinct("category"),
-        "cost_types":  _distinct("cost_type"),
+        "cost_types":  _distinct("cost_type") + ['income'],
         "banks":       _distinct("bank"),
         "persons":     [r[0] for r in persons_rows],
     }
@@ -678,102 +730,217 @@ def gettransactions_table(
     filters: dict | None = None,
 ) -> list[dict]:
     """
-    Returns all spend transactions for the year as a list of row dicts.
+    Returns spend + income transactions for the year as a list of row dicts.
+    Income rows have cost_type='income' and category=matched employer pattern or 'other_income'.
+
     `filters` dict (simple mode): keys = cost_type, bank, from_date, to_date, category
-    `search` string (advanced mode): supports category=x  type=x  from=  to=  free text
+    `search` string (advanced mode): supports category=x  type=x|income  from=  to=  free text
     """
+    from services.transaction_config import load_config as _load_cfg
+
     person_clause,   person_params   = _persons_filter(persons)
     family_clause,   family_params   = _family_filter()
     currency_clause, currency_params = _currency_filter()
-    category_filter = "AND category = :category" if category else ""
 
-    extra_clauses: list[str] = []
-    extra_params:  dict      = {}
+    # ── Decide what to include ────────────────────────────────────────────────
+    include_spend  = True
+    include_income = True
 
-    if filters:
-        if filters.get('category'):
-            extra_clauses.append("category ILIKE :f_category")
-            extra_params['f_category'] = f"%{filters['category']}%"
-        if filters.get('cost_type'):
-            extra_clauses.append("cost_type ILIKE :f_cost_type")
-            extra_params['f_cost_type'] = f"%{filters['cost_type']}%"
-        if filters.get('bank'):
-            extra_clauses.append("bank ILIKE :f_bank")
-            extra_params['f_bank'] = f"%{filters['bank']}%"
-        if filters.get('from_date'):
-            extra_clauses.append("transaction_date >= :f_from")
-            extra_params['f_from'] = filters['from_date']
-        if filters.get('to_date'):
-            extra_clauses.append("transaction_date <= :f_to")
-            extra_params['f_to'] = filters['to_date']
-    else:
-        col_filters, free_text, date_from, date_to = _parse_search(search)
+    # A page-level category click always targets a spend category
+    if category:
+        include_income = False
 
-        from collections import defaultdict
-        grouped: dict[str, list[str]] = defaultdict(list)
-        for col, val in col_filters:
-            grouped[col].append(val)
+    # Simple filter: cost_type restricts to one side
+    if filters and filters.get('cost_type'):
+        ct = filters['cost_type'].lower()
+        if ct in ('fixed', 'variable'):
+            include_income = False
+        elif ct == 'income':
+            include_spend = False
 
-        for col, vals in grouped.items():
-            or_parts = []
-            for i, val in enumerate(vals):
-                key = f"sf_{col}_{i}"
-                if col == "amount":
-                    or_parts.append(f"CAST(amount AS TEXT) ILIKE :{key}")
-                elif col == "transaction_date":
-                    or_parts.append(f"CAST(transaction_date AS TEXT) ILIKE :{key}")
-                else:
-                    or_parts.append(f"{col} ILIKE :{key}")
-                extra_params[key] = f"%{val}%"
-            clause = " OR ".join(or_parts)
-            extra_clauses.append(f"({clause})" if len(or_parts) > 1 else clause)
+    # Advanced search: detect type= token to restrict to one side
+    if not filters and search:
+        adv_col_filters, _, _, _ = _parse_search(search)
+        for col, val in adv_col_filters:
+            if col == 'cost_type':
+                if val.lower() in ('fixed', 'variable'):
+                    include_income = False
+                elif val.lower() == 'income':
+                    include_spend = False
 
-        if date_from:
-            extra_clauses.append("transaction_date >= :date_from")
-            extra_params["date_from"] = date_from
-        if date_to:
-            extra_clauses.append("transaction_date <= :date_to")
-            extra_params["date_to"] = date_to
-        if free_text:
-            extra_clauses.append("description ILIKE :free_text")
-            extra_params["free_text"] = f"%{free_text}%"
+    # ── Spend query ───────────────────────────────────────────────────────────
+    spend_rows: list[dict] = []
+    if include_spend:
+        category_filter = "AND category = :category" if category else ""
+        extra_clauses: list[str] = []
+        extra_params:  dict      = {}
 
-    extra_filter = ("AND " + " AND ".join(extra_clauses)) if extra_clauses else ""
+        if filters:
+            if filters.get('category'):
+                extra_clauses.append("category ILIKE :f_category")
+                extra_params['f_category'] = f"%{filters['category']}%"
+            if filters.get('cost_type'):
+                extra_clauses.append("cost_type ILIKE :f_cost_type")
+                extra_params['f_cost_type'] = f"%{filters['cost_type']}%"
+            if filters.get('bank'):
+                extra_clauses.append("bank ILIKE :f_bank")
+                extra_params['f_bank'] = f"%{filters['bank']}%"
+            if filters.get('from_date'):
+                extra_clauses.append("transaction_date >= :f_from")
+                extra_params['f_from'] = filters['from_date']
+            if filters.get('to_date'):
+                extra_clauses.append("transaction_date <= :f_to")
+                extra_params['f_to'] = filters['to_date']
+        else:
+            col_filters, free_text, date_from, date_to = _parse_search(search)
 
-    rows = _q(f"""
-        SELECT
-            transaction_date,
-            description,
-            category,
-            cost_type,
-            amount,
-            bank,
-            (
-                SELECT STRING_AGG(u.display_name, ', ' ORDER BY u.id)
-                FROM {_SCHEMA}.app_users u
-                WHERE u.id = ANY(s.person)
-            ) AS person_names
-        FROM {V_ALL_SPEND} s
-        WHERE EXTRACT(YEAR FROM transaction_date) = :year
-          {person_clause}
-          {family_clause}
-          {currency_clause}
-          {category_filter}
-          {extra_filter}
-        ORDER BY transaction_date DESC
-    """, year=year, **person_params, **family_params, **currency_params,
-       **( {"category": category} if category else {}),
-       **extra_params)
+            from collections import defaultdict
+            grouped: dict[str, list[str]] = defaultdict(list)
+            for col, val in col_filters:
+                grouped[col].append(val)
 
-    return [
-        {
-            "date":        r[0].strftime("%Y-%m-%d") if hasattr(r[0], "strftime") else str(r[0]),
-            "description": r[1] or "",
-            "category":    r[2] or "Other",
-            "cost_type":   r[3] or "",
-            "amount":      round(float(r[4]), 2),
-            "bank":        r[5] or "",
-            "person":      r[6] or "",
-        }
-        for r in rows
-    ]
+            for col, vals in grouped.items():
+                or_parts = []
+                for i, val in enumerate(vals):
+                    key = f"sf_{col}_{i}"
+                    if col == "amount":
+                        or_parts.append(f"CAST(amount AS TEXT) ILIKE :{key}")
+                    elif col == "transaction_date":
+                        or_parts.append(f"CAST(transaction_date AS TEXT) ILIKE :{key}")
+                    else:
+                        or_parts.append(f"{col} ILIKE :{key}")
+                    extra_params[key] = f"%{val}%"
+                clause = " OR ".join(or_parts)
+                extra_clauses.append(f"({clause})" if len(or_parts) > 1 else clause)
+
+            if date_from:
+                extra_clauses.append("transaction_date >= :date_from")
+                extra_params["date_from"] = date_from
+            if date_to:
+                extra_clauses.append("transaction_date <= :date_to")
+                extra_params["date_to"] = date_to
+            if free_text:
+                extra_clauses.append("description ILIKE :free_text")
+                extra_params["free_text"] = f"%{free_text}%"
+
+        extra_filter = ("AND " + " AND ".join(extra_clauses)) if extra_clauses else ""
+
+        rows = _q(f"""
+            SELECT
+                transaction_date,
+                description,
+                category,
+                cost_type,
+                amount,
+                bank,
+                (
+                    SELECT STRING_AGG(u.display_name, ', ' ORDER BY u.id)
+                    FROM {_SCHEMA}.app_users u
+                    WHERE u.id = ANY(s.person)
+                ) AS person_names
+            FROM {V_ALL_SPEND} s
+            WHERE EXTRACT(YEAR FROM transaction_date) = :year
+              {person_clause}
+              {family_clause}
+              {currency_clause}
+              {category_filter}
+              {extra_filter}
+            ORDER BY transaction_date DESC
+        """, year=year, **person_params, **family_params, **currency_params,
+           **( {"category": category} if category else {}),
+           **extra_params)
+
+        spend_rows = [
+            {
+                "date":        r[0].strftime("%Y-%m-%d") if hasattr(r[0], "strftime") else str(r[0]),
+                "description": r[1] or "",
+                "category":    r[2] or "Other",
+                "cost_type":   r[3] or "",
+                "amount":      round(float(r[4]), 2),
+                "bank":        r[5] or "",
+                "person":      r[6] or "",
+            }
+            for r in rows
+        ]
+
+    # ── Income query ──────────────────────────────────────────────────────────
+    income_rows: list[dict] = []
+    if include_income:
+        inc_clauses: list[str] = []
+        inc_params:  dict      = {}
+
+        if filters:
+            if filters.get('bank'):
+                inc_clauses.append("bank ILIKE :i_bank")
+                inc_params['i_bank'] = f"%{filters['bank']}%"
+            if filters.get('from_date'):
+                inc_clauses.append("transaction_date >= :i_from")
+                inc_params['i_from'] = filters['from_date']
+            if filters.get('to_date'):
+                inc_clauses.append("transaction_date <= :i_to")
+                inc_params['i_to'] = filters['to_date']
+        else:
+            col_filters, free_text, date_from, date_to = _parse_search(search)
+            for col, val in col_filters:
+                if col == 'bank':
+                    inc_clauses.append("bank ILIKE :i_bank")
+                    inc_params['i_bank'] = f"%{val}%"
+                elif col == 'description':
+                    inc_clauses.append("description ILIKE :i_desc")
+                    inc_params['i_desc'] = f"%{val}%"
+            if date_from:
+                inc_clauses.append("transaction_date >= :i_date_from")
+                inc_params['i_date_from'] = date_from
+            if date_to:
+                inc_clauses.append("transaction_date <= :i_date_to")
+                inc_params['i_date_to'] = date_to
+            if free_text:
+                inc_clauses.append("description ILIKE :i_free_text")
+                inc_params['i_free_text'] = f"%{free_text}%"
+
+        inc_filter = ("AND " + " AND ".join(inc_clauses)) if inc_clauses else ""
+
+        raw = _q(f"""
+            SELECT
+                transaction_date,
+                description,
+                amount,
+                bank,
+                (
+                    SELECT STRING_AGG(u.display_name, ', ' ORDER BY u.id)
+                    FROM {_SCHEMA}.app_users u
+                    WHERE u.id = ANY(s.person)
+                ) AS person_names
+            FROM {V_INCOME} s
+            WHERE EXTRACT(YEAR FROM transaction_date) = :year
+              {person_clause}
+              {family_clause}
+              {currency_clause}
+              {inc_filter}
+        """, year=year, **person_params, **family_params, **currency_params, **inc_params)
+
+        cfg      = _load_cfg(auth.current_family_id())
+        patterns = cfg.employer_pattern_strings
+
+        for r in raw:
+            desc = r[1] or ""
+            cat  = next((p for p in patterns if p.lower() in desc.lower()), 'other_income')
+            income_rows.append({
+                "date":        r[0].strftime("%Y-%m-%d") if hasattr(r[0], "strftime") else str(r[0]),
+                "description": desc,
+                "category":    cat,
+                "cost_type":   "income",
+                "amount":      round(float(r[2]), 2),
+                "bank":        r[3] or "",
+                "person":      r[4] or "",
+            })
+
+        # Apply category filter from filter bar to income rows
+        if filters and filters.get('category'):
+            f_cat = filters['category'].lower()
+            income_rows = [row for row in income_rows if f_cat in row['category'].lower()]
+
+    # ── Merge and sort by date desc ───────────────────────────────────────────
+    all_rows = spend_rows + income_rows
+    all_rows.sort(key=lambda r: r['date'], reverse=True)
+    return all_rows

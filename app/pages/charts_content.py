@@ -127,7 +127,7 @@ def content() -> None:
             with ui.row().classes('items-center gap-2'):
                 ui.icon(widget.icon).classes('text-zinc-500').style('font-size:1.5rem')
                 ui.label(widget.title).classes('font-semibold text-zinc-800 text-sm')
-            ui.label(widget.description).classes('text-xs text-zinc-500 flex-1')
+            ui.label(widget.description).classes('text-xs text-zinc-500 line-clamp-2')
             ui.badge(widget.widget_type.value) \
               .classes('self-start text-xs').props('color=grey-3 text-color=grey-8')
             with ui.row().classes('gap-1 mt-1'):

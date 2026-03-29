@@ -45,19 +45,15 @@ def content() -> None:
     cfg = load_category_config(auth.current_family_id())
     vm  = ViewManager(engine=ENGINE, schema=SCHEMA)
 
-    suggestions_state: dict = {"clusters": [], "visible": False}
+    suggestions_state: dict = {"clusters": []}
 
     # ── Header ────────────────────────────────────────────────────────────────
     with ui.row().classes('w-full items-center justify-between mb-2'):
         with ui.column().classes('gap-0'):
             ui.label('Categories').classes('page-title')
             ui.label('Manage spend categories and classification rules.').classes('text-sm text-muted')
-        with ui.row().classes('gap-2'):
-            ui.button('Smart Suggestions', icon='auto_awesome',
-                      on_click=lambda: _toggle_suggestions(suggestions_state, suggestions_panel)) \
-                .props('unelevated').classes('bg-indigo-600 text-white')
-            ui.button('Save & rebuild views', icon='save', on_click=lambda: _save(vm, cfg)) \
-                .props('unelevated').classes('bg-gray-800 text-white')
+        ui.button('Save & rebuild views', icon='save', on_click=lambda: _save(vm, cfg)) \
+            .props('unelevated').classes('bg-gray-800 text-white')
 
     ui.element('div').classes('divider mb-4')
 
@@ -83,22 +79,15 @@ def content() -> None:
             ui.button('Test', icon='search', on_click=_preview) \
                 .props('unelevated dense').classes('bg-gray-700 text-white')
 
-    # ── Smart Suggestions panel (hidden until toggled) ────────────────────────
-    suggestions_panel = ui.element('div').classes('w-full mt-4')
-    suggestions_panel.set_visibility(False)
-
-    with suggestions_panel:
-        with ui.element('div').classes('card w-full'):
-            with ui.row().classes('items-center justify-between mb-1'):
-                with ui.column().classes('gap-0'):
-                    ui.label('Smart Suggestions').classes('section-title')
-                    ui.label(
-                        'Uncategorized descriptions (5+ transactions) grouped by common pattern, '
-                        'most specific first.'
-                    ).classes('text-xs text-muted')
-                ui.button(icon='close',
-                          on_click=lambda: _toggle_suggestions(suggestions_state, suggestions_panel)) \
-                    .props('flat round dense size=xs').classes('text-gray-400')
+    # ── Smart Suggestions panel ───────────────────────────────────────────────
+    with ui.element('div').classes('card w-full mt-4'):
+        with ui.row().classes('items-center justify-between mb-1'):
+            with ui.column().classes('gap-0'):
+                ui.label('Smart Suggestions').classes('section-title')
+                ui.label(
+                    'Uncategorized descriptions (5+ transactions) grouped by common pattern, '
+                    'most specific first.'
+                ).classes('text-xs text-muted')
 
             @ui.refreshable
             def suggestions_body() -> None:
@@ -237,11 +226,6 @@ def content() -> None:
 
 
 # ── Suggestions helpers ────────────────────────────────────────────────────────
-
-def _toggle_suggestions(state: dict, panel) -> None:
-    state["visible"] = not state["visible"]
-    panel.set_visibility(state["visible"])
-
 
 def _run_suggestions(state: dict, body_fn, rule_table_fn, vm, cfg: CategoryConfig) -> None:
     fid = auth.current_family_id()

@@ -88,7 +88,7 @@ class ViewManager:
     def _load_all_family_ids(self) -> list[int]:
         with self.engine.connect() as conn:
             rows = conn.execute(
-                text(f"SELECT id FROM {self.schema}.families ORDER BY id")
+                text(f"SELECT id FROM {self.schema}.families WHERE archived_at IS NULL ORDER BY id")
             ).fetchall()
         return [r[0] for r in rows]
 

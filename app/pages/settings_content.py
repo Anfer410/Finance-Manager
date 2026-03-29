@@ -106,17 +106,19 @@ def _profile_section() -> None:
 
 def _user_row(u: auth.AuthUser, on_change, family_name: str | None = None) -> None:
     """One row in the user table — inline edit on click."""
-
+    is_deleted   = u.deleted_at is not None
     role_color   = 'bg-zinc-800 text-white' if u.is_instance_admin else ('bg-amber-100 text-amber-700' if u.family_role == 'head' else 'bg-blue-50 text-blue-700')
     active_color = 'text-green-600' if u.is_active else 'text-zinc-300'
+    row_muted    = 'opacity-50' if is_deleted else ''
 
-    with ui.row().classes('items-center px-6 py-3 gap-4 border-b border-zinc-50 hover:bg-zinc-50 w-full'):
+    with ui.row().classes(f'items-center px-6 py-3 gap-4 border-b border-zinc-50 hover:bg-zinc-50 w-full {row_muted}'):
         # Status dot
         ui.icon('circle').classes(f'text-xs {active_color}')
 
         # Name + username
         with ui.column().classes('gap-0 min-w-32'):
-            ui.label(u.display_name).classes('text-sm font-medium text-zinc-800')
+            label_cls = 'text-sm font-medium text-zinc-800 line-through' if is_deleted else 'text-sm font-medium text-zinc-800'
+            ui.label(u.display_name).classes(label_cls)
             ui.label(f'@{u.username}').classes('text-xs text-zinc-400')
 
         # Family
@@ -127,13 +129,24 @@ def _user_row(u: auth.AuthUser, on_change, family_name: str | None = None) -> No
 
         # Role badge
         role_label = 'Admin' if u.is_instance_admin else ('Head' if u.family_role == 'head' else 'Member')
-        ui.label(role_label).classes(f'text-xs px-2 py-0.5 rounded-full font-medium {role_color}')
+        if is_deleted:
+            ui.label('Deleted').classes('text-xs px-2 py-0.5 rounded-full font-medium bg-red-50 text-red-400')
+        else:
+            ui.label(role_label).classes(f'text-xs px-2 py-0.5 rounded-full font-medium {role_color}')
 
         ui.space()
 
         # Edit button → opens dialog
         ui.button(icon='edit', on_click=lambda: _edit_user_dialog(u, on_change)) \
             .props('flat round dense').classes('text-zinc-400')
+
+        # Delete button (can't delete yourself or other admins)
+        current_uid = auth.current_user_id()
+        can_delete  = not u.is_instance_admin and u.id != current_uid and not is_deleted
+        if can_delete:
+            ui.button(icon='delete_outline',
+                      on_click=lambda u=u: _delete_user_dialog(u, on_change)) \
+                .props('flat round dense').classes('text-red-300 hover:text-red-500')
 
 
 def _edit_user_dialog(u: auth.AuthUser, on_change) -> None:
@@ -212,6 +225,41 @@ def _edit_user_dialog(u: auth.AuthUser, on_change) -> None:
             ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
             ui.button('Save', on_click=save, icon='save').props('unelevated no-caps') \
                 .classes('bg-zinc-800 text-white rounded-lg px-4')
+
+    dlg.open()
+
+
+def _delete_user_dialog(u: auth.AuthUser, on_change) -> None:
+    from services.family_service import get_user_deletion_info, delete_user
+    info = get_user_deletion_info(u.id)
+
+    with ui.dialog() as dlg, ui.card().classes('w-96 rounded-2xl p-6 gap-4'):
+        with ui.row().classes('items-center gap-3 mb-1'):
+            ui.icon('warning').classes('text-amber-500 text-2xl')
+            ui.label(f'Delete {u.display_name}?').classes('text-base font-semibold text-zinc-800')
+
+        if info["action"] == "hard":
+            ui.label(
+                'This user has no transaction data. Their account will be permanently removed.'
+            ).classes('text-sm text-zinc-500')
+        else:
+            ui.label(
+                f'This user has {info["tx_count"]:,} transaction(s). '
+                'Their account will be soft-deleted: login blocked, family access removed, '
+                'but transaction data is preserved for the family.'
+            ).classes('text-sm text-zinc-500')
+
+        def _confirm():
+            delete_user(u.id)
+            dlg.close()
+            on_change()
+
+        with ui.row().classes('gap-2 justify-end w-full mt-2'):
+            ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+            btn_label = 'Delete permanently' if info["action"] == "hard" else 'Soft-delete'
+            ui.button(btn_label, on_click=_confirm, icon='delete') \
+                .props('unelevated no-caps') \
+                .classes('bg-red-600 text-white rounded-lg px-4')
 
     dlg.open()
 
@@ -333,6 +381,7 @@ def _user_management_section() -> None:
             with ui.row().classes('px-6 py-3 gap-4'):
                 ui.label('● Active').classes('text-xs text-green-600')
                 ui.label('● Inactive').classes('text-xs text-zinc-300')
+                ui.label('Deleted = soft-deleted (data preserved)').classes('text-xs text-zinc-400')
 
     user_table()
 
@@ -876,6 +925,7 @@ def _all_families_section() -> None:
     @ui.refreshable
     def families_list() -> None:
         families = get_all_families()
+        current_fid = auth.current_family_id()
         with _card('All Families', 'corporate_fare'):
             with ui.row().classes('items-center gap-3 px-6 py-4 border-b border-zinc-100'):
                 ui.icon('corporate_fare').classes('text-zinc-400 text-xl')
@@ -905,6 +955,12 @@ def _all_families_section() -> None:
                                   on_click=lambda f=f: _rename_family_dialog(
                                       f.id, f.name, families_list.refresh)) \
                             .props('flat round dense').classes('text-zinc-400')
+                        # Can't delete the family you're currently logged into
+                        if f.id != current_fid:
+                            ui.button(icon='delete_outline',
+                                      on_click=lambda f=f: _delete_family_dialog(
+                                          f.id, f.name, families_list.refresh)) \
+                                .props('flat round dense').classes('text-red-300 hover:text-red-500')
 
     families_list()
 
@@ -948,6 +1004,116 @@ def _create_family_dialog(on_change) -> None:
             ui.button('Create', on_click=save, icon='add').props('unelevated no-caps') \
                 .classes('bg-zinc-800 text-white rounded-lg px-4')
     dlg.open()
+
+
+def _delete_family_dialog(fid: int, fname: str, on_change) -> None:
+    from services.family_service import get_family_deletion_info, delete_family
+    info = get_family_deletion_info(fid)
+
+    ACTION_LABELS = {
+        "hard":             ("Delete permanently", "No members and no transaction data. The family will be removed entirely."),
+        "hard_with_orphan": ("Delete permanently", f'{info["member_count"]} member(s) will be unassigned from this family. No transaction data exists — the family will be removed entirely.'),
+        "archive":          ("Archive family", f'This family has {info["tx_count"]:,} transaction(s). It will be archived: data is preserved, members lose access. An admin can later restore or purge it from the Archived Families section.'),
+    }
+    btn_label, description = ACTION_LABELS[info["action"]]
+    btn_color = 'bg-red-600 text-white' if info["action"] != "archive" else 'bg-amber-500 text-white'
+
+    with ui.dialog() as dlg, ui.card().classes('w-[28rem] rounded-2xl p-6 gap-4'):
+        with ui.row().classes('items-center gap-3 mb-1'):
+            ui.icon('warning').classes('text-amber-500 text-2xl')
+            ui.label(f'Delete "{fname}"?').classes('text-base font-semibold text-zinc-800')
+
+        ui.label(description).classes('text-sm text-zinc-500')
+
+        def _confirm():
+            delete_family(fid, auth.current_user_id())
+            dlg.close()
+            on_change()
+
+        with ui.row().classes('gap-2 justify-end w-full mt-2'):
+            ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+            ui.button(btn_label, on_click=_confirm, icon='delete') \
+                .props('unelevated no-caps') \
+                .classes(f'{btn_color} rounded-lg px-4')
+
+    dlg.open()
+
+
+def _archived_families_section() -> None:
+    from services.family_service import get_archived_families, purge_archived_family, restore_archived_family
+
+    @ui.refreshable
+    def archived_list() -> None:
+        families = get_archived_families()
+        with _card('Archived Families', 'inventory_2'):
+            _section_header('Archived Families', 'inventory_2')
+
+            if not families:
+                ui.label('No archived families.').classes('text-sm text-zinc-400 px-6 py-4')
+                return
+
+            for f in families:
+                with ui.row().classes(
+                    'items-center px-6 py-3 gap-4 border-b border-zinc-50 hover:bg-zinc-50 w-full'
+                ):
+                    ui.icon('inventory_2').classes('text-zinc-300')
+                    with ui.column().classes('gap-0 flex-1'):
+                        ui.label(f['name']).classes('text-sm font-medium text-zinc-600')
+                        archived_str = f['archived_at'].strftime('%Y-%m-%d') if f['archived_at'] else '—'
+                        by_str = f['archived_by_name'] or 'admin'
+                        ui.label(f'Archived {archived_str} by {by_str}').classes('text-xs text-zinc-400')
+                    ui.label(
+                        f'{f["tx_count"]:,} tx · {f["member_count"]} member(s)'
+                    ).classes('text-xs text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full')
+
+                    ui.button('Restore', icon='restore',
+                              on_click=lambda f=f: _confirm_restore(f['id'], f['name'], archived_list.refresh)) \
+                        .props('unelevated no-caps dense') \
+                        .classes('bg-zinc-800 text-white rounded-lg px-3 text-xs')
+                    ui.button('Purge', icon='delete_forever',
+                              on_click=lambda f=f: _confirm_purge(f['id'], f['name'], archived_list.refresh)) \
+                        .props('unelevated no-caps dense') \
+                        .classes('bg-red-600 text-white rounded-lg px-3 text-xs')
+
+    def _confirm_restore(fid: int, fname: str, refresh_fn) -> None:
+        with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
+            ui.label(f'Restore "{fname}"?').classes('text-base font-semibold text-zinc-800')
+            ui.label('Members will regain access. All data is intact.').classes('text-sm text-zinc-500')
+
+            def _do():
+                restore_archived_family(fid)
+                dlg.close()
+                refresh_fn()
+
+            with ui.row().classes('gap-2 justify-end w-full'):
+                ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+                ui.button('Restore', on_click=_do, icon='restore').props('unelevated no-caps') \
+                    .classes('bg-zinc-800 text-white rounded-lg px-4')
+        dlg.open()
+
+    def _confirm_purge(fid: int, fname: str, refresh_fn) -> None:
+        with ui.dialog() as dlg, ui.card().classes('w-80 rounded-2xl p-6 gap-4'):
+            with ui.row().classes('items-center gap-2'):
+                ui.icon('warning').classes('text-red-500 text-xl')
+                ui.label(f'Purge "{fname}"?').classes('text-base font-semibold text-zinc-800')
+            ui.label(
+                'All transactions, config, and memberships will be permanently deleted. '
+                'Raw upload files are NOT deleted. This cannot be undone.'
+            ).classes('text-sm text-zinc-500')
+
+            def _do():
+                purge_archived_family(fid)
+                dlg.close()
+                refresh_fn()
+
+            with ui.row().classes('gap-2 justify-end w-full'):
+                ui.button('Cancel', on_click=dlg.close).props('flat no-caps').classes('text-zinc-500')
+                ui.button('Purge permanently', on_click=_do, icon='delete_forever') \
+                    .props('unelevated no-caps') \
+                    .classes('bg-red-600 text-white rounded-lg px-4')
+        dlg.open()
+
+    archived_list()
 
 
 # ── Data export / import ───────────────────────────────────────────────────────
@@ -1654,6 +1820,7 @@ def content() -> None:
                 with ui.tab_panel(tab_family):
                     with ui.column().classes('w-full gap-6'):
                         _all_families_section()
+                        _archived_families_section()
             
             if is_head:
                 # ── Uploads (head+) ───────────────────────────────────────────────    

@@ -185,6 +185,7 @@ class ViewManager:
                     f"           currency\n"
                     f"    FROM {self.schema}.transactions_credit\n"
                     f"    WHERE account_key = '{ak}'\n"
+                    f"      AND family_id = {fd.family_id}\n"
                     f"      AND debit > 0\n"
                     f"      AND debit != 'NaN'::numeric"
                     f"{excl}"
@@ -257,6 +258,7 @@ class ViewManager:
                     f"           t.currency\n"
                     f"    FROM {self.schema}.transactions_debit t\n"
                     f"    WHERE account_key = '{ak}'\n"
+                    f"      AND t.family_id = {fd.family_id}\n"
                     f"      AND amount < 0\n"
                     f"{excl_sql}"
                 )
@@ -308,6 +310,7 @@ class ViewManager:
                     f"           currency\n"
                     f"    FROM {self.schema}.transactions_debit\n"
                     f"    WHERE account_key = '{ak}'\n"
+                    f"      AND family_id = {fd.family_id}\n"
                     f"      AND amount > 0\n"
                     + (f"\n{transfer_excl}" if transfer_excl else "")
                     + f"\n{flag_excl}"

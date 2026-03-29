@@ -284,7 +284,7 @@ def _suggest_rule_dialog(
                 with ui.column().classes('gap-0.5'):
                     ui.label('This rule will also absorb:').classes('text-xs font-medium text-amber-700')
                     for o in overlaps:
-                        ui.label(f'  "{o["pattern"]}" — {o["cnt"]} txn · ${o["total"]:,.2f}') \
+                        ui.label(f'  "{o["pattern"]}" — {o["cnt"]} txn · {cur}{o["total"]:,.2f}') \
                             .classes('text-xs text-amber-600 font-mono')
                     ui.label('Consider adding those rules first so they can be assigned separately.') \
                         .classes('text-xs text-amber-600')
@@ -296,8 +296,19 @@ def _suggest_rule_dialog(
         priority_in = ui.number('Priority (lower = checked first)',
                                 value=auto_priority, min=1, max=9999) \
             .props('outlined dense').classes('w-full')
-        ui.label(f'Auto-suggested: {auto_priority} ({len(pattern.split())}-word pattern)') \
+        priority_hint = ui.label(f'Auto-suggested: {auto_priority} ({len(pattern.split())}-word pattern)') \
             .classes('text-xs text-muted -mt-2')
+
+        def _update_priority(_=None) -> None:
+            pat = pattern_in.value.strip()
+            if not pat:
+                return
+            suggested = _auto_priority(pat)
+            priority_in.value = suggested
+            words = len(pat.split())
+            priority_hint.set_text(f'Auto-suggested: {suggested} ({words}-word pattern)')
+
+        pattern_in.on('keyup', _update_priority)
 
         with ui.row().classes('justify-end gap-2 w-full'):
             ui.button('Cancel', on_click=dlg.close).props('flat')

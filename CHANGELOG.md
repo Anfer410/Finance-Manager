@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.5.0-rc.3 (2026-03-29)
+
+### Features
+
+- Add Smart Suggestions panel to categories page
+  ([`a133098`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/a133098f66619f48c532d3873dec652d8f4fa6ba))
+
+
 ## v2.5.0-rc.2 (2026-03-29)
 
 ### Features

@@ -478,12 +478,22 @@ def transactions_table(rows: list[dict]) -> None:
     cfg_cat   = load_category_config(auth.current_family_id())
     color_map = {c.name: c.color for c in cfg_cat.categories}
 
-    total_spend = sum(r["amount"] for r in rows)
+    income_rows = [r for r in rows if r.get("cost_type") == "income"]
+    spend_rows  = [r for r in rows if r.get("cost_type") != "income"]
+    total_spend  = sum(r["amount"] for r in spend_rows)
+    total_income = sum(r["amount"] for r in income_rows)
+    net          = total_income - total_spend
 
-    # Summary row
-    with ui.row().classes("w-full items-center justify-between mb-3"):
+    with ui.row().classes("w-full items-center justify-between flex-wrap gap-2 mb-3"):
         ui.label(f"{len(rows):,} transactions").classes("text-sm text-muted")
-        ui.label(f"Total: {_cur()}{total_spend:,.0f}").classes("text-sm font-semibold text-gray-700")
+        with ui.row().classes("items-center gap-4"):
+            if income_rows:
+                ui.label(f"Spend: {_cur()}{total_spend:,.0f}").classes("text-sm font-semibold").style("color:#f87171")
+                ui.label(f"Income: {_cur()}{total_income:,.0f}").classes("text-sm font-semibold").style("color:#4ade80")
+                net_color = "#4ade80" if net >= 0 else "#f87171"
+                ui.label(f"Net: {_cur()}{net:,.0f}").classes("text-sm font-semibold").style(f"color:{net_color}")
+            else:
+                ui.label(f"Total: {_cur()}{total_spend:,.0f}").classes("text-sm font-semibold text-gray-700")
 
     if not rows:
         ui.label("No transactions found.").classes("text-sm text-muted text-center py-8 w-full")
@@ -527,15 +537,15 @@ def transactions_table(rows: list[dict]) -> None:
 
     table.add_slot("body-cell-amount", f"""
         <q-td :props="props" style="text-align:right">
-            <span style="font-weight:600;color:#f87171">{_cur()}{{{{ props.value.toLocaleString(undefined,{{minimumFractionDigits:2,maximumFractionDigits:2}}) }}}}</span>
+            <span :style="{{fontWeight:600, color: props.row.cost_type === 'income' ? '#4ade80' : '#f87171'}}">{_cur()}{{{{ props.value.toLocaleString(undefined,{{minimumFractionDigits:2,maximumFractionDigits:2}}) }}}}</span>
         </q-td>
     """)
 
     table.add_slot("body-cell-cost_type", """
         <q-td :props="props">
             <span :style="{
-                background: props.value === 'fixed' ? '#dbeafe' : '#ffedd5',
-                color:      props.value === 'fixed' ? '#1d4ed8' : '#c2410c',
+                background: props.value === 'fixed' ? '#dbeafe' : props.value === 'income' ? '#dcfce7' : '#ffedd5',
+                color:      props.value === 'fixed' ? '#1d4ed8' : props.value === 'income' ? '#16a34a' : '#c2410c',
                 padding: '1px 7px', borderRadius: '9999px', fontSize: '11px', fontWeight: 600
             }">{{ props.value }}</span>
         </q-td>
@@ -547,3 +557,5 @@ def transactions_table(rows: list[dict]) -> None:
 
     table.rows[:] = rows
     table.update()
+
+

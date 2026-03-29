@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.5.0-rc.1 (2026-03-29)
+
+### Features
+
+- Ux improvements — widget sizing, label truncation, input min-width, table column width
+  ([`a7a174d`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/a7a174d454cbed0ee70ffd0ab56d88f138d72366))
+
+
 ## v2.4.4-rc.1 (2026-03-28)
 
 ### Chores

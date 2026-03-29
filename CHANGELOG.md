@@ -1,36 +1,12 @@
 # CHANGELOG
 
 
-## v2.5.0-rc.3 (2026-03-29)
+## v2.5.0 (2026-03-29)
 
 ### Features
 
-- Add Smart Suggestions panel to categories page
-  ([`a133098`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/a133098f66619f48c532d3873dec652d8f4fa6ba))
-
-
-## v2.5.0-rc.2 (2026-03-29)
-
-### Features
-
-- Add income transactions to dashboard table
-  ([`1a24d47`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/1a24d47a74af9c0f2a7e16a7c22135d46d89a746))
-
-
-## v2.5.0-rc.1 (2026-03-29)
-
-### Features
-
-- Ux improvements — widget sizing, label truncation, input min-width, table column width
-  ([`a7a174d`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/a7a174d454cbed0ee70ffd0ab56d88f138d72366))
-
-
-## v2.4.4-rc.1 (2026-03-28)
-
-### Chores
-
-- Sync develop with main after release
-  ([`f51efa3`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/f51efa31226ab53847657b10e6ba0fa5f3ae5047))
+- Ux improvement
+  ([`2c892e2`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/2c892e2ab37d9a0b6266fd58e63b4ccdb63b070a))
 
 
 ## v2.4.3 (2026-03-28)

@@ -21,5 +21,5 @@ class KPIWidget(Widget):
     """
     widget_type      = WidgetType.KPI
     default_col_span = 2
-    default_row_span = 1
+    default_row_span = 2
     has_own_header   = True

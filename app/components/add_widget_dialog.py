@@ -59,7 +59,7 @@ def open_add_widget_dialog(
                                             ui.icon(chart_def.icon) \
                                                 .classes('text-zinc-400 shrink-0').style('font-size:1.3rem')
                                             ui.label(chart_def.title).classes('text-sm font-medium')
-                                        ui.label(chart_def.description).classes('text-xs text-muted')
+                                        ui.label(chart_def.description).classes('text-xs text-muted line-clamp-2')
                                     ui.button(
                                         'Add',
                                         on_click=lambda _, cd=chart_def: (dlg.close(), on_add_builtin(cd)),

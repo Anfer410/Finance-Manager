@@ -114,9 +114,9 @@ def content() -> None:
                     overlaps = _find_overlaps(cluster["pattern"], clusters)
                     with ui.element('div').classes('border-b border-gray-50 py-2'):
                         with ui.row().classes('items-center gap-2 w-full'):
-                            ui.label(cluster["pattern"]) \
-                                .classes('px-2 py-0.5 rounded font-mono text-xs bg-gray-100 text-gray-800 flex-shrink-0')
-                            ui.label('').classes('flex-1')
+                            with ui.element('div').classes('flex-1 min-w-0 flex items-center'):
+                                ui.label(cluster["pattern"]) \
+                                    .classes('px-2 py-0.5 rounded font-mono text-xs bg-gray-100 text-gray-800 truncate')
                             ui.label(f'{cluster["cnt"]} txn').classes('text-xs text-muted').style('width:90px')
                             cur = auth.current_currency_prefix() or ''
                             ui.label(f'{cur}{cluster["total"]:,.2f}').classes('text-xs text-muted').style('width:100px')
@@ -130,9 +130,8 @@ def content() -> None:
                         # Example raw descriptions
                         with ui.row().classes('flex-wrap gap-1 mt-1'):
                             for ex in cluster["examples"]:
-                                ui.element('span') \
-                                    .classes('text-xs text-gray-400 italic bg-gray-50 px-1.5 py-0.5 rounded') \
-                                    .text = ex
+                                ui.label(ex) \
+                                    .classes('text-xs text-gray-400 italic bg-gray-50 px-1.5 py-0.5 rounded')
 
                         # Overlap warning
                         if overlaps:

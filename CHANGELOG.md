@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v2.5.0-rc.2 (2026-03-29)
+
+### Features
+
+- Add income transactions to dashboard table
+  ([`1a24d47`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/1a24d47a74af9c0f2a7e16a7c22135d46d89a746))
+
+
 ## v2.5.0-rc.1 (2026-03-29)
 
 ### Features

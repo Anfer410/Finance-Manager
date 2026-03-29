@@ -18,26 +18,50 @@ from data.db import get_engine, get_schema
 from services.notifications import notify
 from services.ui_inputs import labeled_input, labeled_select
 from styles.dashboards import COST_TYPES, FIXED_COLOR, VAR_COLOR
+from data.finance_dashboard_data import get_uncategorized_clusters
 
 SCHEMA = get_schema()
 ENGINE = get_engine()
 
+
+def _auto_priority(pattern: str) -> int:
+    """More words = lower number = checked first (higher precedence)."""
+    return max(10, 100 - len(pattern.strip().split()) * 20)
+
+
+def _find_overlaps(pattern: str, all_clusters: list[dict]) -> list[dict]:
+    """
+    More-specific clusters whose pattern starts with `pattern` followed by a space.
+    Adding a substring rule for `pattern` would absorb these clusters.
+    """
+    p = pattern.upper()
+    return [
+        c for c in all_clusters
+        if c["pattern"] != pattern and c["pattern"].upper().startswith(p + " ")
+    ]
 
 
 def content() -> None:
     cfg = load_category_config(auth.current_family_id())
     vm  = ViewManager(engine=ENGINE, schema=SCHEMA)
 
+    suggestions_state: dict = {"clusters": [], "visible": False}
+
+    # ── Header ────────────────────────────────────────────────────────────────
     with ui.row().classes('w-full items-center justify-between mb-2'):
         with ui.column().classes('gap-0'):
             ui.label('Categories').classes('page-title')
             ui.label('Manage spend categories and classification rules.').classes('text-sm text-muted')
-        ui.button('Save & rebuild views', icon='save', on_click=lambda: _save(vm, cfg)) \
-            .props('unelevated').classes('bg-gray-800 text-white')
+        with ui.row().classes('gap-2'):
+            ui.button('Smart Suggestions', icon='auto_awesome',
+                      on_click=lambda: _toggle_suggestions(suggestions_state, suggestions_panel)) \
+                .props('unelevated').classes('bg-indigo-600 text-white')
+            ui.button('Save & rebuild views', icon='save', on_click=lambda: _save(vm, cfg)) \
+                .props('unelevated').classes('bg-gray-800 text-white')
 
     ui.element('div').classes('divider mb-4')
 
-    # ── Preview ──────────────────────────────────────────────────────────────
+    # ── Rule preview ──────────────────────────────────────────────────────────
     with ui.element('div').classes('card w-full mt-4'):
         ui.label('Rule preview').classes('section-title mb-2')
         ui.label('Test how a description resolves to a category.').classes('text-xs text-muted mb-3')
@@ -59,10 +83,91 @@ def content() -> None:
             ui.button('Test', icon='search', on_click=_preview) \
                 .props('unelevated dense').classes('bg-gray-700 text-white')
 
+    # ── Smart Suggestions panel (hidden until toggled) ────────────────────────
+    suggestions_panel = ui.element('div').classes('w-full mt-4')
+    suggestions_panel.set_visibility(False)
 
-    with ui.row().classes('w-full gap-4 items-start flex-wrap'):
+    with suggestions_panel:
+        with ui.element('div').classes('card w-full'):
+            with ui.row().classes('items-center justify-between mb-1'):
+                with ui.column().classes('gap-0'):
+                    ui.label('Smart Suggestions').classes('section-title')
+                    ui.label(
+                        'Uncategorized descriptions (5+ transactions) grouped by common pattern, '
+                        'most specific first.'
+                    ).classes('text-xs text-muted')
+                ui.button(icon='close',
+                          on_click=lambda: _toggle_suggestions(suggestions_state, suggestions_panel)) \
+                    .props('flat round dense size=xs').classes('text-gray-400')
 
-        # ── Left: Rules list ────────────────────────────────────────────────
+            @ui.refreshable
+            def suggestions_body() -> None:
+                clusters = suggestions_state["clusters"]
+
+                if not clusters:
+                    with ui.column().classes('items-center py-8 gap-3'):
+                        ui.icon('auto_awesome').classes('text-4xl text-gray-300')
+                        ui.label('Click Run to analyse your uncategorized transactions.') \
+                            .classes('text-sm text-muted')
+                        ui.button('Run analysis', icon='play_arrow',
+                                  on_click=lambda: _run_suggestions(
+                                      suggestions_state, suggestions_body,
+                                      rule_table, vm, cfg)) \
+                            .props('unelevated').classes('bg-indigo-600 text-white')
+                    return
+
+                # Column headers
+                with ui.row().classes('w-full px-1 pb-1 mt-3 gap-2 text-xs text-muted font-medium border-b border-gray-100'):
+                    ui.label('Suggested pattern').classes('flex-1')
+                    ui.label('Transactions').style('width:90px')
+                    ui.label('Total spend').style('width:100px')
+                    ui.label('').style('width:32px')
+
+                for cluster in clusters:
+                    overlaps = _find_overlaps(cluster["pattern"], clusters)
+                    with ui.element('div').classes('border-b border-gray-50 py-2'):
+                        with ui.row().classes('items-center gap-2 w-full'):
+                            ui.element('span') \
+                                .classes('px-2 py-0.5 rounded font-mono text-xs bg-gray-100 text-gray-800 flex-shrink-0') \
+                                .text = cluster["pattern"]
+                            ui.label('').classes('flex-1')
+                            ui.label(f'{cluster["cnt"]} txn').classes('text-xs text-muted').style('width:90px')
+                            ui.label(f'${cluster["total"]:,.2f}').classes('text-xs text-muted').style('width:100px')
+                            ui.button(icon='add',
+                                      on_click=lambda _, c=cluster, o=overlaps: _suggest_rule_dialog(
+                                          c, o, cfg, rule_table,
+                                          suggestions_state, suggestions_body, vm)) \
+                                .props('flat round dense size=xs').classes('text-indigo-500') \
+                                .tooltip('Create rule for this pattern')
+
+                        # Example raw descriptions
+                        with ui.row().classes('flex-wrap gap-1 mt-1'):
+                            for ex in cluster["examples"]:
+                                ui.element('span') \
+                                    .classes('text-xs text-gray-400 italic bg-gray-50 px-1.5 py-0.5 rounded') \
+                                    .text = ex
+
+                        # Overlap warning
+                        if overlaps:
+                            with ui.row().classes('items-center gap-1 mt-1'):
+                                ui.icon('warning_amber').classes('text-amber-400').style('font-size:14px')
+                                names = ', '.join(f'"{o["pattern"]}"' for o in overlaps)
+                                ui.label(f'Also covers: {names} — consider adding those rules first.') \
+                                    .classes('text-xs text-amber-600')
+
+                with ui.row().classes('justify-end mt-2'):
+                    ui.button('Refresh', icon='refresh',
+                              on_click=lambda: _run_suggestions(
+                                  suggestions_state, suggestions_body,
+                                  rule_table, vm, cfg)) \
+                        .props('flat dense size=sm').classes('text-gray-400')
+
+            suggestions_body()
+
+    # ── Rules + Categories side by side ───────────────────────────────────────
+    with ui.row().classes('w-full gap-4 items-start flex-wrap mt-4'):
+
+        # ── Left: Rules list ─────────────────────────────────────────────────
         with ui.element('div').classes('card flex-1').style('min-width:400px'):
             with ui.row().classes('items-center justify-between mb-3'):
                 ui.label('Classification rules').classes('section-title')
@@ -75,7 +180,6 @@ def content() -> None:
                     ui.button(icon='add', on_click=lambda: _add_rule_dialog(cfg, rule_table)) \
                         .props('flat round dense').classes('text-gray-500')
 
-            # Header
             with ui.row().classes('w-full px-1 pb-1 gap-2 text-xs text-muted font-medium'):
                 ui.label('Pri').style('width:36px')
                 ui.label('Pattern').classes('flex-1')
@@ -88,8 +192,7 @@ def content() -> None:
                 for rule in cfg.sorted_rules():
                     with ui.row().classes('items-center gap-2 py-1 border-b border-gray-50 w-full'):
                         ui.label(str(rule.priority)).classes('text-xs text-muted').style('width:36px')
-                        ui.label(rule.pattern).classes('text-xs font-mono flex-1') \
-                            
+                        ui.label(rule.pattern).classes('text-xs font-mono flex-1')
                         ui.label('regex' if rule.is_regex else 'substr') \
                             .classes('text-xs px-1 rounded') \
                             .style(f'width:44px;background:{"#fef3c7" if rule.is_regex else "#f3f4f6"};'
@@ -103,7 +206,8 @@ def content() -> None:
                             .props('flat round dense size=xs').classes('text-red-300')
 
             rule_table()
-        # ── Right: Category list ──────────────────────────────────────────────
+
+        # ── Right: Category list ─────────────────────────────────────────────
         with ui.element('div').classes('card flex-1').style('min-width:280px;max-width:380px'):
             with ui.row().classes('items-center justify-between mb-3'):
                 ui.label('Categories').classes('section-title')
@@ -130,6 +234,102 @@ def content() -> None:
                             .props('flat round dense size=xs').classes('text-red-300')
 
             category_table()
+
+
+# ── Suggestions helpers ────────────────────────────────────────────────────────
+
+def _toggle_suggestions(state: dict, panel) -> None:
+    state["visible"] = not state["visible"]
+    panel.set_visibility(state["visible"])
+
+
+def _run_suggestions(state: dict, body_fn, rule_table_fn, vm, cfg: CategoryConfig) -> None:
+    fid = auth.current_family_id()
+    state["clusters"] = get_uncategorized_clusters(fid)
+    body_fn.refresh()
+
+
+def _suggest_rule_dialog(
+    cluster: dict,
+    overlaps: list[dict],
+    cfg: CategoryConfig,
+    rule_table_fn,
+    suggestions_state: dict,
+    suggestions_body_fn,
+    vm,
+) -> None:
+    pattern       = cluster["pattern"]
+    auto_priority = _auto_priority(pattern)
+
+    with ui.dialog() as dlg, ui.card().classes('w-96 gap-3'):
+        ui.label('Add rule from suggestion').classes('text-base font-semibold')
+
+        # Cluster summary
+        with ui.row().classes('items-center gap-2 bg-gray-50 rounded px-3 py-2'):
+            ui.element('span').classes('font-mono text-sm bg-gray-200 px-2 py-0.5 rounded').text = pattern
+            ui.label(f'{cluster["cnt"]} transactions · ${cluster["total"]:,.2f}') \
+                .classes('text-xs text-muted')
+
+        # Example descriptions
+        with ui.column().classes('gap-1'):
+            ui.label('Example descriptions:').classes('text-xs text-muted')
+            for ex in cluster["examples"]:
+                ui.label(f'  {ex}').classes('text-xs font-mono text-gray-500')
+
+        # Overlap warning inside the dialog
+        if overlaps:
+            with ui.row().classes('items-start gap-2 bg-amber-50 rounded px-3 py-2'):
+                ui.icon('warning_amber').classes('text-amber-500 flex-shrink-0').style('font-size:16px')
+                with ui.column().classes('gap-0.5'):
+                    ui.label('This rule will also absorb:').classes('text-xs font-medium text-amber-700')
+                    for o in overlaps:
+                        ui.label(f'  "{o["pattern"]}" — {o["cnt"]} txn · ${o["total"]:,.2f}') \
+                            .classes('text-xs text-amber-600 font-mono')
+                    ui.label('Consider adding those rules first so they can be assigned separately.') \
+                        .classes('text-xs text-amber-600')
+
+        ui.element('div').classes('divider')
+
+        pattern_in  = labeled_input('Pattern', value=pattern)
+        cat_in      = labeled_select('Category', cfg.category_names())
+        priority_in = ui.number('Priority (lower = checked first)',
+                                value=auto_priority, min=1, max=9999) \
+            .props('outlined dense').classes('w-full')
+        ui.label(f'Auto-suggested: {auto_priority} ({len(pattern.split())}-word pattern)') \
+            .classes('text-xs text-muted -mt-2')
+
+        with ui.row().classes('justify-end gap-2 w-full'):
+            ui.button('Cancel', on_click=dlg.close).props('flat')
+
+            def _ok():
+                pat = pattern_in.value.strip()
+                cat = cat_in.value
+                if pat and cat:
+                    cfg.rules.append(CategoryRule(
+                        pattern=pat,
+                        category=cat,
+                        is_regex=False,
+                        priority=int(priority_in.value),
+                    ))
+                    rule_table_fn.refresh()
+                    _save_silent(vm, cfg)
+                    _run_suggestions(suggestions_state, suggestions_body_fn, rule_table_fn, vm, cfg)
+                    notify(f'Rule added for "{pat}" → {cat}', type='positive', position='top')
+                dlg.close()
+
+            ui.button('Add rule', on_click=_ok).props('unelevated').classes('bg-indigo-600 text-white')
+
+    dlg.open()
+
+
+def _save_silent(vm, cfg: CategoryConfig) -> None:
+    """Save config and rebuild views without a success toast (used by suggestion flow)."""
+    fid = auth.current_family_id()
+    save_category_config(cfg, fid)
+    try:
+        vm.refresh()
+    except Exception as e:
+        notify(f'View rebuild failed: {e}', type='warning', position='top')
 
 
 # ── Dialogs ───────────────────────────────────────────────────────────────────

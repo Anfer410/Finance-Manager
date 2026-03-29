@@ -76,6 +76,58 @@ def _currency_filter() -> tuple[str, dict]:
     return "AND currency = :_cur", {"_cur": cur}
 
 
+# ── Smart suggestions ─────────────────────────────────────────────────────────
+
+def get_uncategorized_clusters(family_id: int, min_count: int = 5, limit: int = 30) -> list[dict]:
+    """
+    Returns clusters of uncategorized (category='Other') transactions grouped by
+    a cleaned pattern extracted from the description. Clusters are ordered by
+    specificity (word count desc) then frequency (cnt desc) so that more-specific
+    patterns appear first, nudging the user to handle KROGER FUEL before KROGER.
+
+    Each row: {pattern, cnt, total, examples}
+      pattern  — cleaned token (e.g. "KROGER FUEL"), good default for a new rule
+      cnt      — number of transactions in the cluster
+      total    — summed spend amount
+      examples — up to 5 raw description samples
+    """
+    rows = _q(
+        f"""
+        SELECT
+            suggested_pattern,
+            COUNT(*)                                           AS cnt,
+            ROUND(SUM(amount)::numeric, 2)                    AS total,
+            (array_agg(description ORDER BY description))[1:5] AS examples
+        FROM (
+            SELECT
+                TRIM(regexp_replace(upper(description), '\\s*[#*/0-9].*$', '')) AS suggested_pattern,
+                description,
+                amount
+            FROM {V_ALL_SPEND}
+            WHERE family_id = :fid
+              AND category = 'Other'
+        ) sub
+        WHERE suggested_pattern != ''
+        GROUP BY suggested_pattern
+        HAVING COUNT(*) >= :min_count
+        ORDER BY
+            array_length(string_to_array(suggested_pattern, ' '), 1) DESC,
+            COUNT(*) DESC
+        LIMIT :lim
+        """,
+        fid=family_id, min_count=min_count, lim=limit,
+    )
+    return [
+        {
+            "pattern":  r[0],
+            "cnt":      r[1],
+            "total":    float(r[2]),
+            "examples": list(r[3]) if r[3] else [],
+        }
+        for r in rows
+    ]
+
+
 # ── Available currencies ──────────────────────────────────────────────────────
 
 def get_currencies() -> list[str]:

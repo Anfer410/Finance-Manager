@@ -114,15 +114,15 @@ def content() -> None:
                     overlaps = _find_overlaps(cluster["pattern"], clusters)
                     with ui.element('div').classes('border-b border-gray-50 py-2'):
                         with ui.row().classes('items-center gap-2 w-full'):
-                            ui.label(cluster["pattern"]) \
-                                .classes('px-2 py-0.5 rounded font-mono text-xs bg-gray-100 text-gray-800 flex-shrink-0')
-                            ui.label('').classes('flex-1')
+                            with ui.element('div').classes('flex-1 min-w-0 flex items-center'):
+                                ui.label(cluster["pattern"]) \
+                                    .classes('px-2 py-0.5 rounded font-mono text-xs bg-gray-100 text-gray-800 truncate')
                             ui.label(f'{cluster["cnt"]} txn').classes('text-xs text-muted').style('width:90px')
                             cur = auth.current_currency_prefix() or ''
                             ui.label(f'{cur}{cluster["total"]:,.2f}').classes('text-xs text-muted').style('width:100px')
                             ui.button(icon='add',
                                       on_click=lambda _, c=cluster, o=overlaps: _suggest_rule_dialog(
-                                          c, o, cfg, rule_table,
+                                          c, o, cfg, rule_table, category_table,
                                           suggestions_state, suggestions_body, _save_fn)) \
                                 .props('flat round dense size=xs').classes('text-indigo-500') \
                                 .tooltip('Create rule for this pattern')
@@ -130,9 +130,8 @@ def content() -> None:
                         # Example raw descriptions
                         with ui.row().classes('flex-wrap gap-1 mt-1'):
                             for ex in cluster["examples"]:
-                                ui.element('span') \
-                                    .classes('text-xs text-gray-400 italic bg-gray-50 px-1.5 py-0.5 rounded') \
-                                    .text = ex
+                                ui.label(ex) \
+                                    .classes('text-xs text-gray-400 italic bg-gray-50 px-1.5 py-0.5 rounded')
 
                         # Overlap warning
                         if overlaps:
@@ -213,7 +212,7 @@ def content() -> None:
                             .style(f'background:{ctype_color}') \
                             .text = cat.cost_type
                         ui.button(icon='edit',
-                                  on_click=lambda _, c=cat: _edit_category_dialog(c, cfg, category_table, _save_fn)) \
+                                  on_click=lambda _, c=cat: _edit_category_dialog(c, cfg, category_table, rule_table, _save_fn)) \
                             .props('flat round dense size=xs').classes('text-gray-400')
                         ui.button(icon='delete',
                                   on_click=lambda _, c=cat: _delete_category(c, cfg, category_table, rule_table, _save_fn)) \
@@ -234,6 +233,7 @@ def _suggest_rule_dialog(
     overlaps: list[dict],
     cfg: CategoryConfig,
     rule_table_fn,
+    category_table_fn,
     suggestions_state: dict,
     suggestions_body_fn,
     save_fn,
@@ -298,6 +298,7 @@ def _suggest_rule_dialog(
                         cat_in.options = cfg.category_names()
                         cat_in.value   = name
                         cat_in.update()
+                        category_table_fn.refresh()
                         new_cat_form.set_visibility(False)
                     ui.button('Add category', on_click=_add_new_cat) \
                         .props('unelevated dense').classes('bg-gray-800 text-white text-xs')
@@ -367,14 +368,28 @@ def _add_category_dialog(cfg: CategoryConfig, refresh_fn, save_fn) -> None:
     dlg.open()
 
 
-def _edit_category_dialog(cat: Category, cfg: CategoryConfig, refresh_fn, save_fn) -> None:
+def _edit_category_dialog(cat: Category, cfg: CategoryConfig, refresh_fn, rule_fn, save_fn) -> None:
     with ui.dialog() as dlg, ui.card().classes('w-80 gap-3'):
         ui.label(f'Edit — {cat.name}').classes('text-base font-semibold')
+        name_in  = labeled_input('Name', value=cat.name)
         type_in  = labeled_select('Cost type', COST_TYPES, value=cat.cost_type)
         color_in = ui.color_input(label='Color', value=cat.color).classes('w-full')
         with ui.row().classes('justify-end gap-2 w-full'):
             ui.button('Cancel', on_click=dlg.close).props('flat')
             def _ok():
+                new_name = name_in.value.strip()
+                if not new_name:
+                    return
+                old_name = cat.name
+                if new_name != old_name and new_name in cfg.category_names():
+                    return  # duplicate
+                # Update any rules that referenced the old name
+                if new_name != old_name:
+                    for rule in cfg.rules:
+                        if rule.category == old_name:
+                            rule.category = new_name
+                    rule_fn.refresh()
+                cat.name      = new_name
                 cat.cost_type = type_in.value
                 cat.color     = color_in.value
                 refresh_fn.refresh()

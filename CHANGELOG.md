@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v2.6.0-rc.3 (2026-03-29)
+
+### Bug Fixes
+
+- Refresh category table when new category added via suggestion dialog
+  ([`042a47b`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/042a47b732312df5b055ae6f133862e6eaf1a3c8))
+
+Pass category_table refreshable into _suggest_rule_dialog and call it in _add_new_cat so the
+  categories card updates immediately without needing to navigate away.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+
 ## v2.6.0-rc.2 (2026-03-29)
 
 ### Bug Fixes

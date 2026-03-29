@@ -67,10 +67,12 @@ def get_family(family_id: int) -> Optional[Family]:
 
 
 def create_family(name: str, created_by: int) -> int:
-    """Create a new family and seed its config from family_id=1 defaults. Returns new family_id."""
+    """Create a new family and seed generic config (categories, transaction cfg) from family 1.
+    Bank rules and bank presets are intentionally NOT copied — they are account-specific and must
+    be configured by the new family's head via the bank wizard.
+    Returns new family_id.
+    """
     from services.config_repo import (
-        load_bank_rules, save_bank_rules,
-        load_banks, save_banks,
         load_categories, save_categories,
         load_transaction_cfg, save_transaction_cfg,
     )
@@ -82,10 +84,8 @@ def create_family(name: str, created_by: int) -> int:
         """), {"name": name, "uid": created_by}).fetchone()
         new_fid = row[0]
 
-    # Seed config from family 1 defaults
+    # Seed generic config from family 1 (categories + transaction config only)
     try:
-        save_bank_rules(load_bank_rules(1), new_fid)
-        save_banks(load_banks(1), new_fid)
         save_categories(load_categories(1), new_fid)
         save_transaction_cfg(load_transaction_cfg(1), new_fid)
     except Exception as e:

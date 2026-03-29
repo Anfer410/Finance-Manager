@@ -314,13 +314,10 @@ def delete_family(family_id: int, archived_by: int) -> str:
             conn.execute(text(f"DELETE FROM {_SCHEMA}.transaction_flags WHERE family_id = :fid"), {"fid": family_id})
             for tbl in _CONFIG_TABLES:
                 conn.execute(text(f"DELETE FROM {_SCHEMA}.{tbl} WHERE family_id = :fid"), {"fid": family_id})
-            conn.execute(text(f"DELETE FROM {_SCHEMA}.invitations WHERE family_id = :fid"), {"fid": family_id})
-            # End memberships (free/orphan users)
-            conn.execute(text(f"""
-                UPDATE {_SCHEMA}.family_memberships SET left_at = NOW()
-                WHERE family_id = :fid AND left_at IS NULL
-            """), {"fid": family_id})
-            conn.execute(text(f"DELETE FROM {_SCHEMA}.families WHERE id = :fid"), {"fid": family_id})
+            conn.execute(text(f"DELETE FROM {_SCHEMA}.invitations        WHERE family_id = :fid"), {"fid": family_id})
+            # Hard-delete memberships so the FK allows removing the family row
+            conn.execute(text(f"DELETE FROM {_SCHEMA}.family_memberships WHERE family_id = :fid"), {"fid": family_id})
+            conn.execute(text(f"DELETE FROM {_SCHEMA}.families            WHERE id        = :fid"), {"fid": family_id})
         else:  # archive — keep all data + memberships intact for clean restore
             conn.execute(text(f"""
                 UPDATE {_SCHEMA}.families

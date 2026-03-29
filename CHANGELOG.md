@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v2.6.0-rc.5 (2026-03-29)
+
+### Features
+
+- Notify user when views are rebuilt on dashboard load
+  ([`3e086ee`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/3e086eec63ceefbca892325091cc29cd2037a987))
+
+Show an info toast before the rebuild starts and a success toast on completion, so the user knows
+  why there is a brief delay.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+
 ## v2.6.0-rc.4 (2026-03-29)
 
 ### Bug Fixes

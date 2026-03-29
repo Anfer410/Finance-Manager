@@ -1,36 +1,12 @@
 # CHANGELOG
 
 
-## v2.5.0-rc.3 (2026-03-29)
+## v2.5.0 (2026-03-29)
 
 ### Features
 
-- Add Smart Suggestions panel to categories page
-  ([`a133098`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/a133098f66619f48c532d3873dec652d8f4fa6ba))
-
-
-## v2.5.0-rc.2 (2026-03-29)
-
-### Features
-
-- Add income transactions to dashboard table
-  ([`1a24d47`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/1a24d47a74af9c0f2a7e16a7c22135d46d89a746))
-
-
-## v2.5.0-rc.1 (2026-03-29)
-
-### Features
-
-- Ux improvements — widget sizing, label truncation, input min-width, table column width
-  ([`a7a174d`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/a7a174d454cbed0ee70ffd0ab56d88f138d72366))
-
-
-## v2.4.4-rc.1 (2026-03-28)
-
-### Chores
-
-- Sync develop with main after release
-  ([`f51efa3`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/f51efa31226ab53847657b10e6ba0fa5f3ae5047))
+- Ux improvement
+  ([`2c892e2`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/2c892e2ab37d9a0b6266fd58e63b4ccdb63b070a))
 
 
 ## v2.4.3 (2026-03-28)
@@ -39,39 +15,6 @@
 
 - Prevent default categories from reappearing after deletion; add clear-all rules button
   ([`c9d6496`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/c9d6496370b444e157472401941b9826f97b5d95))
-
-
-## v2.4.3-rc.2 (2026-03-28)
-
-### Bug Fixes
-
-- Make DB volume path configurable via DB_DATA_PATH env var
-  ([`ef75d52`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/ef75d52a151174c790dc1b73a57884447dfd8a4d))
-
-Allows the data volume mount point to be overridden via DB_DATA_PATH, falling back to the default
-  named volume when not set.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-
-## v2.4.3-rc.1 (2026-03-28)
-
-### Bug Fixes
-
-- Prevent default categories from reappearing after deletion; add clear-all rules button
-  ([`981a85b`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/981a85b2be96cb1deee88bdf55389e10a698c3b5))
-
-- Remove backfill loop in load_category_config that was re-injecting any missing default category on
-  every page load, causing deleted categories to reappear after reload - Add "Clear all rules"
-  button (delete_sweep icon) to the classification rules header with a confirmation dialog, allowing
-  users to wipe all default rules and start from scratch
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-### Chores
-
-- Sync develop with main after release
-  ([`986a266`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/986a266103a05e22aeafc914a72967311a7e5d4b))
 
 
 ## v2.4.2 (2026-03-23)

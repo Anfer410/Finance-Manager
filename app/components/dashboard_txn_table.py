@@ -175,7 +175,7 @@ def render_txn_table(
                 ).props('clearable').style('font-size:12px') \
                  .on('keydown', _on_search_keydown)
                 with ui.row().classes('gap-3 flex-wrap items-center'):
-                    for hint in ['category=', 'type=fixed|variable', 'bank=', 'from=YYYY-MM-DD', 'to=YYYY-MM-DD', 'amount=']:
+                    for hint in ['category=', 'type=fixed|variable|income', 'bank=', 'from=YYYY-MM-DD', 'to=YYYY-MM-DD', 'amount=']:
                         ui.label(hint).classes(
                             'text-xs font-mono px-1.5 py-0.5 rounded bg-gray-100 text-gray-500'
                         )

@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v2.6.0-rc.4 (2026-03-29)
+
+### Bug Fixes
+
+- Allow category name editing and cascade rename to rules
+  ([`002df11`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/002df111f4a89f2a129ff34b7181c3603b8aefdb))
+
+Add name field to the edit category dialog. When the name changes, all rules referencing the old
+  name are updated in-place so they don't become orphaned.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+
 ## v2.6.0-rc.3 (2026-03-29)
 
 ### Bug Fixes

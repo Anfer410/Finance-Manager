@@ -1,6 +1,59 @@
 # CHANGELOG
 
 
+## v2.6.0-rc.7 (2026-03-29)
+
+### Bug Fixes
+
+- Don't copy bank rules/presets when seeding a new family
+  ([`2b65ff1`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/2b65ff1418560915cc1f55ba93a2c493dd673625))
+
+create_family() was copying bank rules and bank presets from family 1 to every new family. Bank
+  rules are account-specific (prefix, column_map, person_override, etc.) and must not be shared
+  across families. Only categories and transaction config are appropriate seed defaults.
+
+This caused new families to appear in ViewManager view branches, producing cross-family row
+  duplication in v_all_spend.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+- Hard-delete memberships before family record to avoid FK violation
+  ([`b62054c`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/b62054c0d0a24175b8fcff59e67a96a0836cdbc2))
+
+- Scope view branches by family_id to prevent cross-family data leakage
+  ([`7746d85`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/7746d85e60bdf3c15a24e77ff00a74ab035d0a5e))
+
+All three view builders (credit_spend, debit_spend, income) now include AND family_id =
+  {fd.family_id} in each branch WHERE clause. Previously, branches were only filtered by
+  account_key, so two families sharing the same prefix caused doubled rows in v_all_spend.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+### Features
+
+- Conditional user and family deletion with archive/restore
+  ([`5c5d105`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/5c5d1057bd34f71a53b8ea2fecdfb2f7e0349a2a))
+
+User deletion: - Hard delete when user has no transactions: scrubs person[] arrays, nullifies
+  uploaded_by, removes account and all associated records - Soft delete when user has transactions:
+  sets deleted_at + is_active=False, ends family membership; transaction data preserved for the
+  family - Soft-deleted users shown with strikethrough/muted styling in admin UI
+
+Family deletion: - Hard wipe (no members, no transactions): removes config, flags, invitations,
+  memberships, and family record - Hard wipe + orphan (has members, no transactions): same but frees
+  members - Archive (has transactions): sets archived_at, keeps all data and memberships intact for
+  clean restore; members see an "archived" wall instead of page content
+
+Archived family management (admin only, Family tab): - List of archived families with tx count,
+  member count, archived date - Restore: clears archived_at, members regain access immediately -
+  Purge: hard-delete everything (transactions, config, memberships); raw upload tables are never
+  touched
+
+view_manager: excludes archived families from view rebuilds
+
+auth: AuthUser gains deleted_at field; _USER_SELECT fetches it
+
+
 ## v2.6.0-rc.6 (2026-03-29)
 
 ### Chores

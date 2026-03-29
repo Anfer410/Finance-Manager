@@ -122,7 +122,7 @@ def content() -> None:
                             ui.label(f'{cur}{cluster["total"]:,.2f}').classes('text-xs text-muted').style('width:100px')
                             ui.button(icon='add',
                                       on_click=lambda _, c=cluster, o=overlaps: _suggest_rule_dialog(
-                                          c, o, cfg, rule_table,
+                                          c, o, cfg, rule_table, category_table,
                                           suggestions_state, suggestions_body, _save_fn)) \
                                 .props('flat round dense size=xs').classes('text-indigo-500') \
                                 .tooltip('Create rule for this pattern')
@@ -233,6 +233,7 @@ def _suggest_rule_dialog(
     overlaps: list[dict],
     cfg: CategoryConfig,
     rule_table_fn,
+    category_table_fn,
     suggestions_state: dict,
     suggestions_body_fn,
     save_fn,
@@ -297,6 +298,7 @@ def _suggest_rule_dialog(
                         cat_in.options = cfg.category_names()
                         cat_in.value   = name
                         cat_in.update()
+                        category_table_fn.refresh()
                         new_cat_form.set_visibility(False)
                     ui.button('Add category', on_click=_add_new_cat) \
                         .props('unelevated dense').classes('bg-gray-800 text-white text-xs')

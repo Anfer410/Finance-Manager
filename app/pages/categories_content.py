@@ -212,7 +212,7 @@ def content() -> None:
                             .style(f'background:{ctype_color}') \
                             .text = cat.cost_type
                         ui.button(icon='edit',
-                                  on_click=lambda _, c=cat: _edit_category_dialog(c, cfg, category_table, _save_fn)) \
+                                  on_click=lambda _, c=cat: _edit_category_dialog(c, cfg, category_table, rule_table, _save_fn)) \
                             .props('flat round dense size=xs').classes('text-gray-400')
                         ui.button(icon='delete',
                                   on_click=lambda _, c=cat: _delete_category(c, cfg, category_table, rule_table, _save_fn)) \
@@ -368,14 +368,28 @@ def _add_category_dialog(cfg: CategoryConfig, refresh_fn, save_fn) -> None:
     dlg.open()
 
 
-def _edit_category_dialog(cat: Category, cfg: CategoryConfig, refresh_fn, save_fn) -> None:
+def _edit_category_dialog(cat: Category, cfg: CategoryConfig, refresh_fn, rule_fn, save_fn) -> None:
     with ui.dialog() as dlg, ui.card().classes('w-80 gap-3'):
         ui.label(f'Edit — {cat.name}').classes('text-base font-semibold')
+        name_in  = labeled_input('Name', value=cat.name)
         type_in  = labeled_select('Cost type', COST_TYPES, value=cat.cost_type)
         color_in = ui.color_input(label='Color', value=cat.color).classes('w-full')
         with ui.row().classes('justify-end gap-2 w-full'):
             ui.button('Cancel', on_click=dlg.close).props('flat')
             def _ok():
+                new_name = name_in.value.strip()
+                if not new_name:
+                    return
+                old_name = cat.name
+                if new_name != old_name and new_name in cfg.category_names():
+                    return  # duplicate
+                # Update any rules that referenced the old name
+                if new_name != old_name:
+                    for rule in cfg.rules:
+                        if rule.category == old_name:
+                            rule.category = new_name
+                    rule_fn.refresh()
+                cat.name      = new_name
                 cat.cost_type = type_in.value
                 cat.color     = color_in.value
                 refresh_fn.refresh()

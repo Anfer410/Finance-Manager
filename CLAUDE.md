@@ -184,7 +184,7 @@ Views rebuilt by `ViewManager.refresh(family_id)`: `v_all_spend`, `v_credit_spen
 ### Dashboard System
 - `app_dashboards` + `app_dashboard_widgets` tables
 - Default layout seeded from `_DEFAULT_LAYOUT` in `dashboard_config.py` (snapshot of reference dashboard)
-- Widget `default_row_span`: KPI widgets = 1, all other widgets = 2
+- Widget `default_row_span`: all widgets default to 2
 - `REGISTRY` in `components/widgets/registry.py` — all widget singleton instances
 
 ### Settings Page Tabs

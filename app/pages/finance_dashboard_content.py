@@ -54,6 +54,15 @@ def _resolve_widget(chart_id: str):
 # ── Main content ──────────────────────────────────────────────────────────────
 
 def content() -> None:
+    if app.storage.user.get('views_dirty'):
+        from services.view_manager import ViewManager
+        from data.db import get_engine, get_schema
+        try:
+            ViewManager(engine=get_engine(), schema=get_schema()).refresh()
+        except Exception as e:
+            notify(f'View rebuild failed: {e}', type='warning', position='top')
+        app.storage.user['views_dirty'] = False
+
     user_id    = current_user_id()
     years      = data.get_years()
     now        = datetime.now()

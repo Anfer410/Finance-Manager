@@ -16,7 +16,7 @@ class CustomChartWidget(Widget):
     supports_time_range     = True
     config_schema           = []
     default_col_span        = 2
-    default_row_span        = 1
+    default_row_span        = 2
 
     def __init__(self, record: dict):
         self._record = record

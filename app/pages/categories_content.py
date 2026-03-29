@@ -127,12 +127,12 @@ def content() -> None:
                     overlaps = _find_overlaps(cluster["pattern"], clusters)
                     with ui.element('div').classes('border-b border-gray-50 py-2'):
                         with ui.row().classes('items-center gap-2 w-full'):
-                            ui.element('span') \
-                                .classes('px-2 py-0.5 rounded font-mono text-xs bg-gray-100 text-gray-800 flex-shrink-0') \
-                                .text = cluster["pattern"]
+                            ui.label(cluster["pattern"]) \
+                                .classes('px-2 py-0.5 rounded font-mono text-xs bg-gray-100 text-gray-800 flex-shrink-0')
                             ui.label('').classes('flex-1')
                             ui.label(f'{cluster["cnt"]} txn').classes('text-xs text-muted').style('width:90px')
-                            ui.label(f'${cluster["total"]:,.2f}').classes('text-xs text-muted').style('width:100px')
+                            cur = auth.current_currency_prefix() or ''
+                            ui.label(f'{cur}{cluster["total"]:,.2f}').classes('text-xs text-muted').style('width:100px')
                             ui.button(icon='add',
                                       on_click=lambda _, c=cluster, o=overlaps: _suggest_rule_dialog(
                                           c, o, cfg, rule_table,
@@ -265,9 +265,10 @@ def _suggest_rule_dialog(
         ui.label('Add rule from suggestion').classes('text-base font-semibold')
 
         # Cluster summary
+        cur = auth.current_currency_prefix() or ''
         with ui.row().classes('items-center gap-2 bg-gray-50 rounded px-3 py-2'):
-            ui.element('span').classes('font-mono text-sm bg-gray-200 px-2 py-0.5 rounded').text = pattern
-            ui.label(f'{cluster["cnt"]} transactions · ${cluster["total"]:,.2f}') \
+            ui.label(pattern).classes('font-mono text-sm bg-gray-200 px-2 py-0.5 rounded')
+            ui.label(f'{cluster["cnt"]} transactions · {cur}{cluster["total"]:,.2f}') \
                 .classes('text-xs text-muted')
 
         # Example descriptions

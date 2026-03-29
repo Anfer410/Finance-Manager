@@ -291,8 +291,40 @@ def _suggest_rule_dialog(
 
         ui.element('div').classes('divider')
 
-        pattern_in  = labeled_input('Pattern', value=pattern)
-        cat_in      = labeled_select('Category', cfg.category_names())
+        pattern_in = labeled_input('Pattern', value=pattern)
+
+        # Category row with inline new-category form
+        with ui.column().classes('gap-1 w-full'):
+            ui.label('Category').classes('text-sm font-medium text-zinc-700')
+            with ui.row().classes('items-center gap-2 w-full'):
+                cat_in = ui.select(cfg.category_names()) \
+                    .props('outlined dense').classes('flex-1')
+                ui.button(icon='add',
+                          on_click=lambda: _toggle_new_cat_form()) \
+                    .props('flat round dense').classes('text-gray-500') \
+                    .tooltip('Add a new category')
+
+            new_cat_form = ui.column().classes('gap-2 bg-gray-50 rounded p-2 w-full')
+            new_cat_form.set_visibility(False)
+            with new_cat_form:
+                new_cat_name_in = labeled_input('Name', placeholder='e.g. Pet Store', compact=True)
+                new_cat_type_in = labeled_select('Cost type', COST_TYPES, value='variable', compact=True)
+                with ui.row().classes('justify-end'):
+                    def _add_new_cat():
+                        name = new_cat_name_in.value.strip()
+                        if not name or name in cfg.category_names():
+                            return
+                        cfg.categories.append(Category(name=name, cost_type=new_cat_type_in.value, color='#d1d5db'))
+                        cat_in.options = cfg.category_names()
+                        cat_in.value   = name
+                        cat_in.update()
+                        new_cat_form.set_visibility(False)
+                    ui.button('Add category', on_click=_add_new_cat) \
+                        .props('unelevated dense').classes('bg-gray-800 text-white text-xs')
+
+        def _toggle_new_cat_form() -> None:
+            new_cat_form.set_visibility(not new_cat_form.visible)
+
         priority_in = ui.number('Priority (lower = checked first)',
                                 value=auto_priority, min=1, max=9999) \
             .props('outlined dense').classes('w-full')

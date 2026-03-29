@@ -489,14 +489,15 @@ def transactions_table(rows: list[dict]) -> None:
         ui.label("No transactions found.").classes("text-sm text-muted text-center py-8 w-full")
         return
 
+    _W = "width:{w};min-width:{w};max-width:{w};white-space:nowrap"
     columns = [
-        {"name": "date",        "label": "Date",        "field": "date",        "sortable": True,  "align": "left"},
-        {"name": "description", "label": "Description", "field": "description", "sortable": True,  "align": "left"},
-        {"name": "category",    "label": "Category",    "field": "category",    "sortable": True,  "align": "left"},
-        {"name": "cost_type",   "label": "Type",        "field": "cost_type",   "sortable": True,  "align": "left"},
-        {"name": "bank",        "label": "Account",     "field": "bank",        "sortable": True,  "align": "left"},
-        {"name": "person",      "label": "Person",      "field": "person",      "sortable": True,  "align": "left"},
-        {"name": "amount",      "label": "Amount",      "field": "amount",      "sortable": True,  "align": "right"},
+        {"name": "date",        "label": "Date",        "field": "date",        "sortable": True,  "align": "left",  "style": _W.format(w="90px"),  "headerStyle": _W.format(w="90px")},
+        {"name": "description", "label": "Description", "field": "description", "sortable": True,  "align": "left",  "style": "max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "headerStyle": "max-width:220px"},
+        {"name": "category",    "label": "Category",    "field": "category",    "sortable": True,  "align": "left",  "style": _W.format(w="130px"), "headerStyle": _W.format(w="130px")},
+        {"name": "cost_type",   "label": "Type",        "field": "cost_type",   "sortable": True,  "align": "left",  "style": _W.format(w="80px"),  "headerStyle": _W.format(w="80px")},
+        {"name": "bank",        "label": "Account",     "field": "bank",        "sortable": True,  "align": "left",  "style": _W.format(w="120px"), "headerStyle": _W.format(w="120px")},
+        {"name": "person",      "label": "Person",      "field": "person",      "sortable": True,  "align": "left",  "style": _W.format(w="90px"),  "headerStyle": _W.format(w="90px")},
+        {"name": "amount",      "label": "Amount",      "field": "amount",      "sortable": True,  "align": "right", "style": _W.format(w="120px"), "headerStyle": _W.format(w="120px")},
     ]
 
     table = ui.table(

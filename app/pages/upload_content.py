@@ -7,7 +7,6 @@ import re as _re
 from nicegui import ui
 
 import re as _re2
-from sqlalchemy import text
 
 import services.auth as auth
 from services.ui_inputs import labeled_input, labeled_select
@@ -22,6 +21,16 @@ from services.transaction_config import (
 from services.handle_upload import handle_upload
 from services.notifications import notify
 from data.db import get_engine, get_schema
+from services.transfer_detection_service import (
+    get_pending_transfers,
+    count_pending_transfers,
+    set_flag_user_kept,
+    get_reviewed_transfers,
+    get_pattern_impact,
+    get_pattern_suggestions,
+    get_pattern_matches,
+)
+from services.upload_manager import has_transactions, search_transactions
 from components.bank_wizard_component import (
     open_add_bank_wizard,
     ACCOUNT_COLORS,
@@ -58,194 +67,6 @@ def _extract_pattern_suggestion(description: str) -> str:
     return _transfer_group_key(description)
 
 
-def _get_pending_transfers(fid: int, uid: int, is_head: bool) -> list[dict]:
-    """Return all unreviewed potential_transfer flags with transaction detail."""
-    engine = get_engine()
-    schema = get_schema()
-    person_filter = "" if is_head else "AND :uid = ANY(d.person)"
-    sql = text(f"""
-        SELECT f.id          AS flag_id,
-               f.amount,
-               f.detected_at,
-               d.description,
-               d.transaction_date,
-               d.account_key,
-               d.person
-        FROM   {schema}.transaction_flags f
-        JOIN   {schema}.transactions_debit d ON d.id = f.tx_id
-        WHERE  f.family_id  = :fid
-          AND  f.flag_type  = 'potential_transfer'
-          AND  NOT f.user_kept
-          {person_filter}
-        ORDER BY d.transaction_date DESC
-    """)
-    params: dict = {"fid": fid}
-    if not is_head:
-        params["uid"] = uid
-    with engine.connect() as conn:
-        rows = conn.execute(sql, params).mappings().all()
-    return [dict(r) for r in rows]
-
-
-def _count_pending_transfers(fid: int, uid: int, is_head: bool) -> int:
-    engine = get_engine()
-    schema = get_schema()
-    person_filter = "" if is_head else "AND :uid = ANY(d.person)"
-    sql = text(f"""
-        SELECT COUNT(*)
-        FROM   {schema}.transaction_flags f
-        JOIN   {schema}.transactions_debit d ON d.id = f.tx_id
-        WHERE  f.family_id  = :fid
-          AND  f.flag_type  = 'potential_transfer'
-          AND  NOT f.user_kept
-          {person_filter}
-    """)
-    params: dict = {"fid": fid}
-    if not is_head:
-        params["uid"] = uid
-    with engine.connect() as conn:
-        row = conn.execute(sql, params).fetchone()
-    return int(row[0]) if row else 0
-
-
-def _set_flag_user_kept(flag_id: int, user_kept: bool) -> None:
-    engine = get_engine()
-    schema = get_schema()
-    with engine.begin() as conn:
-        conn.execute(
-            text(f"UPDATE {schema}.transaction_flags SET user_kept = :k WHERE id = :id"),
-            {"k": user_kept, "id": flag_id},
-        )
-
-
-def _get_reviewed_transfers(fid: int, uid: int, is_head: bool) -> list[dict]:
-    """Return all user_kept=TRUE potential_transfer flags with transaction detail."""
-    engine = get_engine()
-    schema = get_schema()
-    person_filter = "" if is_head else "AND :uid = ANY(d.person)"
-    sql = text(f"""
-        SELECT f.id          AS flag_id,
-               f.amount,
-               d.description,
-               d.transaction_date,
-               d.account_key
-        FROM   {schema}.transaction_flags f
-        JOIN   {schema}.transactions_debit d ON d.id = f.tx_id
-        WHERE  f.family_id  = :fid
-          AND  f.flag_type  = 'potential_transfer'
-          AND  f.user_kept
-          {person_filter}
-        ORDER BY d.transaction_date DESC
-    """)
-    params: dict = {"fid": fid}
-    if not is_head:
-        params["uid"] = uid
-    with engine.connect() as conn:
-        rows = conn.execute(sql, params).mappings().all()
-    return [dict(r) for r in rows]
-
-
-_TRANSFER_CANDIDATE_KEYWORDS = [
-    "ZELLE", "VENMO", "CASHAPP", "CASH APP", "PAYPAL",
-    "WIRE", "ACH", "XFER", "BILLPAY", "BILL PAY",
-    "P2P", "SEND MONEY", "SQUARE CASH",
-]
-
-
-def _get_pattern_impact(patterns: list[str], fid: int) -> dict[str, tuple[int, int]]:
-    """
-    Return {pattern: (inflow_count, outflow_count)} for checking accounts.
-    Counts transactions_debit rows whose description ILIKE '%pattern%'.
-    """
-    if not patterns:
-        return {}
-    engine = get_engine()
-    schema = get_schema()
-    rules = load_rules(fid)
-    checking_keys = [r.prefix for r in rules if r.account_type == "checking"]
-    if not checking_keys:
-        return {p: (0, 0) for p in patterns}
-
-    values_clause = ", ".join(f"(:p{i})" for i in range(len(patterns)))
-    key_clause    = ", ".join(f":ck{j}" for j in range(len(checking_keys)))
-    params: dict  = {"fid": fid}
-    for i, p in enumerate(patterns):
-        params[f"p{i}"] = p
-    for j, k in enumerate(checking_keys):
-        params[f"ck{j}"] = k
-
-    sql = text(f"""
-        SELECT
-            unnested.pat,
-            COUNT(*) FILTER (WHERE d.amount > 0) AS inflows,
-            COUNT(*) FILTER (WHERE d.amount < 0) AS outflows
-        FROM {schema}.transactions_debit d
-        CROSS JOIN (VALUES {values_clause}) AS unnested(pat)
-        WHERE d.family_id = :fid
-          AND d.account_key IN ({key_clause})
-          AND d.description ILIKE '%' || unnested.pat || '%'
-        GROUP BY unnested.pat
-    """)
-
-    result = {p: (0, 0) for p in patterns}
-    with engine.connect() as conn:
-        for row in conn.execute(sql, params).mappings():
-            result[row["pat"]] = (row["inflows"] or 0, row["outflows"] or 0)
-    return result
-
-
-def _get_pattern_suggestions(fid: int, existing: list[str]) -> list[str]:
-    """
-    Return keywords from _TRANSFER_CANDIDATE_KEYWORDS that appear in unflagged
-    checking outflows but are not already in the configured transfer_patterns.
-    """
-    engine = get_engine()
-    schema = get_schema()
-    rules = load_rules(fid)
-    checking_keys = [r.prefix for r in rules if r.account_type == "checking"]
-    if not checking_keys:
-        return []
-
-    existing_upper = {p.upper() for p in existing}
-    candidates = [c for c in _TRANSFER_CANDIDATE_KEYWORDS if c.upper() not in existing_upper]
-    if not candidates:
-        return []
-
-    key_clause    = ", ".join(f":ck{j}" for j in range(len(checking_keys)))
-    values_clause = ", ".join(f"(:c{i})" for i in range(len(candidates)))
-    params: dict  = {"fid": fid}
-    for j, k in enumerate(checking_keys):
-        params[f"ck{j}"] = k
-    for i, c in enumerate(candidates):
-        params[f"c{i}"] = c
-
-    sql = text(f"""
-        SELECT cand.kw
-        FROM (VALUES {values_clause}) AS cand(kw)
-        WHERE EXISTS (
-            SELECT 1
-            FROM {schema}.transactions_debit d
-            WHERE d.family_id = :fid
-              AND d.account_key IN ({key_clause})
-              AND d.amount < 0
-              AND d.description ILIKE '%' || cand.kw || '%'
-              AND d.id NOT IN (
-                  SELECT tx_id
-                  FROM {schema}.transaction_flags
-                  WHERE family_id = :fid
-                    AND tx_table  = 'debit'
-                    AND flag_type IN ('internal_transfer', 'credit_payment', 'potential_transfer')
-                    AND NOT user_kept
-              )
-        )
-        ORDER BY cand.kw
-    """)
-
-    with engine.connect() as conn:
-        rows = conn.execute(sql, params).mappings().all()
-    return [r["kw"] for r in rows]
-
-
 
 def _slugify(name: str) -> str:
     return _re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
@@ -272,63 +93,15 @@ def _open_transaction_search_dialog(
     *,
     payment_desc_ref: dict | None = None,
 ):
-    from sqlalchemy import text
-
-    schema     = get_schema()
-    engine     = get_engine()
-    tbl        = f"{schema}.transactions_{'credit' if account_type == 'credit' else 'debit'}"
-
-    if account_type == "credit":
-        DISPLAY_COLS = ["transaction_date", "description", "debit", "credit"]
-    else:
-        DISPLAY_COLS = ["transaction_date", "description", "amount"]
-
     COPY_TARGETS = {}
     if payment_desc_ref:
         COPY_TARGETS["Payment description"] = payment_desc_ref
 
     def _has_data() -> bool:
-        try:
-            with engine.connect() as conn:
-                result = conn.execute(text(
-                    f"SELECT 1 FROM {tbl} WHERE account_key = :k LIMIT 1"
-                ), {"k": prefix}).fetchone()
-                return result is not None
-        except Exception:
-            return False
+        return has_transactions(prefix, account_type)
 
     def _query(search: str, date_from: str, date_to: str, page: int, page_size: int = 50):
-        try:
-            with engine.connect() as conn:
-                where_parts = ["account_key = :key"]
-                params: dict = {"key": prefix, "offset": (page - 1) * page_size, "limit": page_size}
-
-                if search:
-                    where_parts.append("description ILIKE :search")
-                    params["search"] = "%" + search + "%"
-                if date_from:
-                    where_parts.append("transaction_date >= :date_from")
-                    params["date_from"] = date_from
-                if date_to:
-                    where_parts.append("transaction_date <= :date_to")
-                    params["date_to"] = date_to
-
-                col_list     = ", ".join(DISPLAY_COLS)
-                where_clause = "WHERE " + " AND ".join(where_parts)
-
-                rows = conn.execute(text(
-                    f"SELECT {col_list} FROM {tbl} "
-                    f"{where_clause} ORDER BY transaction_date DESC "
-                    f"LIMIT :limit OFFSET :offset"
-                ), params).fetchall()
-
-                count = conn.execute(text(
-                    f"SELECT COUNT(*) FROM {tbl} {where_clause}"
-                ), {k: v for k, v in params.items() if k not in ("offset", "limit")}).fetchone()[0]
-
-                return DISPLAY_COLS, [list(r) for r in rows], count
-        except Exception:
-            return [], [], 0
+        return search_transactions(prefix, account_type, search, date_from, date_to, page, page_size)
 
     with ui.dialog().props("maximized") as dlg, \
          ui.card().classes("w-full h-full rounded-none p-0 gap-0 overflow-hidden"):
@@ -1152,20 +925,7 @@ def _ensure_banks_for_rules(rules: list[BankRule]) -> list[BankConfig]:
 
 def _open_pattern_matches_dialog(pattern: str, label: str, fid: int) -> None:
     """Show all debit outflows whose description contains *pattern*."""
-    engine = get_engine()
-    schema = get_schema()
-    pat_escaped = pattern.replace("'", "''")
-    with engine.connect() as conn:
-        rows = conn.execute(text(f"""
-            SELECT transaction_date, description, ABS(amount) AS amount, account_key
-            FROM   {schema}.transactions_debit
-            WHERE  family_id = :fid
-              AND  amount < 0
-              AND  description ILIKE '%{pat_escaped}%'
-            ORDER BY transaction_date DESC
-            LIMIT 200
-        """), {"fid": fid}).mappings().all()
-    rows = [dict(r) for r in rows]
+    rows = get_pattern_matches(pattern, fid, get_engine(), get_schema())
 
     with ui.dialog() as dlg, \
          ui.card().classes("w-[820px] rounded-2xl p-0 gap-0 overflow-hidden"):
@@ -1389,7 +1149,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
     @ui.refreshable
     def detection_chips():
         _cfg    = load_config(fid)
-        impact  = _get_pattern_impact(_cfg.transfer_patterns, fid)
+        impact  = get_pattern_impact(_cfg.transfer_patterns, fid, get_engine(), get_schema())
         with ui.row().classes("flex-wrap gap-2 min-h-8"):
             if _cfg.transfer_patterns:
                 for pat in _cfg.transfer_patterns:
@@ -1487,7 +1247,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
     @ui.refreshable
     def suggested_patterns():
         _cfg  = load_config(fid)
-        suggs = _get_pattern_suggestions(fid, _cfg.transfer_patterns)
+        suggs = get_pattern_suggestions(fid, _cfg.transfer_patterns, get_engine(), get_schema())
         if not suggs:
             return
         ui.label("Suggested — found in unflagged outflows:") \
@@ -1527,8 +1287,8 @@ def _transfers_tab_content(on_refresh: callable) -> None:
 
     @ui.refreshable
     def pending_body():
-        rows     = _get_pending_transfers(fid, uid, is_head)
-        reviewed = _get_reviewed_transfers(fid, uid, is_head)
+        rows     = get_pending_transfers(fid, uid, is_head, get_engine(), get_schema())
+        reviewed = get_reviewed_transfers(fid, uid, is_head, get_engine(), get_schema())
         cfg      = load_config(fid)
 
         named_pats = [e.pattern.lower() for e in cfg.named_transfer_exclusions]
@@ -1662,7 +1422,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
 
                         def _mark_group_keep(rows=group_rows):
                             for r in rows:
-                                _set_flag_user_kept(r["flag_id"], True)
+                                set_flag_user_kept(r["flag_id"], True, get_engine(), get_schema())
                             try:
                                 from services.view_manager import default_view_manager
                                 default_view_manager().refresh()
@@ -1702,7 +1462,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
                             ui.label(f"{_cur()}{r['amount']:,.2f}") \
                                 .classes("text-xs text-zinc-500 shrink-0")
                             def _keep_one(flag_id=r["flag_id"]):
-                                _set_flag_user_kept(flag_id, True)
+                                set_flag_user_kept(flag_id, True, get_engine(), get_schema())
                                 try:
                                     from services.view_manager import default_view_manager
                                     default_view_manager().refresh()
@@ -1758,7 +1518,7 @@ def _transfers_tab_content(on_refresh: callable) -> None:
                         ui.label(f"{_cur()}{r['amount']:,.2f}") \
                             .classes("text-xs text-zinc-500 shrink-0")
                         def _unmark(flag_id=r["flag_id"]):
-                            _set_flag_user_kept(flag_id, False)
+                            set_flag_user_kept(flag_id, False, get_engine(), get_schema())
                             try:
                                 from services.view_manager import default_view_manager
                                 default_view_manager().refresh()
@@ -1938,7 +1698,7 @@ def content() -> None:
     def _pending_badge():
         # Apply the same named-pattern filter as pending_body so the count matches
         # what the user actually sees (raw DB count includes pattern-covered rows).
-        rows = _get_pending_transfers(fid, uid, is_head)
+        rows = get_pending_transfers(fid, uid, is_head, get_engine(), get_schema())
         cfg  = load_config(fid)
         named_pats = [e.pattern.lower() for e in cfg.named_transfer_exclusions]
         cnt = sum(

@@ -507,3 +507,80 @@ def _bank_name_map(family_id: int) -> dict[str, str]:
         return {r.prefix: r.bank_name for r in load_rules(family_id)}
     except Exception:
         return {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Transaction browse  (used by the upload UI transaction-search dialog)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CREDIT_DISPLAY_COLS  = ["transaction_date", "description", "debit", "credit"]
+_DEBIT_DISPLAY_COLS   = ["transaction_date", "description", "amount"]
+
+
+def has_transactions(prefix: str, account_type: str) -> bool:
+    """Return True if the account has any rows in the consolidated table."""
+    schema = _schema()
+    tbl    = f"{schema}.transactions_{'credit' if account_type == 'credit' else 'debit'}"
+    try:
+        with _engine().connect() as conn:
+            result = conn.execute(
+                text(f"SELECT 1 FROM {tbl} WHERE account_key = :k LIMIT 1"),
+                {"k": prefix},
+            ).fetchone()
+            return result is not None
+    except Exception:
+        return False
+
+
+def search_transactions(
+    prefix: str,
+    account_type: str,
+    search: str,
+    date_from: str,
+    date_to: str,
+    page: int,
+    page_size: int = 50,
+) -> tuple[list[str], list[list], int]:
+    """
+    Paginated search of transactions for a given account_key.
+
+    Returns (column_names, rows, total_count).
+    """
+    schema       = _schema()
+    tbl          = f"{schema}.transactions_{'credit' if account_type == 'credit' else 'debit'}"
+    display_cols = _CREDIT_DISPLAY_COLS if account_type == "credit" else _DEBIT_DISPLAY_COLS
+    try:
+        where_parts = ["account_key = :key"]
+        params: dict = {
+            "key":    prefix,
+            "offset": (page - 1) * page_size,
+            "limit":  page_size,
+        }
+        if search:
+            where_parts.append("description ILIKE :search")
+            params["search"] = f"%{search}%"
+        if date_from:
+            where_parts.append("transaction_date >= :date_from")
+            params["date_from"] = date_from
+        if date_to:
+            where_parts.append("transaction_date <= :date_to")
+            params["date_to"] = date_to
+
+        col_list     = ", ".join(display_cols)
+        where_clause = "WHERE " + " AND ".join(where_parts)
+        count_params = {k: v for k, v in params.items() if k not in ("offset", "limit")}
+
+        with _engine().connect() as conn:
+            rows = conn.execute(text(
+                f"SELECT {col_list} FROM {tbl} "
+                f"{where_clause} ORDER BY transaction_date DESC "
+                f"LIMIT :limit OFFSET :offset"
+            ), params).fetchall()
+            count = conn.execute(
+                text(f"SELECT COUNT(*) FROM {tbl} {where_clause}"),
+                count_params,
+            ).fetchone()[0]
+
+        return display_cols, [list(r) for r in rows], count
+    except Exception:
+        return [], [], 0

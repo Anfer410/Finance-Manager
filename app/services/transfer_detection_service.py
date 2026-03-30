@@ -305,3 +305,215 @@ def run_detection(family_id: int, engine: Engine, schema: str) -> None:
     detect_internal_transfers(family_id, engine, schema)
     detect_credit_payments(family_id, engine, schema)
     detect_potential_transfers(family_id, engine, schema)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Transfer flag queries  (used by the upload UI review panel)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TRANSFER_CANDIDATE_KEYWORDS = [
+    "ZELLE", "VENMO", "CASHAPP", "CASH APP", "PAYPAL",
+    "WIRE", "ACH", "XFER", "BILLPAY", "BILL PAY",
+    "P2P", "SEND MONEY", "SQUARE CASH",
+]
+
+
+def get_pending_transfers(
+    family_id: int, user_id: int, is_head: bool, engine: Engine, schema: str
+) -> list[dict]:
+    """Return all unreviewed potential_transfer flags with transaction detail."""
+    person_filter = "" if is_head else "AND :uid = ANY(d.person)"
+    sql = text(f"""
+        SELECT f.id          AS flag_id,
+               f.amount,
+               f.detected_at,
+               d.description,
+               d.transaction_date,
+               d.account_key,
+               d.person
+        FROM   {schema}.transaction_flags f
+        JOIN   {schema}.transactions_debit d ON d.id = f.tx_id
+        WHERE  f.family_id  = :fid
+          AND  f.flag_type  = 'potential_transfer'
+          AND  NOT f.user_kept
+          {person_filter}
+        ORDER BY d.transaction_date DESC
+    """)
+    params: dict = {"fid": family_id}
+    if not is_head:
+        params["uid"] = user_id
+    with engine.connect() as conn:
+        rows = conn.execute(sql, params).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def count_pending_transfers(
+    family_id: int, user_id: int, is_head: bool, engine: Engine, schema: str
+) -> int:
+    """Return the count of unreviewed potential_transfer flags."""
+    person_filter = "" if is_head else "AND :uid = ANY(d.person)"
+    sql = text(f"""
+        SELECT COUNT(*)
+        FROM   {schema}.transaction_flags f
+        JOIN   {schema}.transactions_debit d ON d.id = f.tx_id
+        WHERE  f.family_id  = :fid
+          AND  f.flag_type  = 'potential_transfer'
+          AND  NOT f.user_kept
+          {person_filter}
+    """)
+    params: dict = {"fid": family_id}
+    if not is_head:
+        params["uid"] = user_id
+    with engine.connect() as conn:
+        row = conn.execute(sql, params).fetchone()
+    return int(row[0]) if row else 0
+
+
+def set_flag_user_kept(flag_id: int, user_kept: bool, engine: Engine, schema: str) -> None:
+    """Set user_kept on a transaction flag (accept or reject a potential transfer)."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"UPDATE {schema}.transaction_flags SET user_kept = :k WHERE id = :id"),
+            {"k": user_kept, "id": flag_id},
+        )
+
+
+def get_reviewed_transfers(
+    family_id: int, user_id: int, is_head: bool, engine: Engine, schema: str
+) -> list[dict]:
+    """Return all user_kept=TRUE potential_transfer flags with transaction detail."""
+    person_filter = "" if is_head else "AND :uid = ANY(d.person)"
+    sql = text(f"""
+        SELECT f.id          AS flag_id,
+               f.amount,
+               d.description,
+               d.transaction_date,
+               d.account_key
+        FROM   {schema}.transaction_flags f
+        JOIN   {schema}.transactions_debit d ON d.id = f.tx_id
+        WHERE  f.family_id  = :fid
+          AND  f.flag_type  = 'potential_transfer'
+          AND  f.user_kept
+          {person_filter}
+        ORDER BY d.transaction_date DESC
+    """)
+    params: dict = {"fid": family_id}
+    if not is_head:
+        params["uid"] = user_id
+    with engine.connect() as conn:
+        rows = conn.execute(sql, params).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def get_pattern_impact(
+    patterns: list[str], family_id: int, engine: Engine, schema: str
+) -> dict[str, tuple[int, int]]:
+    """
+    Return {pattern: (inflow_count, outflow_count)} for checking accounts.
+    Counts transactions_debit rows whose description ILIKE '%pattern%'.
+    """
+    if not patterns:
+        return {}
+    from data.bank_rules import load_rules
+    rules = load_rules(family_id)
+    checking_keys = [r.prefix for r in rules if r.account_type == "checking"]
+    if not checking_keys:
+        return {p: (0, 0) for p in patterns}
+
+    values_clause = ", ".join(f"(:p{i})" for i in range(len(patterns)))
+    key_clause    = ", ".join(f":ck{j}" for j in range(len(checking_keys)))
+    params: dict  = {"fid": family_id}
+    for i, p in enumerate(patterns):
+        params[f"p{i}"] = p
+    for j, k in enumerate(checking_keys):
+        params[f"ck{j}"] = k
+
+    sql = text(f"""
+        SELECT
+            unnested.pat,
+            COUNT(*) FILTER (WHERE d.amount > 0) AS inflows,
+            COUNT(*) FILTER (WHERE d.amount < 0) AS outflows
+        FROM {schema}.transactions_debit d
+        CROSS JOIN (VALUES {values_clause}) AS unnested(pat)
+        WHERE d.family_id = :fid
+          AND d.account_key IN ({key_clause})
+          AND d.description ILIKE '%' || unnested.pat || '%'
+        GROUP BY unnested.pat
+    """)
+
+    result = {p: (0, 0) for p in patterns}
+    with engine.connect() as conn:
+        for row in conn.execute(sql, params).mappings():
+            result[row["pat"]] = (row["inflows"] or 0, row["outflows"] or 0)
+    return result
+
+
+def get_pattern_suggestions(
+    family_id: int, existing: list[str], engine: Engine, schema: str
+) -> list[str]:
+    """
+    Return keywords from _TRANSFER_CANDIDATE_KEYWORDS that appear in unflagged
+    checking outflows but are not already in the configured transfer_patterns.
+    """
+    from data.bank_rules import load_rules
+    rules = load_rules(family_id)
+    checking_keys = [r.prefix for r in rules if r.account_type == "checking"]
+    if not checking_keys:
+        return []
+
+    existing_upper = {p.upper() for p in existing}
+    candidates = [c for c in _TRANSFER_CANDIDATE_KEYWORDS if c.upper() not in existing_upper]
+    if not candidates:
+        return []
+
+    key_clause    = ", ".join(f":ck{j}" for j in range(len(checking_keys)))
+    values_clause = ", ".join(f"(:c{i})" for i in range(len(candidates)))
+    params: dict  = {"fid": family_id}
+    for j, k in enumerate(checking_keys):
+        params[f"ck{j}"] = k
+    for i, c in enumerate(candidates):
+        params[f"c{i}"] = c
+
+    sql = text(f"""
+        SELECT cand.kw
+        FROM (VALUES {values_clause}) AS cand(kw)
+        WHERE EXISTS (
+            SELECT 1
+            FROM {schema}.transactions_debit d
+            WHERE d.family_id = :fid
+              AND d.account_key IN ({key_clause})
+              AND d.amount < 0
+              AND d.description ILIKE '%' || cand.kw || '%'
+              AND d.id NOT IN (
+                  SELECT tx_id
+                  FROM {schema}.transaction_flags
+                  WHERE family_id = :fid
+                    AND tx_table  = 'debit'
+                    AND flag_type IN ('internal_transfer', 'credit_payment', 'potential_transfer')
+                    AND NOT user_kept
+              )
+        )
+        ORDER BY cand.kw
+    """)
+
+    with engine.connect() as conn:
+        rows = conn.execute(sql, params).mappings().all()
+    return [r["kw"] for r in rows]
+
+
+def get_pattern_matches(
+    pattern: str, family_id: int, engine: Engine, schema: str
+) -> list[dict]:
+    """Return debit outflows whose description contains *pattern*."""
+    sql = text(f"""
+        SELECT transaction_date, description, ABS(amount) AS amount, account_key
+        FROM   {schema}.transactions_debit
+        WHERE  family_id = :fid
+          AND  amount < 0
+          AND  description ILIKE :pat
+        ORDER BY transaction_date DESC
+        LIMIT 200
+    """)
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"fid": family_id, "pat": f"%{pattern}%"}).mappings().all()
+    return [dict(r) for r in rows]

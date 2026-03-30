@@ -175,6 +175,9 @@ def _create_app_tables(conn, schema: str) -> None:
     conn.execute(text(f"ALTER TABLE {schema}.app_users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE"))
     conn.execute(text(f"ALTER TABLE {schema}.app_users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE"))
     conn.execute(text(f"ALTER TABLE {schema}.app_users ADD COLUMN IF NOT EXISTS is_instance_admin BOOLEAN NOT NULL DEFAULT FALSE"))
+    conn.execute(text(f"ALTER TABLE {schema}.app_users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"))
+    conn.execute(text(f"ALTER TABLE {schema}.families ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ"))
+    conn.execute(text(f"ALTER TABLE {schema}.families ADD COLUMN IF NOT EXISTS archived_by INTEGER REFERENCES {schema}.app_users(id)"))
 
     # Add deferred FKs from family tables back to app_users (now that the table exists)
     conn.execute(text(f"""

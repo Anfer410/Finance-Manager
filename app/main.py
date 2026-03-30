@@ -53,6 +53,17 @@ def with_base_layout(route_handler):
         if auth.current_family_id() is None and fresh_user.family_id is not None:
             auth.login(fresh_user)
 
+        # Check if family has been archived by admin
+        if fresh_user.family_id and not fresh_user.is_instance_admin:
+            from services.family_service import is_family_archived
+            if is_family_archived(fresh_user.family_id):
+                ui.colors(primary='#18181b', secondary='#f4f4f5')
+                with ui.column().classes('w-full h-screen items-center justify-center gap-3'):
+                    ui.icon('inventory_2').classes('text-6xl text-zinc-300')
+                    ui.label('This family has been archived').classes('text-xl font-semibold text-zinc-700')
+                    ui.label('Please contact your instance administrator.').classes('text-sm text-zinc-400')
+                return
+
         ui.colors(primary='#18181b', secondary='#f4f4f5', positive='#4caf50',
                   negative='#ef4444', warning='#f59e0b', info='#3b82f6', accent='#e4e4e7')
         ui.add_head_html(

@@ -88,7 +88,7 @@ class ViewManager:
     def _load_all_family_ids(self) -> list[int]:
         with self.engine.connect() as conn:
             rows = conn.execute(
-                text(f"SELECT id FROM {self.schema}.families ORDER BY id")
+                text(f"SELECT id FROM {self.schema}.families WHERE archived_at IS NULL ORDER BY id")
             ).fetchall()
         return [r[0] for r in rows]
 
@@ -185,6 +185,7 @@ class ViewManager:
                     f"           currency\n"
                     f"    FROM {self.schema}.transactions_credit\n"
                     f"    WHERE account_key = '{ak}'\n"
+                    f"      AND family_id = {fd.family_id}\n"
                     f"      AND debit > 0\n"
                     f"      AND debit != 'NaN'::numeric"
                     f"{excl}"
@@ -257,6 +258,7 @@ class ViewManager:
                     f"           t.currency\n"
                     f"    FROM {self.schema}.transactions_debit t\n"
                     f"    WHERE account_key = '{ak}'\n"
+                    f"      AND t.family_id = {fd.family_id}\n"
                     f"      AND amount < 0\n"
                     f"{excl_sql}"
                 )
@@ -308,6 +310,7 @@ class ViewManager:
                     f"           currency\n"
                     f"    FROM {self.schema}.transactions_debit\n"
                     f"    WHERE account_key = '{ak}'\n"
+                    f"      AND family_id = {fd.family_id}\n"
                     f"      AND amount > 0\n"
                     + (f"\n{transfer_excl}" if transfer_excl else "")
                     + f"\n{flag_excl}"

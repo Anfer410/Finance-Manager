@@ -59,6 +59,7 @@ class AuthUser:
     family_id:         Optional[int]    # active family; None if no membership
     family_role:       Optional[str]    # 'member' | 'head' | None
     selected_persons:  list[int] = field(default_factory=list)
+    deleted_at:        Optional[object] = None  # set when soft-deleted
 
 
 # ── DB queries ─────────────────────────────────────────────────────────────────
@@ -67,7 +68,8 @@ _USER_SELECT = """
     SELECT u.id, u.username, u.display_name, u.person_name,
            u.is_active, u.is_instance_admin,
            fm.family_id, fm.family_role,
-           COALESCE(p.selected_persons, CAST('[]' AS jsonb)) AS selected_persons
+           COALESCE(p.selected_persons, CAST('[]' AS jsonb)) AS selected_persons,
+           u.deleted_at
     FROM   {schema}.app_users u
     LEFT JOIN {schema}.app_user_prefs p ON p.user_id = u.id
     LEFT JOIN {schema}.family_memberships fm
@@ -81,6 +83,7 @@ def _row_to_user(row) -> AuthUser:
         person_name=row[3], is_active=row[4], is_instance_admin=row[5],
         family_id=row[6], family_role=row[7],
         selected_persons=row[8] if isinstance(row[8], list) else list(row[8]),
+        deleted_at=row[9],
     )
 
 

@@ -1,65 +1,12 @@
 # CHANGELOG
 
 
-## v2.6.0-rc.7 (2026-03-29)
+## v2.5.2 (2026-03-30)
 
 ### Bug Fixes
 
-- Don't copy bank rules/presets when seeding a new family
-  ([`2b65ff1`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/2b65ff1418560915cc1f55ba93a2c493dd673625))
-
-create_family() was copying bank rules and bank presets from family 1 to every new family. Bank
-  rules are account-specific (prefix, column_map, person_override, etc.) and must not be shared
-  across families. Only categories and transaction config are appropriate seed defaults.
-
-This caused new families to appear in ViewManager view branches, producing cross-family row
-  duplication in v_all_spend.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-- Hard-delete memberships before family record to avoid FK violation
-  ([`b62054c`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/b62054c0d0a24175b8fcff59e67a96a0836cdbc2))
-
-- Scope view branches by family_id to prevent cross-family data leakage
-  ([`7746d85`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/7746d85e60bdf3c15a24e77ff00a74ab035d0a5e))
-
-All three view builders (credit_spend, debit_spend, income) now include AND family_id =
-  {fd.family_id} in each branch WHERE clause. Previously, branches were only filtered by
-  account_key, so two families sharing the same prefix caused doubled rows in v_all_spend.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-### Features
-
-- Conditional user and family deletion with archive/restore
-  ([`5c5d105`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/5c5d1057bd34f71a53b8ea2fecdfb2f7e0349a2a))
-
-User deletion: - Hard delete when user has no transactions: scrubs person[] arrays, nullifies
-  uploaded_by, removes account and all associated records - Soft delete when user has transactions:
-  sets deleted_at + is_active=False, ends family membership; transaction data preserved for the
-  family - Soft-deleted users shown with strikethrough/muted styling in admin UI
-
-Family deletion: - Hard wipe (no members, no transactions): removes config, flags, invitations,
-  memberships, and family record - Hard wipe + orphan (has members, no transactions): same but frees
-  members - Archive (has transactions): sets archived_at, keeps all data and memberships intact for
-  clean restore; members see an "archived" wall instead of page content
-
-Archived family management (admin only, Family tab): - List of archived families with tx count,
-  member count, archived date - Restore: clears archived_at, members regain access immediately -
-  Purge: hard-delete everything (transactions, config, memberships); raw upload tables are never
-  touched
-
-view_manager: excludes archived families from view rebuilds
-
-auth: AuthUser gains deleted_at field; _USER_SELECT fetches it
-
-
-## v2.6.0-rc.6 (2026-03-29)
-
-### Chores
-
-- Sync develop with main after release
-  ([`d082d8d`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/d082d8d0ab63eee209ee92a5e4fbabb439c1fe96))
+- Scope family view branches to prevent cross-family data leakage
+  ([`e64dd8c`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/e64dd8c651b0186727bb4e14c7a5f828082a88c9))
 
 
 ## v2.5.1 (2026-03-29)
@@ -70,138 +17,6 @@ auth: AuthUser gains deleted_at field; _USER_SELECT fetches it
   ([`89a38ea`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/89a38eaf56d444b1a45d0df6251b0ba919c9b857))
 
 
-## v2.6.0-rc.5 (2026-03-29)
-
-### Features
-
-- Notify user when views are rebuilt on dashboard load
-  ([`3e086ee`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/3e086eec63ceefbca892325091cc29cd2037a987))
-
-Show an info toast before the rebuild starts and a success toast on completion, so the user knows
-  why there is a brief delay.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-
-## v2.6.0-rc.4 (2026-03-29)
-
-### Bug Fixes
-
-- Allow category name editing and cascade rename to rules
-  ([`002df11`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/002df111f4a89f2a129ff34b7181c3603b8aefdb))
-
-Add name field to the edit category dialog. When the name changes, all rules referencing the old
-  name are updated in-place so they don't become orphaned.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-
-## v2.6.0-rc.3 (2026-03-29)
-
-### Bug Fixes
-
-- Refresh category table when new category added via suggestion dialog
-  ([`042a47b`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/042a47b732312df5b055ae6f133862e6eaf1a3c8))
-
-Pass category_table refreshable into _suggest_rule_dialog and call it in _add_new_cat so the
-  categories card updates immediately without needing to navigate away.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-
-## v2.6.0-rc.2 (2026-03-29)
-
-### Bug Fixes
-
-- Align suggestion table columns and fix example description rendering
-  ([`1a377f9`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/1a377f92bf9e7c7b2599689ea0c32ecdd30843ce))
-
-Wrap pattern chip in a flex-1 container so it occupies the same column width as the header, fixing
-  misalignment with the fixed-width transaction count and total spend columns. Also replace
-  ui.element('span').text= with ui.label() for example descriptions.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-- Align suggestion table columns and fix example description rendering
-  ([`05cc895`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/05cc895890caf12ffa333a3d78583c6eb2cf00f8))
-
-Wrap pattern chip in a flex-1 container so it occupies the same column width as the header, fixing
-  misalignment with the fixed-width transaction count and total spend columns. Also replace
-  ui.element('span').text= with ui.label() for example descriptions (same rendering issue as the
-  pattern chip).
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-- Auto-update priority and hint when pattern is edited in suggestion dialog
-  ([`10653c9`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/10653c96bd12af9e1ccb29b9c4965cf90af5118a))
-
-Adds a keyup handler on the pattern input so priority recalculates via _auto_priority() as the user
-  types. Also fixes remaining hardcoded $ in the overlap warning amounts.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-- Pattern chip blank and hardcoded $ currency in smart suggestions
-  ([`d8f9cf1`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/d8f9cf15079dd286323bf56c48e5e5f93a84641e))
-
-Replace ui.element('span').text= with ui.label() for the pattern chips — the assignment form doesn't
-  render reliably inside refreshables. Replace hardcoded $ with auth.current_currency_prefix() so
-  the currency matches the user's selected display currency.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-### Features
-
-- Add Smart Suggestions panel to categories page
-  ([`b567681`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/b567681fd4c65f779b74151e895c38178b0406b5))
-
-Adds on-demand cluster analysis for uncategorized transactions. A single query groups 'Other'
-  descriptions by extracted root pattern (regex strips trailing store numbers/codes), ordered
-  most-specific first so KROGER FUEL surfaces before KROGER. Each cluster shows example raw
-  descriptions and an overlap warning when adding a broad rule would absorb a more-specific
-  unhandled cluster. Adding a rule from suggestions immediately saves config, rebuilds views, and
-  re-runs the analysis so covered clusters disappear from the list. Auto-priority is suggested based
-  on word count (more words = lower number = checked first).
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-- Auto-save categories on every mutation, rebuild views lazily on dashboard load
-  ([`ab9ed06`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/ab9ed06902a08f712afe4a74dc63ad1b4208adeb))
-
-Remove the manual 'Save & rebuild views' button. Every mutation (add/edit/delete rule or category)
-  now auto-saves config immediately and sets app.storage.user['views_dirty'] = True. The dashboard
-  checks the flag on load, runs ViewManager.refresh() once if set, then clears it — so the rebuild
-  happens exactly when the user next opens the dashboard, not blocking the categories editing flow.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-- Inline add-category form in suggestion rule dialog
-  ([`1d45448`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/1d454489039c23a1d33ca1d0de36ebcc7ae7db4b))
-
-Adds a '+' button next to the category dropdown that toggles an inline mini-form (name + cost type).
-  On confirm the new category is appended to cfg, the dropdown options refresh, and the new category
-  is auto-selected — without leaving the dialog.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-### Refactoring
-
-- Make Smart Suggestions panel always visible
-  ([`2353581`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/235358101efab7cb29e532370ef3741ccfb27f73))
-
-Remove the toggle button from the header and the close button from the panel — the section is now
-  permanently shown between rule preview and the rules/categories cards.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-
-## v2.6.0-rc.1 (2026-03-29)
-
-### Chores
-
-- Sync develop with main after release
-  ([`c23f6cc`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/c23f6cc1816c70abc4817147b7210dc9c16cbfdb))
-
-
 ## v2.5.0 (2026-03-29)
 
 ### Features
@@ -210,77 +25,12 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
   ([`2c892e2`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/2c892e2ab37d9a0b6266fd58e63b4ccdb63b070a))
 
 
-## v2.5.0-rc.3 (2026-03-29)
-
-### Features
-
-- Add Smart Suggestions panel to categories page
-  ([`a133098`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/a133098f66619f48c532d3873dec652d8f4fa6ba))
-
-
-## v2.5.0-rc.2 (2026-03-29)
-
-### Features
-
-- Add income transactions to dashboard table
-  ([`1a24d47`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/1a24d47a74af9c0f2a7e16a7c22135d46d89a746))
-
-
-## v2.5.0-rc.1 (2026-03-29)
-
-### Features
-
-- Ux improvements — widget sizing, label truncation, input min-width, table column width
-  ([`a7a174d`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/a7a174d454cbed0ee70ffd0ab56d88f138d72366))
-
-
-## v2.4.4-rc.1 (2026-03-28)
-
-### Chores
-
-- Sync develop with main after release
-  ([`f51efa3`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/f51efa31226ab53847657b10e6ba0fa5f3ae5047))
-
-
 ## v2.4.3 (2026-03-28)
 
 ### Bug Fixes
 
 - Prevent default categories from reappearing after deletion; add clear-all rules button
   ([`c9d6496`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/c9d6496370b444e157472401941b9826f97b5d95))
-
-
-## v2.4.3-rc.2 (2026-03-28)
-
-### Bug Fixes
-
-- Make DB volume path configurable via DB_DATA_PATH env var
-  ([`ef75d52`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/ef75d52a151174c790dc1b73a57884447dfd8a4d))
-
-Allows the data volume mount point to be overridden via DB_DATA_PATH, falling back to the default
-  named volume when not set.
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-
-## v2.4.3-rc.1 (2026-03-28)
-
-### Bug Fixes
-
-- Prevent default categories from reappearing after deletion; add clear-all rules button
-  ([`981a85b`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/981a85b2be96cb1deee88bdf55389e10a698c3b5))
-
-- Remove backfill loop in load_category_config that was re-injecting any missing default category on
-  every page load, causing deleted categories to reappear after reload - Add "Clear all rules"
-  button (delete_sweep icon) to the classification rules header with a confirmation dialog, allowing
-  users to wipe all default rules and start from scratch
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
-
-### Chores
-
-- Sync develop with main after release
-  ([`986a266`](https://gitlab.iveydomek.xyz/scripts/finances/finance-manager/-/commit/986a266103a05e22aeafc914a72967311a7e5d4b))
 
 
 ## v2.4.2 (2026-03-23)
